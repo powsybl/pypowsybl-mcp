@@ -8,6 +8,11 @@ submit changes.
 This project is in **prototype phase**. Core interfaces may change without prior notice. If you plan a large
 contribution, open an issue first to discuss the design before writing code.
 
+## Upstream PowSyBl contribution guidelines
+
+This repository is part of the broader PowSyBl ecosystem. In addition to the project-specific guidance below, please
+also review the upstream [PowSyBl contributing guide](https://github.com/powsybl/.github/blob/main/CONTRIBUTING.md).
+
 ## Reporting issues
 
 Use the GitHub issue tracker. When reporting a bug, please include:
@@ -30,8 +35,6 @@ source .venv/bin/activate
 # Install with dev dependencies (open-source pypowsybl backend included by default)
 uv pip install -e ".[dev]"
 ```
-
-> **RTE users**: after the step above, run `./install_rte.sh --dev` to swap to the RTE-internal backend.
 
 Copy the environment template and fill in any values you need:
 

@@ -32,9 +32,6 @@ Install with the open-source pypowsybl backend:
 uv pip install .
 ```
 
-> **RTE users:** run `./install_rte.sh` to replace the public `pypowsybl` backend with the RTE-specific `pypowsybl-rte`
-> backend.
-
 ---
 
 #### Step 2 — Configure environment variables

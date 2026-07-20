@@ -12,7 +12,7 @@ This document describes the internal architecture of the PyPowsybl MCP server.
                              │  streamable-HTTP  (MCP protocol)
                              ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                  FastMCP server  (server.py)                 │
+│                  FastMCP server  (server.py)                │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │              Tool registry (8 groups)                │   │
@@ -21,8 +21,8 @@ This document describes the internal architecture of the PyPowsybl MCP server.
 │  └──────────────────────────────────────────────────────┘   │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │   ThreadSafeTTLCache[session_id → Proxy]            │   │
-│  │   max 50 sessions · TTL 24 h                        │   │
+│  │   ThreadSafeTTLCache[session_id → Proxy]             │   │
+│  │   max 50 sessions · TTL 24 h                         │   │
 │  └──────────────────────────────────────────────────────┘   │
 │                                                             │
 │  /download/{token}/{filename}  (custom HTTP route)          │
@@ -40,7 +40,7 @@ This document describes the internal architecture of the PyPowsybl MCP server.
 └─────────────────────────────────────────────────────────────┘
                              │
                              ▼
-                    pypowsybl / pypowsybl-rte
+                         pypowsybl
 ```
 
 #### Key components

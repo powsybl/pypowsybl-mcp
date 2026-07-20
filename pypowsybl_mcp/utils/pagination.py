@@ -1,15 +1,17 @@
-#  Copyright (c) 2026, RTE (https://www.rte-france.com)
-#  See AUTHORS.txt
+#  Copyright (c) 2026, RTE (http://www.rte-france.com)
+#  This Source Code Form is subject to the terms of the Mozilla Public
+#  License, v. 2.0. If a copy of the MPL was not distributed with this
+#  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
-#  This file is part of pypowsybl-mcp.
 
 import os
-import pandas as pd
 
+import pandas as pd
 
 # Page size defaults can be overridden via environment variables see .env.template
 DEFAULT_PAGINATION_LIMIT = int(os.getenv("DEFAULT_PAGINATION_LIMIT", "100"))
 MAX_PAGINATION_LIMIT = int(os.getenv("MAX_PAGINATION_LIMIT", "1000"))
+
 
 def clamp_limit(limit: int | None) -> int | None:
     """Turn a requested page size into something we can actually use.
@@ -55,7 +57,9 @@ def parse_cursor(cursor: int | str | None) -> int:
     return offset
 
 
-def pagination_meta(total: int, limit: int, offset: int, returned: int) -> dict[str, int| str| None ]:
+def pagination_meta(
+    total: int, limit: int, offset: int, returned: int
+) -> dict[str, int | str | None]:
     """Build the pagination block that goes back to the client.
     Tells the client how many items exist in total, how many we just returned, and
     which cursor to pass on the next call — or None when there is no next page.
@@ -79,7 +83,6 @@ def pagination_meta(total: int, limit: int, offset: int, returned: int) -> dict[
 
 
 def paginate_list(items, limit=None, cursor=None):
-
     """Cut a list into a single page.
     Returns a tuple (page, meta). When no limit is asked, we return the whole
     list and meta is None.
@@ -137,7 +140,6 @@ def paginate_dataframe(df, limit=None, cursor=None):
 
 
 def paginate_dict_field(payload, field, limit=None, cursor=None):
-
     """Paginate one list that lives inside a result dict.
     Example: the result has a "contingencies" list and some totals next to it.
     We only cut the list and we keep every other field untouched. The page info
@@ -165,7 +167,7 @@ def paginate_dict_field(payload, field, limit=None, cursor=None):
         )
         return out
 
-    #here we only know how to paginate a list. If it is something else, it is a programming mistake on the caller side so we tell them.
+    # here we only know how to paginate a list. If it is something else, it is a programming mistake on the caller side so we tell them.
     if not isinstance(value, list):
         raise TypeError(
             "Field " + repr(field) + " must be a list, got " + type(value).__name__

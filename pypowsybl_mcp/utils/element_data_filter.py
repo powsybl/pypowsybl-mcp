@@ -1,7 +1,8 @@
-#  Copyright (c) 2026, RTE (https://www.rte-france.com)
-#  See AUTHORS.txt
+#  Copyright (c) 2026, RTE (http://www.rte-france.com)
+#  This Source Code Form is subject to the terms of the Mozilla Public
+#  License, v. 2.0. If a copy of the MPL was not distributed with this
+#  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
-#  This file is part of pypowsybl-mcp.
 
 """Filter a network element table on one metric and one threshold.
 
@@ -60,9 +61,9 @@ def _select_current_limit(limits, limit_kind):
     """
     current = limits[(limits["type"] == "CURRENT") & (limits["side"] == "ONE")]
     permanent = current[current["acceptable_duration"] == -1]
-    permanent_by_id = (
-        permanent.drop_duplicates("element_id").set_index("element_id")["value"]
-    )
+    permanent_by_id = permanent.drop_duplicates("element_id").set_index("element_id")[
+        "value"
+    ]
     if limit_kind != "temporary":
         return permanent_by_id
     temporary = current[current["acceptable_duration"] > 0]
@@ -217,7 +218,9 @@ def compute_metric(df, metric, element_type):
     )
 
 
-def apply_element_filter(df, *, element_type, metric, filter_op, filter_value, sort="desc"):
+def apply_element_filter(
+    df, *, element_type, metric, filter_op, filter_value, sort="desc"
+):
     """Keep rows where metric filter_op filter_value, then sort the result.
 
     Example: metric="loading_percent", filter_op=">", filter_value=90

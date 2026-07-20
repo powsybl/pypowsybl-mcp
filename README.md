@@ -38,7 +38,7 @@ turn.
 
 - Python `3.11+`
 - [`uv`](https://github.com/astral-sh/uv)
-- A `pypowsybl` backend (open-source, included by default; see below for the RTE variant)
+- A `pypowsybl` backend 
 - Docker, if you want to run the server in a container
 - An OpenAI-compatible API key only if you plan to use `generate_python_script`
 
@@ -55,12 +55,6 @@ Install the server (the open-source `pypowsybl` backend is included by default):
 
 ```bash
 uv pip install .
-```
-
-**RTE users only** — switch to the RTE-internal backend:
-
-```bash
-./install_rte.sh
 ```
 
 This removes the public `pypowsybl` package and installs `pypowsybl-rte` in its place to avoid module conflicts.
