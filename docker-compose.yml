@@ -7,16 +7,13 @@ services:
         # Use HOST_UID and HOST_GID as requested for volume permission handling
         - USER_UID=${HOST_UID:-1000}
         - USER_GID=${HOST_GID:-1000}
-        # Proxy settings for build-time access (e.g. RTE package repository)
+        # Proxy settings for build-time access (e.g. if you are behind a corporate proxy)
         - HTTP_PROXY=${HTTP_PROXY:-}
         - HTTPS_PROXY=${HTTPS_PROXY:-}
         - NO_PROXY=${NO_PROXY:-}
         - http_proxy=${http_proxy:-}
         - https_proxy=${https_proxy:-}
         - no_proxy=${no_proxy:-}
-        # Uncomment to install the RTE-internal pypowsybl-rte backend instead of
-        # the default open-source pypowsybl. Requires access to the RTE PyPI index.
-        - USE_RTE_BACKEND=true
     image: pypowsybl-mcp:latest
     container_name: pypowsybl-mcp-server
     env_file:

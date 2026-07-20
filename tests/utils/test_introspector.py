@@ -8,20 +8,7 @@ from unittest.mock import patch
 
 from pypowsybl_mcp.utils.introspector import (
     get_pypowsybl_version,
-    is_rte_internal_pypowsybl,
 )
-
-
-def test_is_rte_internal_pypowsybl_true():
-    with patch("pypowsybl.network.get_import_formats") as mock_get_import_formats:
-        mock_get_import_formats.return_value = ["DIE", "CGMES"]
-        assert is_rte_internal_pypowsybl() is True
-
-
-def test_is_rte_internal_pypowsybl_false():
-    with patch("pypowsybl.network.get_import_formats") as mock_get_import_formats:
-        mock_get_import_formats.return_value = ["CGMES"]
-        assert is_rte_internal_pypowsybl() is False
 
 
 def test_get_pypowsybl_version():

@@ -3,8 +3,7 @@
 ## Project Overview
 
 `pypowsybl-mcp` is a project that integrates MCP (Model Context Protocol) servers for power grid operations,
-specifically
-using `pypowsybl`.
+specifically using `pypowsybl`.
 
 ## Development Rules
 

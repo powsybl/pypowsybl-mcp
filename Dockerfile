@@ -43,17 +43,7 @@ RUN groupadd --gid $USER_GID appuser \
 # Install project dependencies
 # We copy only the files needed for installation first to leverage Docker cache
 COPY pyproject.toml ./
-COPY install_rte.sh ./
-RUN chmod +x install_rte.sh
-# USE_RTE_BACKEND: set to any non-empty value (e.g. "true") to overlay the
-# public pypowsybl package with the RTE-internal pypowsybl-rte backend.
-# Leave empty (default) for the standard open-source build.
-ARG USE_RTE_BACKEND
-RUN uv pip install --system --no-cache-dir . \
-    && echo "USE_RTE_BACKEND=${USE_RTE_BACKEND}" \
-    && if [ -n "$USE_RTE_BACKEND" ]; then \
-         UV_SYSTEM_PYTHON=1 ./install_rte.sh; \
-       fi
+RUN uv pip install --system --no-cache-dir .
 
 # Copy the rest of the application code
 COPY . .
