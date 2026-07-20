@@ -1,0 +1,60 @@
+[project]
+name = "pypowsybl-mcp"
+version = "0.6.0"
+description = "A MCP server for PyPowSyBl: use with a LLM to chat with power grid simulations"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Jérôme Picault", email = "jerome.picault@rte-france.com" },
+    { name = "Clément Goubet", email = "clement.goubet@rte-france.com" }
+]
+maintainers = [
+    { name = "Jérôme Picault", email = "jerome.picault@rte-france.com" },
+    { name = "Clément Goubet", email = "clement.goubet@rte-france.com" }
+]
+keywords = ["LLM", "MCP", "pypowsybl", "power grids", "simulations"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "cachetools>=7.1.4",
+    "loguru>=0.7.3",
+    "mcp>=1.27.2",
+    "openai>=2.41.0",
+    "openai-agents[litellm]>=0.17.4",
+    "pandas>=3.0.1",
+    "pypowsybl==1.15.0",
+    "starlette>=0.52.1",
+    "supervisor>=4.3.0",
+    "tabulate>=0.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "coverage>=7.14.1",
+    "ipython",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov",
+    "ruff>=0.15.16",
+]
+
+[project.urls]
+homepage = "https://github.com/powsybl/pypowsybl-mcp"
+repository = "https://github.com/powsybl/pypowsybl-mcp"
+documentation = "https://github.com/powsybl/pypowsybl-mcp/tree/main/docs"
+"Bug Tracker" = "https://github.com/powsybl/pypowsybl-mcp/issues"
+
+[tool.setuptools.packages.find]
+include = ["pypowsybl_mcp"]
+exclude = ["data*", "logs*", "tests*", "docs*"]
