@@ -8,7 +8,6 @@ specifically using `pypowsybl`.
 ## Development Rules
 
 - Follow existing code style (indentation, naming conventions).
-- Maintain `CHANGELOG.md` (only major features and fixes)
 - Maintain documentation: `README.md` with new major features and update the `docs` directory if needed.
 - Use `uv` for dependency management.
 - Use `loguru` for logging.

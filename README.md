@@ -57,8 +57,6 @@ Install the server (the open-source `pypowsybl` backend is included by default):
 uv pip install .
 ```
 
-This removes the public `pypowsybl` package and installs `pypowsybl-rte` in its place to avoid module conflicts.
-
 ## Configuration
 
 Copy the template and adjust the values for your environment:
