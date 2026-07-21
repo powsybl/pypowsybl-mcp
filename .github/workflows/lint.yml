@@ -1,0 +1,23 @@
+name: lint
+on:
+  push:
+    branches-ignore:
+      - main
+jobs:
+  linter_name:
+    name: runner / ruff format
+    if: github.actor != 'github-actions'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Format with Ruff (auto-fix)
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: format .
+#      - name: Commit Ruff formatting changes
+#        run: |
+#          git config --global user.name "$(git log -1 --pretty=format:'%cn')"
+#          git config --global user.email "$(git log -1 --pretty=format:'%ce')"
+#          git add .
+#          git commit -s -m "Format Python code with ruff format" || echo "No changes to commit"
+#          git push || echo "No changes to push"
