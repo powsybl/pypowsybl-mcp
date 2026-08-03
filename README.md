@@ -33,6 +33,7 @@ turn.
 - [Configuration Reference](docs/configuration.md): environment variables and TOML defaults.
 - [MCP Client Integration](docs/mcp_client_integration.md): connect Codex, Claude Desktop, Cursor, or a custom agent.
 - [Sessions & State](docs/mcp_sessions.md): session lifecycle, cache TTL, and session pinning.
+- [Plugins](docs/plugins.md): extend the server with your own tools, resources, and prompts.
 
 ## Prerequisites
 
@@ -129,7 +130,7 @@ Useful notes:
 
 ## Configure Codex
 
-The PyPowsybl server must already be running before Codex can connect to it.
+The PyPowsybl server must already be running before Codex can connect to it. The server listens on `MCP_PORT` when set, or `9992` by default.
 
 Add the MCP server to Codex in either:
 
@@ -143,9 +144,9 @@ Example configuration:
 url = "http://localhost:9992/mcp"
 ```
 
-For a remote deployment, replace `localhost` with the real host or domain and make sure `MCP_PUBLIC_ADDRESS` is set to
-that same reachable address, otherwise download links returned by export and visualization tools will not work from
-Codex.
+For a remote deployment, replace `localhost` with the real host or domain, use the port configured by `MCP_PORT`, and
+make sure `MCP_PUBLIC_ADDRESS` is set to that same reachable address, otherwise download links returned by export and
+visualization tools will not work from Codex.
 
 After saving the configuration:
 
@@ -165,7 +166,7 @@ Important:
 
 ## Configure Claude
 
-The PyPowsybl server must already be running before Claude can connect to it.
+The PyPowsybl server must already be running before Claude can connect to it. The server listens on `MCP_PORT` when set, or `9992` by default.
 
 Add the MCP server to Claude Desktop's configuration file, usually located at:
 
@@ -185,9 +186,9 @@ Example configuration:
 }
 ```
 
-For a remote deployment, replace `localhost` with the real host or domain and make sure `MCP_PUBLIC_ADDRESS` is set to
-that same reachable address, otherwise download links returned by export and visualization tools will not work from
-Claude.
+For a remote deployment, replace `localhost` with the real host or domain, use the port configured by `MCP_PORT`, and
+make sure `MCP_PUBLIC_ADDRESS` is set to that same reachable address, otherwise download links returned by export and
+visualization tools will not work from Claude.
 
 After saving the configuration:
 
@@ -223,6 +224,38 @@ See [MCP Client Integration](docs/mcp_client_integration.md) for examples.
 - `Show me a single-line diagram for substation S1.`
 - `Export the current network and give me the download link.`
 - `Generate a Python script that reproduces the current study.`
+
+## API Documentation Skill
+
+The server can fetch official pypowsybl API documentation on demand with two tools that both return the
+markdown directly in a `content` field (so any agent can use them, even one that cannot issue
+`resources/read`):
+
+- `read_resource(resource_id)` — return a page **already cached** for the session, instantly; reports a
+  cache miss otherwise.
+- `get_online_resource(class_object, method_name)` — **download** a page and cache it. Call it with a module
+  name (e.g. `network`) and an empty `method_name` to list the module's methods, then with a specific
+  `method_name` to get its detailed documentation.
+
+The recommended workflow is: try `read_resource` first, and fall back to `get_online_resource` only on a
+cache miss. Pages are cached per session under the ids `{class_object}` (module page) and
+`{class_object}-{method_name}` (method page), also reachable as `resources://temp/{id}` for clients that do
+support `resources/read`.
+
+The workflow instructions live in [`pypowsybl_mcp/skills/remote-resource.md`](pypowsybl_mcp/skills/remote-resource.md)
+and are exposed in three ways so any agent can use them:
+
+- **Tool description** — the `get_online_resource` tool description embeds the workflow, so agents without
+  skill or prompt support can use it out of the box.
+- **MCP prompt** — each skill file is registered as an MCP prompt. Clients like Claude Code surface it as a
+  slash command (e.g. `/mcp__<server-name>__remote-resource`) to inject the instructions into the conversation.
+- **MCP resource** — each skill file is also listed as a resource at `skills://skills/remote-resource`,
+  readable by any client supporting `resources/read`.
+
+For agents with native skill support (Claude Code, Claude Desktop), the file is written in the
+[Agent Skills](https://code.claude.com/docs/en/skills) format: copy it to
+`.claude/skills/remote-resource/SKILL.md` in your project (or `~/.claude/skills/` for all projects) and the
+agent will trigger it automatically whenever pypowsybl API details are needed.
 
 ## Contributing
 

@@ -53,8 +53,8 @@ OPENAI_API_KEY=sk-...
 OPENAI_DEFAULT_MODEL=gpt-5.4
 ```
 
-All variables are optional except `OPENAI_API_KEY` (needed only for code generation). See
-[Configuration Reference](configuration.md) for the full list.
+All variables are optional except `OPENAI_API_KEY` (needed only for code generation). `MCP_PORT` sets the server
+port and defaults to `9992`. See [Configuration Reference](configuration.md) for the full list.
 
 ---
 
@@ -66,7 +66,8 @@ All variables are optional except `OPENAI_API_KEY` (needed only for code generat
 uv run python -m pypowsybl_mcp.server
 ```
 
-You should see log output confirming the server is listening on `http://localhost:9992`.
+You should see log output confirming the server is listening on `http://localhost:<port>`, where `<port>` is the
+value of `MCP_PORT` or `9992` if `MCP_PORT` is not set.
 
 **Docker (alternative):**
 
@@ -79,6 +80,8 @@ Place grid files you want to load in the `./data` directory; they will be availa
 ---
 
 #### Step 4 — Connect an MCP client
+
+Use the same port as `MCP_PORT` in your client URL. The examples below use the default port `9992`.
 
 ##### Codex
 

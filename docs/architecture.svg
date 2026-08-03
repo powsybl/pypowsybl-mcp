@@ -1,0 +1,117 @@
+<!--
+  - # Copyright (c) 2026, RTE (http://www.rte-france.com)
+  - # This Source Code Form is subject to the terms of the Mozilla Public
+  - # License, v. 2.0. If a copy of the MPL was not distributed with this
+  - # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+  - # SPDX-License-Identifier: MPL-2.0
+  -->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 820" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+    <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7"
+                orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+        </marker>
+    </defs>
+
+    <rect x="0" y="0" width="1000" height="820" fill="#ffffff"/>
+
+    <!-- Title -->
+    <text x="500" y="30" text-anchor="middle" font-size="20" font-weight="700" fill="#0f172a">pypowsybl-mcp —
+        Architecture Overview
+    </text>
+
+    <!-- MCP Client -->
+    <rect x="310" y="54" width="380" height="56" rx="10" fill="#f1f5f9" stroke="#1e293b" stroke-width="1.5"/>
+    <text x="500" y="78" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">MCP Client</text>
+    <text x="500" y="95" text-anchor="middle" font-size="11" fill="#475569">Claude Desktop · Cursor · custom agent…
+    </text>
+
+    <path d="M500,110 L500,146" stroke="#334155" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+    <text x="515" y="132" font-size="11" fill="#475569">streamable-HTTP (MCP protocol)</text>
+
+    <!-- FastMCP server container -->
+    <rect x="60" y="150" width="880" height="310" rx="16" fill="#eff6ff" stroke="#334155" stroke-width="2"/>
+    <text x="80" y="180" font-size="15" font-weight="700" fill="#1e293b">FastMCP server (server.py)</text>
+
+    <!-- Tool registry strip -->
+    <rect x="80" y="196" width="840" height="100" rx="10" fill="#e0e7ff" stroke="#4f46e5" stroke-width="1.5"/>
+    <text x="96" y="216" font-size="12" font-weight="700" fill="#312e81">Tool registry — 9 built-in groups</text>
+
+    <g font-size="9.5" fill="#312e81">
+        <rect x="96" y="228" width="110" height="22" rx="11" fill="#c7d2fe" stroke="#4f46e5"/>
+        <text x="151" y="243" text-anchor="middle">io</text>
+        <rect x="216" y="228" width="110" height="22" rx="11" fill="#c7d2fe" stroke="#4f46e5"/>
+        <text x="271" y="243" text-anchor="middle">network</text>
+        <rect x="336" y="228" width="110" height="22" rx="11" fill="#c7d2fe" stroke="#4f46e5"/>
+        <text x="391" y="243" text-anchor="middle">visualization</text>
+        <rect x="456" y="228" width="110" height="22" rx="11" fill="#c7d2fe" stroke="#4f46e5"/>
+        <text x="511" y="243" text-anchor="middle">loadflow</text>
+        <rect x="576" y="228" width="110" height="22" rx="11" fill="#c7d2fe" stroke="#4f46e5"/>
+        <text x="631" y="243" text-anchor="middle">security</text>
+    </g>
+    <g font-size="9.5" fill="#312e81">
+        <rect x="96" y="256" width="110" height="22" rx="11" fill="#c7d2fe" stroke="#4f46e5"/>
+        <text x="151" y="271" text-anchor="middle">sensitivity</text>
+        <rect x="216" y="256" width="110" height="22" rx="11" fill="#c7d2fe" stroke="#4f46e5"/>
+        <text x="271" y="271" text-anchor="middle">session</text>
+        <rect x="336" y="256" width="110" height="22" rx="11" fill="#c7d2fe" stroke="#4f46e5"/>
+        <text x="391" y="271" text-anchor="middle">code_export</text>
+        <rect x="456" y="256" width="110" height="22" rx="11" fill="#c7d2fe" stroke="#4f46e5"/>
+        <text x="511" y="271" text-anchor="middle">resource</text>
+    </g>
+
+    <!-- Built-in skills -->
+    <text x="96" y="316" font-size="11" fill="#334155">Built-in skills &#8594; resources &amp; prompts, via
+        register_skill_resources_and_prompts(mcp)
+    </text>
+
+    <!-- Plugin loaders strip -->
+    <rect x="80" y="330" width="840" height="72" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
+    <text x="96" y="350" font-size="12" font-weight="700" fill="#92400e">Plugin loaders — extend the server without
+        touching this code (see plugins.md)
+    </text>
+    <text x="96" y="368" font-size="10.5" fill="#78350f">pypowsybl_mcp.plugins.v1 (tools) · pypowsybl_mcp.resources.v1
+        (resources &amp; prompts)
+    </text>
+    <text x="96" y="384" font-size="10.5" fill="#78350f">toggle with MCP_DISABLED_PLUGINS — a failing plugin never
+        crashes the host
+    </text>
+
+    <!-- Session cache + HTTP route -->
+    <text x="96" y="422" font-size="11" fill="#334155">TTLCache[session_id &#8594; PyPowsyblMCPServerProxy] · max 100
+        sessions · TTL 24 h
+    </text>
+    <text x="96" y="440" font-size="11" fill="#334155">GET /download/{token}/{filename} — custom route for temporary
+        file downloads
+    </text>
+
+    <path d="M500,460 L500,496" stroke="#334155" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+    <text x="515" y="482" font-size="11" fill="#475569">per-session state</text>
+
+    <!-- PyPowsyblMCPServerProxy -->
+    <rect x="110" y="500" width="780" height="180" rx="14" fill="#ccfbf1" stroke="#0d9488" stroke-width="2"/>
+    <text x="130" y="528" font-size="15" font-weight="700" fill="#115e59">PyPowsyblMCPServerProxy (proxy.py)</text>
+    <text x="130" y="546" font-size="11" font-style="italic" fill="#0f766e">one instance per session_id</text>
+
+    <text x="130" y="568" font-size="11" fill="#0f766e">networks: ThreadSafeTTLCache[network_id &#8594; pp.Network]
+    </text>
+    <text x="130" y="586" font-size="11" fill="#0f766e">current_network_id / current_network</text>
+    <text x="130" y="604" font-size="11" fill="#0f766e">loadflow_results · plugin_results: ThreadSafeTTLCache[id/key
+        &#8594; Any]
+    </text>
+    <text x="130" y="622" font-size="11" fill="#0f766e">lf_params / lf_provider (from LF_default_parameters.toml)</text>
+    <text x="130" y="640" font-size="11" fill="#0f766e">resources: ThreadSafeTTLCache (temp markdown &#8594;
+        resources://temp/{id})
+    </text>
+    <text x="130" y="658" font-size="11" fill="#0f766e">visualization_config (from
+        visualization_default_parameters.toml)
+    </text>
+
+    <path d="M500,680 L500,716" stroke="#334155" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+    <!-- Backend -->
+    <rect x="260" y="720" width="480" height="56" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+    <text x="500" y="744" text-anchor="middle" font-size="14" font-weight="700" fill="#334155">pypowsybl backend</text>
+    <text x="500" y="761" text-anchor="middle" font-size="10.5" fill="#64748b">OpenLoadFlow by default</text>
+</svg>

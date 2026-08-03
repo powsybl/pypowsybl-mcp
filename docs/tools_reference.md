@@ -37,11 +37,12 @@ This document lists all MCP tools exposed by the PyPowsybl MCP server, grouped b
 
 ##### Network modification
 
-| Tool                | Description                                                                       |
-|---------------------|-----------------------------------------------------------------------------------|
-| `modify_network`    | Change parameters (P, Q, target voltage, …) of one or more network elements.      |
-| `set_line_status`   | Connect or disconnect a branch (line or transformer).                             |
-| `set_switch_status` | Open or close a switch in the network (breaker, disconnector, load-break switch). |
+| Tool                 | Description                                                                       |
+|----------------------|-----------------------------------------------------------------------------------|
+| `modify_network`     | Change parameters (P, Q, target voltage, …) of one or more network elements.      |
+| `set_line_status`    | Connect or disconnect a branch (line or transformer).                             |
+| `set_switch_status`  | Open or close a switch in the network (breaker, disconnector, load-break switch). |
+| `set_tap_position`   | Move a transformer's ratio or phase tap changer to a new position.                |
 
 ##### Variants
 
@@ -137,9 +138,20 @@ LLM**.
 
 ---
 
+#### Resource tools
+
+| Tool                  | Description                                                                                                |
+|-----------------------|-------------------------------------------------------------------------------------------------------------|
+| `get_online_resource` | Fetch `pypowsybl` API reference documentation (from readthedocs) for a class or method; caches it server-side. |
+| `read_resource`       | Read back a documentation page already fetched this session with `get_online_resource`, from the cache.   |
+
+---
+
 #### Notes
 
 - All tools return a **string** (plain text or JSON-formatted text).
 - Tools that produce files (diagrams, exports) return a **temporary download URL** of the form
   `http://<MCP_PUBLIC_ADDRESS>:<MCP_PORT>/download/<token>/<filename>`.
 - The `ctx` parameter is injected automatically by FastMCP and must not be passed by the caller.
+- This page lists the server's **built-in** tools only. Installed plugins can add further tools that appear
+  alongside these in the same tool list — see [plugins.md](plugins.md).

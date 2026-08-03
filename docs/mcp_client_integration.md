@@ -10,6 +10,8 @@ The server must be running and reachable before configuring any client. See the 
 
 Default endpoint: `http://localhost:9992/mcp`
 
+Use the same port as `MCP_PORT` in every client URL. If `MCP_PORT` is not set, the server defaults to `9992`.
+
 The server uses the **streamable-HTTP** MCP transport. Clients that only support the `stdio` transport cannot
 connect directly.
 
@@ -93,8 +95,9 @@ async def main():
 
 #### Remote server (Docker or VM)
 
-When the server runs on a remote host, replace `localhost` with the actual address and make sure `MCP_PUBLIC_ADDRESS`
-in `.env` is set to the same address so that download URLs are routable from the client:
+When the server runs on a remote host, replace `localhost` with the actual address, use the port configured by
+`MCP_PORT`, and make sure `MCP_PUBLIC_ADDRESS` in `.env` is set to the same address so that download URLs are routable
+from the client:
 
 ```
 MCP_PUBLIC_ADDRESS=192.168.1.50
@@ -129,7 +132,7 @@ list_networks()
 
 An empty list (`[]`) confirms the server is reachable and the session is initialized.
 
-To verify the server is up without an MCP client, use curl:
+To verify the server is up without an MCP client, use curl on the configured port (`9992` by default):
 
 ```bash
 curl -i http://localhost:9992/mcp

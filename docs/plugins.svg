@@ -1,0 +1,240 @@
+<!--
+  - # Copyright (c) 2026, RTE (http://www.rte-france.com)
+  - # This Source Code Form is subject to the terms of the Mozilla Public
+  - # License, v. 2.0. If a copy of the MPL was not distributed with this
+  - # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+  - # SPDX-License-Identifier: MPL-2.0
+  -->
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1150 1150" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+    <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7"
+                orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+        </marker>
+        <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7"
+                orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#b45309"/>
+        </marker>
+    </defs>
+
+    <rect x="0" y="0" width="1150" height="1150" fill="#ffffff"/>
+
+    <!-- Title -->
+    <text x="575" y="28" text-anchor="middle" font-size="20" font-weight="700" fill="#0f172a">pypowsybl-mcp — Plugin
+        Mechanism
+    </text>
+    <text x="575" y="48" text-anchor="middle" font-size="12.5" fill="#475569">How any plugin package adds tools,
+        resources, or prompts to the running MCP server
+    </text>
+
+    <!-- MCP Client -->
+    <rect x="395" y="66" width="360" height="56" rx="10" fill="#f1f5f9" stroke="#1e293b" stroke-width="1.5"/>
+    <text x="575" y="90" text-anchor="middle" font-size="15" font-weight="700" fill="#0f172a">MCP Client</text>
+    <text x="575" y="107" text-anchor="middle" font-size="11.5" fill="#475569">Claude Desktop · Cursor · custom agent…
+    </text>
+
+    <path d="M575,122 L575,158" stroke="#334155" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+    <text x="592" y="143" font-size="11" fill="#475569">MCP tool / resource / prompt call</text>
+
+    <!-- Host container -->
+    <rect x="40" y="160" width="1000" height="480" rx="16" fill="#eff6ff" stroke="#334155" stroke-width="2"/>
+    <text x="70" y="192" font-size="16" font-weight="700" fill="#1e293b">pypowsybl-mcp — host process</text>
+
+    <!-- Registry strip -->
+    <rect x="70" y="210" width="940" height="68" rx="10" fill="#e0e7ff" stroke="#4f46e5" stroke-width="1.5"/>
+    <text x="90" y="234" font-size="13.5" font-weight="700" fill="#312e81">FastMCP server — unified registries (tools ·
+        resources · prompts)
+    </text>
+    <text x="90" y="253" font-size="12" fill="#4338ca">built-in + every loaded plugin's tools/resources/prompts —
+        indistinguishable to the client
+    </text>
+
+    <!-- Built-in tools box -->
+    <rect x="70" y="300" width="440" height="200" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+    <text x="90" y="322" font-size="13" font-weight="700" fill="#334155">Built-in tools, resources &amp; prompts</text>
+    <text x="90" y="338" font-size="10.5" fill="#64748b">one register_*_tools(mcp, proxies) per module</text>
+
+    <!-- chip row 1 -->
+    <g font-size="8.5" fill="#334155">
+        <rect x="90" y="352" width="88" height="22" rx="11" fill="#e2e8f0" stroke="#94a3b8"/>
+        <text x="134" y="367" text-anchor="middle">io</text>
+        <rect x="186" y="352" width="88" height="22" rx="11" fill="#e2e8f0" stroke="#94a3b8"/>
+        <text x="230" y="367" text-anchor="middle">network</text>
+        <rect x="282" y="352" width="88" height="22" rx="11" fill="#e2e8f0" stroke="#94a3b8"/>
+        <text x="326" y="367" text-anchor="middle">loadflow</text>
+        <rect x="378" y="352" width="88" height="22" rx="11" fill="#e2e8f0" stroke="#94a3b8"/>
+        <text x="422" y="367" text-anchor="middle">security</text>
+    </g>
+    <!-- chip row 2 -->
+    <g font-size="8.5" fill="#334155">
+        <rect x="90" y="380" width="88" height="22" rx="11" fill="#e2e8f0" stroke="#94a3b8"/>
+        <text x="134" y="395" text-anchor="middle">sensitivity</text>
+        <rect x="186" y="380" width="88" height="22" rx="11" fill="#e2e8f0" stroke="#94a3b8"/>
+        <text x="230" y="395" text-anchor="middle">visualization</text>
+        <rect x="282" y="380" width="88" height="22" rx="11" fill="#e2e8f0" stroke="#94a3b8"/>
+        <text x="326" y="395" text-anchor="middle">session</text>
+        <rect x="378" y="380" width="88" height="22" rx="11" fill="#e2e8f0" stroke="#94a3b8"/>
+        <text x="422" y="395" text-anchor="middle">code_export</text>
+    </g>
+    <text x="90" y="422" font-size="10" font-family="SFMono-Regular, Consolas, Menlo, monospace" fill="#475569">
+        register_skill_resources_and_prompts(mcp)
+    </text>
+    <text x="90" y="438" font-size="10.5" fill="#64748b">→ built-in skills exposed as resources &amp; prompts</text>
+
+    <!-- Plugin loader box: two entry-point groups -->
+    <rect x="530" y="300" width="480" height="200" rx="10" fill="#fef3c7" stroke="#d97706" stroke-width="2.5"/>
+    <text x="550" y="322" font-size="13.5" font-weight="700" fill="#92400e">Plugin loaders — two entry-point groups
+    </text>
+    <text x="550" y="339" font-size="11" fill="#78350f">same shape for both: discover, load, register, isolate
+        failures
+    </text>
+
+    <text x="550" y="358" font-size="11" font-weight="700" fill="#92400e">Tools</text>
+    <text x="565" y="374" font-size="10" font-family="SFMono-Regular, Consolas, Menlo, monospace" fill="#78350f">
+        entry_points(group="pypowsybl_mcp.plugins.v1")
+    </text>
+    <text x="565" y="388" font-size="10" font-family="SFMono-Regular, Consolas, Menlo, monospace" fill="#78350f">&#8594;
+        register_plugin_tools(mcp, proxies)
+    </text>
+
+    <line x1="550" y1="397" x2="990" y2="397" stroke="#d97706" stroke-width="1" opacity="0.4"/>
+
+    <text x="550" y="414" font-size="11" font-weight="700" fill="#92400e">Resources / Prompts</text>
+    <text x="565" y="430" font-size="10" font-family="SFMono-Regular, Consolas, Menlo, monospace" fill="#78350f">
+        entry_points(group="pypowsybl_mcp.resources.v1")
+    </text>
+    <text x="565" y="444" font-size="10" font-family="SFMono-Regular, Consolas, Menlo, monospace" fill="#78350f">&#8594;
+        register_plugin_resources(mcp, proxies)
+    </text>
+
+    <text x="550" y="462" font-size="10" fill="#78350f">skips names listed in MCP_DISABLED_PLUGINS</text>
+    <text x="550" y="476" font-size="10" fill="#78350f">try / except per plugin — one failure never crashes the host
+    </text>
+
+    <!-- built-in <-> registry / shared state (light, contextual) -->
+    <path d="M290,300 L290,280" stroke="#94a3b8" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+    <path d="M290,500 L290,518" stroke="#94a3b8" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+    <!-- loader <-> registry / shared state (the plugin path, numbered) -->
+    <path d="M770,300 L770,280" stroke="#d97706" stroke-width="2" fill="none" marker-end="url(#arrow-amber)"/>
+    <circle cx="770" cy="289" r="11" fill="#1e293b"/>
+    <text x="770" y="293" text-anchor="middle" font-size="10" font-weight="700" fill="#ffffff">3</text>
+
+    <path d="M770,500 L770,518" stroke="#d97706" stroke-width="2" fill="none" marker-end="url(#arrow-amber)"/>
+    <circle cx="770" cy="509" r="11" fill="#1e293b"/>
+    <text x="770" y="513" text-anchor="middle" font-size="10" font-weight="700" fill="#ffffff">4</text>
+
+    <!-- Shared state strip -->
+    <rect x="70" y="520" width="940" height="90" rx="10" fill="#ccfbf1" stroke="#0d9488" stroke-width="1.5"/>
+    <text x="90" y="544" font-size="13.5" font-weight="700" fill="#115e59">PyPowsyblMCPServerProxy — one instance per
+        session_id (TTLCache, 24 h)
+    </text>
+    <text x="90" y="563" font-size="11" fill="#0f766e">networks · current_network_id · lf_params / lf_provider ·
+        loadflow_results · plugin_results · resources · visualization_config
+    </text>
+    <text x="90" y="580" font-size="11" font-style="italic" fill="#0f766e">reached via self.get_proxy(session_id) — the
+        same object for tools, resources &amp; prompts, built-in or plugin
+    </text>
+
+    <!-- Section label -->
+    <text x="90" y="672" font-size="12.5" font-weight="700" fill="#334155">Installed Python packages
+    </text>
+
+    <!-- Plugin package box A -->
+    <rect x="90" y="685" width="430" height="205" rx="12" fill="#ede9fe" stroke="#7c3aed" stroke-width="2"/>
+    <circle cx="505" cy="700" r="11" fill="#1e293b"/>
+    <text x="505" y="704" text-anchor="middle" font-size="10" font-weight="700" fill="#ffffff">1</text>
+    <text x="112" y="711" font-size="14" font-weight="700" fill="#4c1d95">your-plugin-package</text>
+    <text x="112" y="729" font-size="11" font-style="italic" fill="#5b21b6">the one you just wrote</text>
+    <text x="112" y="751" font-size="11" font-family="SFMono-Regular, Consolas, Menlo, monospace" fill="#4c1d95">class
+        MyTools(PyPowsyblTool): ...
+    </text>
+    <text x="112" y="767" font-size="11" font-family="SFMono-Regular, Consolas, Menlo, monospace" fill="#4c1d95">def
+        register_plugin_tools(mcp, proxies):
+    </text>
+    <text x="128" y="783" font-size="11" font-family="SFMono-Regular, Consolas, Menlo, monospace" fill="#4c1d95">
+        MyTools(proxies).register_tools_with_mcp(mcp)
+    </text>
+    <rect x="112" y="797" width="340" height="24" rx="12" fill="#ddd6fe" stroke="#7c3aed"/>
+    <text x="282" y="813" text-anchor="middle" font-size="10" fill="#4c1d95">entry point &#8594;
+        pypowsybl_mcp.plugins.v1
+    </text>
+    <rect x="112" y="827" width="340" height="24" rx="12" fill="#ddd6fe" stroke="#7c3aed"/>
+    <text x="282" y="843" text-anchor="middle" font-size="10" fill="#4c1d95">entry point &#8594;
+        pypowsybl_mcp.resources.v1 (optional)
+    </text>
+
+    <!-- Plugin package box B -->
+    <rect x="560" y="685" width="430" height="205" rx="12" fill="#ede9fe" stroke="#7c3aed" stroke-width="2"/>
+    <circle cx="975" cy="700" r="11" fill="#1e293b"/>
+    <text x="975" y="704" text-anchor="middle" font-size="10" font-weight="700" fill="#ffffff">1</text>
+    <text x="582" y="711" font-size="14" font-weight="700" fill="#4c1d95">another-plugin-package</text>
+    <text x="582" y="729" font-size="11" font-style="italic" fill="#5b21b6">anyone else's — installed alongside yours
+    </text>
+    <text x="582" y="751" font-size="11" font-family="SFMono-Regular, Consolas, Menlo, monospace" fill="#4c1d95">class
+        OtherTools(PyPowsyblTool): ...
+    </text>
+    <text x="582" y="767" font-size="11" font-family="SFMono-Regular, Consolas, Menlo, monospace" fill="#4c1d95">def
+        register_plugin_tools(mcp, proxies):
+    </text>
+    <text x="598" y="783" font-size="11" font-family="SFMono-Regular, Consolas, Menlo, monospace" fill="#4c1d95">
+        OtherTools(proxies).register_tools_with_mcp(mcp)
+    </text>
+    <rect x="582" y="797" width="340" height="24" rx="12" fill="#ddd6fe" stroke="#7c3aed"/>
+    <text x="752" y="813" text-anchor="middle" font-size="10" fill="#4c1d95">entry point &#8594;
+        pypowsybl_mcp.plugins.v1
+    </text>
+    <rect x="582" y="827" width="340" height="24" rx="12" fill="#ddd6fe" stroke="#7c3aed"/>
+    <text x="752" y="843" text-anchor="middle" font-size="10" fill="#4c1d95">entry point &#8594;
+        pypowsybl_mcp.resources.v1 (optional)
+    </text>
+
+    <!-- Discovery arrows: plugin package -> plugin loader, routed around the outside of the host container -->
+    <path d="M305,685 L305,662 L1080,662 L1080,360 L1010,360" stroke="#7c3aed" stroke-width="2" fill="none"
+          marker-end="url(#arrow)"/>
+    <circle cx="700" cy="662" r="11" fill="#1e293b"/>
+    <text x="700" y="666" text-anchor="middle" font-size="10" font-weight="700" fill="#ffffff">2</text>
+
+    <path d="M775,685 L775,675 L1100,675 L1100,380 L1010,380" stroke="#7c3aed" stroke-width="2" fill="none"
+          marker-end="url(#arrow)"/>
+    <circle cx="950" cy="675" r="11" fill="#1e293b"/>
+    <text x="950" y="679" text-anchor="middle" font-size="10" font-weight="700" fill="#ffffff">2</text>
+
+    <!-- Note -->
+    <text x="575" y="915" text-anchor="middle" font-size="11.5" font-style="italic" fill="#64748b">...any number of
+        additional plugin packages may register into either or both groups
+    </text>
+
+    <!-- Legend -->
+    <rect x="40" y="940" width="1070" height="170" rx="12" fill="#f8fafc" stroke="#334155" stroke-width="1"/>
+    <text x="64" y="964" font-size="13.5" font-weight="700" fill="#0f172a">How it works</text>
+
+    <circle cx="64" cy="985" r="10" fill="#1e293b"/>
+    <text x="64" y="989" text-anchor="middle" font-size="10" font-weight="700" fill="#ffffff">1</text>
+    <text x="84" y="989" font-size="12" fill="#1e293b">pip install — the plugin declares an entry point in
+        "pypowsybl_mcp.plugins.v1" (tools) and/or "pypowsybl_mcp.resources.v1" (resources/prompts).
+    </text>
+
+    <circle cx="64" cy="1011" r="10" fill="#1e293b"/>
+    <text x="64" y="1015" text-anchor="middle" font-size="10" font-weight="700" fill="#ffffff">2</text>
+    <text x="84" y="1015" font-size="12" fill="#1e293b">at startup, the host scans each group and calls the matching
+        registrar (register_plugin_tools / register_plugin_resources).
+    </text>
+
+    <circle cx="64" cy="1037" r="10" fill="#1e293b"/>
+    <text x="64" y="1041" text-anchor="middle" font-size="10" font-weight="700" fill="#ffffff">3</text>
+    <text x="84" y="1041" font-size="12" fill="#1e293b">loaded tools join the unified tool registry; loaded
+        resources/prompts appear in resources/list and prompts/list — indistinguishable from built-ins.
+    </text>
+
+    <circle cx="64" cy="1063" r="10" fill="#1e293b"/>
+    <text x="64" y="1067" text-anchor="middle" font-size="10" font-weight="700" fill="#ffffff">4</text>
+    <text x="84" y="1067" font-size="12" fill="#1e293b">at request time, any tool or resource handler resolves
+        session_id from ctx and calls get_proxy(session_id) to read/write the shared proxy.
+    </text>
+
+    <text x="84" y="1093" font-size="11.5" font-style="italic" fill="#475569">A plugin that fails to load is logged and
+        skipped — it never takes the shared host down.
+    </text>
+</svg>

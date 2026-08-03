@@ -1,12 +1,10 @@
-#!/bin/bash
 #  Copyright (c) 2026, RTE (http://www.rte-france.com)
 #  This Source Code Form is subject to the terms of the Mozilla Public
 #  License, v. 2.0. If a copy of the MPL was not distributed with this
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
-echo
-echo "This script starts the MCP server"
-echo
-
-uv run python -m pypowsybl_mcp.server
+voltage_init_mode = "UNIFORM_VALUES"
+balance_type = "PROPORTIONAL_TO_GENERATION_P_MAX"
+distributed_slack = true
+provider = "OpenLoadFlow"

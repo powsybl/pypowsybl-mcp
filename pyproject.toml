@@ -1,3 +1,9 @@
+#  Copyright (c) 2026, RTE (http://www.rte-france.com)
+#  This Source Code Form is subject to the terms of the Mozilla Public
+#  License, v. 2.0. If a copy of the MPL was not distributed with this
+#  file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#  SPDX-License-Identifier: MPL-2.0
+
 [project]
 name = "pypowsybl-mcp"
 version = "0.6.0"
@@ -27,15 +33,16 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
+    "beautifulsoup4>=4.15.0",
     "cachetools>=7.1.4",
     "loguru>=0.7.3",
+    "markdownify>=1.2.2",
     "mcp>=1.27.2",
     "openai>=2.41.0",
     "openai-agents[litellm]>=0.17.4",
     "pandas>=3.0.1",
     "pypowsybl==1.15.0",
     "starlette>=0.52.1",
-    "supervisor>=4.3.0",
     "tabulate>=0.10.0",
 ]
 
@@ -56,5 +63,8 @@ documentation = "https://github.com/powsybl/pypowsybl-mcp/tree/main/docs"
 "Bug Tracker" = "https://github.com/powsybl/pypowsybl-mcp/issues"
 
 [tool.setuptools.packages.find]
-include = ["pypowsybl_mcp"]
+include = ["pypowsybl_mcp*"]
 exclude = ["data*", "logs*", "tests*", "docs*"]
+
+[tool.setuptools.package-data]
+pypowsybl_mcp = ["config/*.toml", "skills/*.md"]

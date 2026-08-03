@@ -64,6 +64,7 @@ test_documents/
 scripts/**/*.json
 scripts/**/*.out*
 scripts/deduplicate_mvp.ipynb
+uv.lock
 # PyCharm ide files
 .idea
 
