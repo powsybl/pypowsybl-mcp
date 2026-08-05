@@ -33,13 +33,28 @@ async def test_generate_code_from_macro_without_final_output_attr():
     # Runner.run may return something without a `final_output` attribute;
     # in that case the function should fall back to str(result).
     with patch.object(
-        code_generation.Runner, "run", AsyncMock(return_value="raw result")
+        code_generation.Runner, "run", AsyncMock(return_value="raw_result = 1")
     ):
         response = await code_generation.generate_code_from_macro(
             actions="create_ieee14",
         )
 
-    assert response == "raw result"
+    assert response == "raw_result = 1"
+
+
+@pytest.mark.asyncio
+async def test_generate_code_from_macro_invalid_syntax():
+    mock_result = MagicMock()
+    mock_result.final_output = "def main(:\n    pass"
+
+    with patch.object(
+        code_generation.Runner, "run", AsyncMock(return_value=mock_result)
+    ):
+        response = await code_generation.generate_code_from_macro(
+            actions="create_ieee14",
+        )
+
+    assert response.startswith("# Error: Generated code has a syntax error")
 
 
 @pytest.mark.asyncio

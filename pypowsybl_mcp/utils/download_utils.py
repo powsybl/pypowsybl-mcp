@@ -6,6 +6,7 @@
 
 import mimetypes
 import os
+import re
 import secrets
 import tempfile
 import threading
@@ -19,6 +20,17 @@ from starlette.responses import JSONResponse, Response
 # Global registry for temporary download links
 download_links: dict[str, dict[str, Any]] = {}
 download_links_lock = threading.Lock()
+
+# Allow only simple filenames (no path separators or traversal)
+_SAFE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _sanitize_filename(filename: str) -> str:
+    """Reduce filename to a bare basename and reject anything unsafe."""
+    candidate = os.path.basename(filename)
+    if not _SAFE_FILENAME_RE.match(candidate) or candidate in (".", ".."):
+        raise ValueError(f"Invalid or unsafe filename: {filename!r}")
+    return candidate
 
 
 def cleanup_expired_links():
@@ -62,6 +74,7 @@ def generate_download_link(
     """
     cleanup_expired_links()
 
+    filename = _sanitize_filename(filename)
     token = secrets.token_urlsafe(32)
     expires_at = datetime.now() + timedelta(seconds=expiry_seconds)
 

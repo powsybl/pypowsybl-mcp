@@ -4,6 +4,7 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
+import ast
 import asyncio
 import os
 
@@ -158,7 +159,7 @@ ai_config = {
     "model_name": os.getenv("OPENAI_DEFAULT_MODEL", "gpt-5.1"),
     "api_key": os.getenv("OPENAI_API_KEY", ""),
     "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-    "reasoning_level": "high",
+    "reasoning_level": "medium",
     "verbosity": "low",
     "max_turns": 10,
 }
@@ -173,7 +174,7 @@ def initialize_agent() -> Agent:
 
     coding_agent = create_agent(
         name="coding_agent",
-        model_name="gpt-5.1",
+        model_name=ai_config["model_name"],
         api_key=ai_config["api_key"],
         base_url=ai_config["base_url"],
         instructions=CODE_GENERATION_INSTRUCTIONS,
@@ -185,6 +186,15 @@ def initialize_agent() -> Agent:
 
 
 coding_agent = initialize_agent()
+
+
+def _check_syntax(code: str) -> str | None:
+    """Return a syntax error message if `code` is not valid Python, else None."""
+    try:
+        ast.parse(code)
+    except SyntaxError as e:
+        return f"{e.msg} (line {e.lineno})"
+    return None
 
 
 async def generate_code_from_macro(
@@ -222,6 +232,12 @@ async def generate_code_from_macro(
         response = (
             result.final_output if hasattr(result, "final_output") else str(result)
         )
+        syntax_error = _check_syntax(response)
+        if syntax_error:
+            logger.error(
+                f"Generated code failed syntax validation: {syntax_error}\n{response}"
+            )
+            return f"# Error: Generated code has a syntax error: {syntax_error}"
         return response
     except asyncio.TimeoutError:
         error_msg = f"Code generation timed out after {AI_TIMEOUT} seconds"
