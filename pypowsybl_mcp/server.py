@@ -35,7 +35,7 @@ from pypowsybl_mcp.tools.sensitivity_tools import (
 from pypowsybl_mcp.tools.utils.code_export import register_code_tools
 from pypowsybl_mcp.tools.utils.io import register_io_tools
 from pypowsybl_mcp.tools.utils.session import register_session_tools
-from pypowsybl_mcp.tools.utils.visualisation import register_visualization_tools
+from pypowsybl_mcp.tools.utils.visualization import register_visualization_tools
 from pypowsybl_mcp.tools.utils.resources import register_resource_tools
 
 from pypowsybl_mcp.utils.download_utils import (

@@ -32,7 +32,7 @@ MAX_INLINE_CONTENT_CHARS = 40000
 # Some pypowsybl names are misleading: the verb does not describe what the
 # method operates on, or the name reads as a module-level function when it is
 # really a method on a class (e.g. Network.disconnect). An agent that trusts
-# the name instead of the behaviour will misuse the API. We prepend a short
+# the name instead of the behavior will misuse the API. We prepend a short
 # clarifying banner to the documentation of such methods, so the correction
 # reaches the agent exactly when it is reading that method — a place it cannot
 # skim past, unlike the tool docstring or the skill.
@@ -156,7 +156,7 @@ class ResourceTools(PyPowsyblTool):
 
         CALL THIS TOOL WHENEVER YOU HAVE A PYPOWSYBL API QUESTION. That means
         any time you need a method's exact name, signature, parameters,
-        accepted values, return type, or behaviour, and any time you are about
+        accepted values, return type, or behavior, and any time you are about
         to write or generate pypowsybl code. Do NOT answer such questions from
         prior knowledge: the pypowsybl API changes across versions and your
         recollection may be outdated, incomplete, or wrong. This documentation
@@ -198,7 +198,7 @@ class ResourceTools(PyPowsyblTool):
             the Network object — it opens the switches isolating ONE element
             (line, generator, ...) given that element's id.
         When a fetched page carries a "Naming note" banner, read it first: it
-        flags a name whose behaviour is commonly misread.
+        flags a name whose behavior is commonly misread.
 
         Parameters:
             class_object: str

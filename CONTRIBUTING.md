@@ -68,7 +68,7 @@ CI will reject PRs that fail either check.
 ## Submitting a pull request
 
 1. Fork the repository and create a feature branch from `main`.
-2. Make your changes. Add or update tests for any new behaviour.
+2. Make your changes. Add or update tests for any new behavior.
 3. Run the full test suite and linter locally (see above).
 4. Open a pull request against `main`. Describe what the change does and why.
 5. Reference any related issues with `Fixes #<number>` in the PR description.

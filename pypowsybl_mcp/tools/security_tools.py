@@ -808,7 +808,7 @@ class SecurityTools(PyPowsyblTool):
         + security analysis + parsing.
 
         Args:
-            network_id (str, optional): Network to analyse. Uses the current network if omitted.
+            network_id (str, optional): Network to analyze. Uses the current network if omitted.
             element_type (str, optional): Kind of elements to look at (default: "lines").
                 For study="n", passed to get_network_element_data.
                 For study="n1", used to build the contingency list when contingencies is omitted.

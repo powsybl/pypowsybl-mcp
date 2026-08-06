@@ -11,7 +11,7 @@ This skill allows fetching and using documentation for `pypowsybl` classes and m
 
 **Call `get_online_resource` whenever you have a pypowsybl API question** — any
 time you need a method's exact name, signature, parameters, accepted values,
-return type, or behaviour, and any time you are about to write or generate
+return type, or behavior, and any time you are about to write or generate
 pypowsybl code. **Do not answer such questions from prior knowledge.** The
 pypowsybl API changes across versions and your recollection may be outdated,
 incomplete, or wrong. This documentation is the single source of truth: consult
@@ -46,7 +46,7 @@ Where:
   `pypowsybl.network.Network.disconnect`). Pass the class-qualified form —
   `method_name="Network.disconnect"` — to fetch a class method.
 
-## Naming pitfalls (verify behaviour, not name)
+## Naming pitfalls (verify behavior, not name)
 
 Some pypowsybl names are misleading: the verb does not describe what the method
 operates on, or a name reads as a module-level function when it is really a
@@ -61,7 +61,7 @@ Known traps (fetch the full doc before using):
 | `Network.disconnect` | Opens the switches isolating ONE element (line/generator/...) by id. It does **not** tear down the Network object. Class method. |
 | `Network.connect` | Re-closes the switches to reconnect ONE element by id. It does **not** connect the Network to anything. Class method. |
 
-If a method's behaviour ever surprises you, fetch its full documentation and
+If a method's behavior ever surprises you, fetch its full documentation and
 re-read it before acting.
 
 `read_resource` accepts either the bare id (`network-create_empty`) or the full URI (`resources://temp/network-create_empty`).

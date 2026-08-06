@@ -673,7 +673,7 @@ async def test_get_network_element_data_filter_errors(network_tools, mock_ctx):
 async def test_filter_lines_loading_from_operational_limits(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    # get_lines() has flows but no Imax column (real pypowsybl behaviour).
+    # get_lines() has flows but no Imax column (real pypowsybl behavior).
     mock_net.get_lines.return_value = pd.DataFrame(
         {"i1": [100.0, 50.0], "i2": [-100.0, -50.0]},
         index=["l1", "l2"],
