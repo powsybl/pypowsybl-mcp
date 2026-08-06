@@ -25,9 +25,11 @@ def get_local_ip():
 # Download link configuration
 DOWNLOAD_HOST = get_local_ip() or "localhost"
 
+_public_address = os.environ.get("MCP_PUBLIC_ADDRESS")
 DOWNLOAD_BASE_URL = (
-    f"{os.environ.get('MCP_PUBLIC_ADDRESS')}/download"
-    or f"http://{DOWNLOAD_HOST}:{DEFAULT_PORT}/download"
+    f"{_public_address}/download"
+    if _public_address
+    else f"http://{DOWNLOAD_HOST}:{DEFAULT_PORT}/download"
 )
 DOWNLOAD_LINK_EXPIRY_SECONDS = int(
     os.environ.get("DOWNLOAD_LINK_EXPIRY_SECONDS", "3600")

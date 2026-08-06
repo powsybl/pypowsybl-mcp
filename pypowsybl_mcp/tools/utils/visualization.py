@@ -139,7 +139,7 @@ class VisualizationTools(PyPowsyblTool):
                 f"Generated single-line diagram URL for substation '{substation_id}' in network '{network_id}': {link_info['download_url']}"
             )
             return link_info["download_url"]
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             msg = f"Error generating single-line diagram: {e}"
             logger.error(msg)
             return msg
@@ -228,7 +228,7 @@ class VisualizationTools(PyPowsyblTool):
             )
             return link_info["download_url"]
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             msg = f"Failed to create visualization: {e}"
             logger.error(msg)
             return msg

@@ -8,6 +8,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pypowsybl as pp
 import pytest
 from cachetools import TTLCache
 
@@ -278,7 +279,7 @@ async def test_get_loadflow_provider_info_single_provider_error(lf_tools, mock_c
 
     def fake_params(provider_name):
         if provider_name == "BadProvider":
-            raise RuntimeError("cannot introspect provider")
+            raise pp.PyPowsyblError("cannot introspect provider")
         return pd.DataFrame({"p": {"description": "d", "type": "t"}})
 
     with (
@@ -307,7 +308,7 @@ async def test_get_loadflow_provider_info_single_provider_error(lf_tools, mock_c
 async def test_get_loadflow_provider_info_outer_exception(lf_tools, mock_ctx):
     with patch(
         "pypowsybl_mcp.tools.loadflow_tools.pp.loadflow.get_provider_names",
-        side_effect=RuntimeError("boom"),
+        side_effect=pp.PyPowsyblError("boom"),
     ):
         out = await lf_tools.get_loadflow_provider_info(ctx=mock_ctx)
 
@@ -320,7 +321,7 @@ async def test_get_loadflow_provider_info_outer_exception(lf_tools, mock_ctx):
 async def test_set_loadflow_provider_exception(lf_tools, mock_ctx):
     with patch(
         "pypowsybl_mcp.tools.loadflow_tools.pp.loadflow.get_provider_names",
-        side_effect=RuntimeError("boom"),
+        side_effect=pp.PyPowsyblError("boom"),
     ):
         out = await lf_tools.set_loadflow_provider(
             provider="OpenLoadFlow", ctx=mock_ctx
@@ -335,9 +336,9 @@ async def test_set_loadflow_provider_exception(lf_tools, mock_ctx):
 async def test_get_loadflow_params_exception(lf_tools, mock_ctx):
     proxy = lf_tools.get_proxy("test-session")
     proxy.lf_params = MagicMock()
-    proxy.lf_params.to_json.side_effect = RuntimeError("cannot serialize")
+    proxy.lf_params.to_json.side_effect = pp.PyPowsyblError("cannot serialize")
 
-    with pytest.raises(RuntimeError, match="cannot serialize"):
+    with pytest.raises(pp.PyPowsyblError, match="cannot serialize"):
         await lf_tools.get_loadflow_params(ctx=mock_ctx)
 
 
@@ -345,7 +346,7 @@ async def test_get_loadflow_params_exception(lf_tools, mock_ctx):
 async def test_restore_default_loadflow_param_exception(lf_tools, mock_ctx):
     proxy = lf_tools.get_proxy("test-session")
     proxy.init_lf_params_from_config = MagicMock(
-        side_effect=RuntimeError("cannot reset")
+        side_effect=pp.PyPowsyblError("cannot reset")
     )
 
     result = await lf_tools.restore_default_loadflow_param(ctx=mock_ctx)
@@ -358,7 +359,7 @@ async def test_restore_default_loadflow_param_exception(lf_tools, mock_ctx):
 @pytest.mark.asyncio
 async def test_update_loadflow_params_exception(lf_tools, mock_ctx):
     proxy = lf_tools.get_proxy("test-session")
-    proxy.update_lf_params = MagicMock(side_effect=RuntimeError("cannot update"))
+    proxy.update_lf_params = MagicMock(side_effect=pp.PyPowsyblError("cannot update"))
 
     result = await lf_tools.update_loadflow_params(
         voltage_init_mode="DC_VALUES", ctx=mock_ctx
@@ -443,7 +444,7 @@ async def test_run_loadflow_exception(lf_tools, mock_ctx):
 
     with patch(
         "pypowsybl_mcp.tools.loadflow_tools.pp.loadflow.run_ac",
-        side_effect=RuntimeError("solver crashed"),
+        side_effect=pp.PyPowsyblError("solver crashed"),
     ):
         result = await lf_tools.run_loadflow(network_id="net1", ctx=mock_ctx)
 

@@ -215,7 +215,7 @@ class PyPowsyblMCPServerProxy:
                 "is_current": network_id == self.current_network_id,
                 "has_loadflow_results": network_id in self.loadflow_results,
             }
-        except Exception as e:
+        except (pp.PyPowsyblError, ValueError, KeyError, OSError) as e:
             logger.error(f"Error getting network summary: {e}")
             return {"error": f"Error getting network summary: {e!s}"}
 
@@ -261,7 +261,7 @@ class PyPowsyblMCPServerProxy:
                 if tmp_path_obj.exists():
                     tmp_path_obj.unlink()
 
-        except Exception as e:
+        except (pp.PyPowsyblError, ValueError, KeyError, OSError) as e:
             logger.error(f"Error creating visualization: {e}")
             raise ValueError(f"Error creating visualization: {e!s}")
 

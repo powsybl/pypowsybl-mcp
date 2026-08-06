@@ -61,7 +61,7 @@ class SensitivityTools(PyPowsyblTool):
             return json.dumps(payload, indent=2)
         except ValueError as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
-        except Exception as e:
+        except (pp.PyPowsyblError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"Error formatting sensitivity results: {e}")
             return f"Error formatting sensitivity results: {e!s}"
 
@@ -176,7 +176,7 @@ class SensitivityTools(PyPowsyblTool):
                 result, matrix_id, limit=limit, cursor=cursor
             )
 
-        except Exception as e:
+        except (pp.PyPowsyblError, ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"DC Sensitivity Analysis failed: {e}")
             return f"DC Sensitivity Analysis failed: {e!s}"
 
@@ -255,7 +255,7 @@ class SensitivityTools(PyPowsyblTool):
                 result, matrix_id, limit=limit, cursor=cursor
             )
 
-        except Exception as e:
+        except (pp.PyPowsyblError, ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"AC Sensitivity Analysis failed: {e}")
             return f"AC Sensitivity Analysis failed: {e!s}"
 
@@ -314,7 +314,7 @@ class SensitivityTools(PyPowsyblTool):
             return self._handle_sensitivity_result(
                 result, matrix_id, limit=limit, cursor=cursor
             )
-        except Exception as e:
+        except (pp.PyPowsyblError, ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"PSDF Analysis failed: {e}")
             return f"PSDF Analysis failed: {e!s}"
 
@@ -372,7 +372,7 @@ class SensitivityTools(PyPowsyblTool):
             return self._handle_sensitivity_result(
                 result, matrix_id, limit=limit, cursor=cursor
             )
-        except Exception as e:
+        except (pp.PyPowsyblError, ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"DCDF Analysis failed: {e}")
             return f"DCDF Analysis failed: {e!s}"
 
@@ -460,7 +460,7 @@ class SensitivityTools(PyPowsyblTool):
             return self._handle_sensitivity_result(
                 result, matrix_id, limit=limit, cursor=cursor
             )
-        except Exception as e:
+        except (pp.PyPowsyblError, ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"PTDF Analysis failed: {e}")
             return f"PTDF Analysis failed: {e!s}"
 
@@ -555,6 +555,6 @@ class SensitivityTools(PyPowsyblTool):
             return self._handle_sensitivity_result(
                 result, matrix_id, limit=limit, cursor=cursor
             )
-        except Exception as e:
+        except (pp.PyPowsyblError, ValueError, KeyError, OSError, RuntimeError) as e:
             logger.error(f"Custom Sensitivity Analysis failed: {e}")
             return f"Custom Sensitivity Analysis failed: {e!s}"

@@ -6,6 +6,7 @@
 
 from unittest.mock import MagicMock, mock_open, patch
 
+import pypowsybl as pp
 import pytest
 from cachetools import TTLCache
 
@@ -113,7 +114,7 @@ async def test_load_network_from_url_success(io_tools, mock_ctx):
 
 @pytest.mark.asyncio
 async def test_load_network_from_url_failure(io_tools, mock_ctx):
-    with patch("urllib.request.urlopen", side_effect=Exception("Download failed")):
+    with patch("urllib.request.urlopen", side_effect=OSError("Download failed")):
         result = await io_tools.load_network_from_url(
             url="http://example.com/test.xiidm", network_id="net_url", ctx=mock_ctx
         )
@@ -227,7 +228,7 @@ async def test_load_network_from_url_cleanup_error_is_logged(io_tools, mock_ctx)
 async def test_load_network_from_file_exception_handling(io_tools, mock_ctx):
     with (
         patch("os.path.exists", return_value=True),
-        patch("pypowsybl.network.load", side_effect=RuntimeError("bad format")),
+        patch("pypowsybl.network.load", side_effect=pp.PyPowsyblError("bad format")),
     ):
         result = await io_tools.load_network_from_file(
             path="broken.xiidm", network_id="net1", ctx=mock_ctx
@@ -273,7 +274,7 @@ async def test_export_network_uses_provided_file_name(io_tools, mock_ctx):
 async def test_export_network_exception_handling(io_tools, mock_ctx):
     proxy = io_tools.get_proxy("test-session")
     mock_network = MagicMock()
-    mock_network.save.side_effect = RuntimeError("disk full")
+    mock_network.save.side_effect = pp.PyPowsyblError("disk full")
     proxy.networks["net1"] = mock_network
 
     with (

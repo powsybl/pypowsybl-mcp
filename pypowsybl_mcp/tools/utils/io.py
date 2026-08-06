@@ -3,6 +3,7 @@
 #  License, v. 2.0. If a copy of the MPL was not distributed with this
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
+import asyncio
 import os
 import tempfile
 import urllib.request
@@ -24,6 +25,16 @@ from pypowsybl_mcp.utils.user_session_management import get_session_id
 def register_io_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
     io_tools = IOTools(pypowsybl_proxies)
     io_tools.register_tools_with_mcp(mcp)
+
+
+def _download_to_file(url: str, dest_path: str) -> None:
+    with urllib.request.urlopen(url) as response, open(dest_path, "wb") as tmp_file:
+        tmp_file.write(response.read())
+
+
+def _read_file_bytes(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
 
 
 class Status:
@@ -101,10 +112,8 @@ class IOTools(PyPowsyblTool):
             # Create the fill path of the temporary file inside the temporary directory
             tmp_path = os.path.join(tmp_dir, file_name)
 
-            # Download and save the remote file
-            with urllib.request.urlopen(url) as response:
-                with open(tmp_path, "wb") as tmp_file:
-                    tmp_file.write(response.read())
+            # Download and save the remote file (blocking I/O off the event loop)
+            await asyncio.to_thread(_download_to_file, url, tmp_path)
 
             try:
                 # Load the network from the temporary file
@@ -114,7 +123,7 @@ class IOTools(PyPowsyblTool):
                 if tmp_path and os.path.exists(tmp_path):
                     try:
                         os.unlink(tmp_path)
-                    except Exception as cleanup_err:
+                    except OSError as cleanup_err:
                         logger.warning(
                             f"Could not remove temp file {tmp_path}: {cleanup_err}"
                         )
@@ -133,7 +142,7 @@ class IOTools(PyPowsyblTool):
                 "message": f"Successfully loaded network '{network_id}' from {url} with {len(buses)} buses",
             }
 
-        except Exception as e:
+        except (pp.PyPowsyblError, OSError, ValueError) as e:
             logger.error(f"Failed to load network from URL: {e}")
             return {
                 "status": Status.ERROR,
@@ -202,7 +211,7 @@ class IOTools(PyPowsyblTool):
                 "message": f"Successfully loaded network '{network_id}' from {path} with {len(buses)} buses",
             }
 
-        except Exception as e:
+        except (pp.PyPowsyblError, OSError, ValueError) as e:
             logger.error(f"Failed to load network from file: {e}")
             return {
                 "status": Status.ERROR,
@@ -316,9 +325,8 @@ class IOTools(PyPowsyblTool):
                 # Save network to the temporary file
                 network.save(tmp_path, format=format_type)
 
-                # Read the file data
-                with open(tmp_path, "rb") as f:
-                    file_data = f.read()
+                # Read the file data (blocking I/O off the event loop)
+                file_data = await asyncio.to_thread(_read_file_bytes, tmp_path)
 
                 # Generate download link
                 link_info = generate_download_link(
@@ -341,7 +349,7 @@ class IOTools(PyPowsyblTool):
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
 
-        except Exception as e:
+        except (pp.PyPowsyblError, OSError) as e:
             logger.error(f"Failed to export network: {e}")
             return {
                 "status": Status.ERROR,

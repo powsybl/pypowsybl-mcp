@@ -132,7 +132,7 @@ def test_concurrent_no_errors():
         try:
             for i in range(100):
                 cache[f"key-{i}"] = i
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             errors.append(e)
 
     def reader():
@@ -140,7 +140,7 @@ def test_concurrent_no_errors():
             for _ in range(100):
                 _ = cache.keys()
                 _ = len(cache)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             errors.append(e)
 
     threads = [threading.Thread(target=writer) for _ in range(5)] + [
@@ -166,7 +166,7 @@ def test_concurrent_writes_correctness():
             for i in range(items_per_thread):
                 key = f"t{thread_id}-k{i}"
                 cache[key] = thread_id * 1000 + i
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             errors.append(e)
 
     threads = [
@@ -193,7 +193,7 @@ def test_concurrent_mixed_operations():
         try:
             for i in range(200):
                 cache[f"key-{i % 50}"] = i
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             errors.append(e)
 
     def reader():
@@ -201,14 +201,14 @@ def test_concurrent_mixed_operations():
             for i in range(200):
                 cache.get(f"key-{i % 50}")
                 _ = len(cache)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             errors.append(e)
 
     def deleter():
         try:
             for i in range(200):
                 cache.pop(f"key-{i % 50}", None)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             errors.append(e)
 
     threads = (
@@ -234,7 +234,7 @@ def test_concurrent_setdefault_atomicity():
         try:
             val = cache.setdefault("shared", 42)
             results.append(val)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             errors.append(e)
 
     threads = [threading.Thread(target=set_default) for _ in range(50)]

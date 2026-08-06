@@ -64,9 +64,9 @@ async def test_plot_substation_single_line_diagram_success(viz_tools, mock_ctx):
     mock_net.get_single_line_diagram.return_value = mock_sld
 
     with (
-        patch("pypowsybl_mcp.tools.utils.visualization.py.pn.SldParameters"),
+        patch("pypowsybl.network.SldParameters"),
         patch(
-            "pypowsybl_mcp.tools.utils.visualization.py.generate_download_link"
+            "pypowsybl_mcp.tools.utils.visualization.generate_download_link"
         ) as mock_gen_link,
     ):
         mock_gen_link.return_value = {
@@ -91,7 +91,7 @@ async def test_visualize_network_success(viz_tools, mock_ctx):
     with (
         patch.object(proxy, "create_network_visualization_bytes") as mock_viz,
         patch(
-            "pypowsybl_mcp.tools.utils.visualization.py.generate_download_link"
+            "pypowsybl_mcp.tools.utils.visualization.generate_download_link"
         ) as mock_gen_link,
     ):
         mock_viz.return_value = b"<svg></svg>"
@@ -124,9 +124,9 @@ async def test_plot_substation_uses_current_network_id(viz_tools, mock_ctx):
     proxy.current_network_id = "net1"
 
     with (
-        patch("pypowsybl_mcp.tools.utils.visualization.py.pn.SldParameters"),
+        patch("pypowsybl.network.SldParameters"),
         patch(
-            "pypowsybl_mcp.tools.utils.visualization.py.generate_download_link"
+            "pypowsybl_mcp.tools.utils.visualization.generate_download_link"
         ) as mock_gen_link,
     ):
         mock_gen_link.return_value = {"download_url": "http://localhost/download/x"}
@@ -184,7 +184,7 @@ async def test_plot_substation_exception_handling(viz_tools, mock_ctx):
     proxy.networks["net1"] = mock_net
     proxy.current_network_id = "net1"
 
-    with patch("pypowsybl_mcp.tools.utils.visualization.py.pn.SldParameters"):
+    with patch("pypowsybl.network.SldParameters"):
         result = await viz_tools.plot_substation_single_line_diagram(
             network_id="net1", substation_id="sub1", ctx=mock_ctx
         )
@@ -202,7 +202,7 @@ async def test_visualize_network_uses_current_network_id(viz_tools, mock_ctx):
     with (
         patch.object(proxy, "create_network_visualization_bytes") as mock_viz,
         patch(
-            "pypowsybl_mcp.tools.utils.visualization.py.generate_download_link"
+            "pypowsybl_mcp.tools.utils.visualization.generate_download_link"
         ) as mock_gen_link,
     ):
         mock_viz.return_value = b"<svg></svg>"

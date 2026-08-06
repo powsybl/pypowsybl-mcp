@@ -243,7 +243,7 @@ async def generate_code_from_macro(
         error_msg = f"Code generation timed out after {AI_TIMEOUT} seconds"
         logger.error(error_msg)
         return f"# Error: {error_msg}"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         error_msg = f"Error during code generation: {e!s}"
         logger.error(error_msg)
         return f"# Error: {error_msg}"

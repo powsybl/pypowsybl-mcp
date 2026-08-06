@@ -4,9 +4,12 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
+import asyncio
+import contextlib
 import os
 import tempfile
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -32,13 +35,11 @@ def clear_download_links():
             info = download_links[token]
             temp_path = info.get("temp_path")
             if temp_path and os.path.exists(temp_path):
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(temp_path)
                     temp_dir = os.path.dirname(temp_path)
                     if os.path.exists(temp_dir):
                         os.rmdir(temp_dir)
-                except Exception:
-                    pass
         download_links.clear()
 
 
@@ -77,7 +78,7 @@ def test_cleanup_expired_links():
         download_links[token] = {
             "filename": "expired.txt",
             "temp_path": temp_path,
-            "expires_at": datetime.now() - timedelta(seconds=1),
+            "expires_at": datetime.now(UTC) - timedelta(seconds=1),
         }
 
     assert os.path.exists(temp_path)
@@ -128,14 +129,13 @@ async def test_download_file_endpoint_expired():
     token = "expired_token"
     temp_dir = tempfile.mkdtemp()
     temp_path = os.path.join(temp_dir, "expired.txt")
-    with open(temp_path, "wb") as f:
-        f.write(b"expired")
+    await asyncio.to_thread(Path(temp_path).write_bytes, b"expired")
 
     with download_links_lock:
         download_links[token] = {
             "filename": "expired.txt",
             "temp_path": temp_path,
-            "expires_at": datetime.now() - timedelta(seconds=1),
+            "expires_at": datetime.now(UTC) - timedelta(seconds=1),
         }
 
     mock_request = MagicMock()
@@ -173,7 +173,7 @@ def test_cleanup_expired_links_deletion_error_is_logged():
         download_links[token] = {
             "filename": "expired.txt",
             "temp_path": temp_path,
-            "expires_at": datetime.now() - timedelta(seconds=1),
+            "expires_at": datetime.now(UTC) - timedelta(seconds=1),
         }
 
     with patch("os.unlink", side_effect=OSError("permission denied")):
@@ -194,11 +194,14 @@ def test_generate_download_link_write_failure_cleans_up_and_raises():
     file_data = b"hello world"
     base_url = "http://example.com/download"
 
-    with patch(
-        "pypowsybl_mcp.utils.download_utils.open",
-        side_effect=OSError("disk full"),
-        create=True,
-    ), pytest.raises(OSError, match="disk full"):
+    with (
+        patch(
+            "pypowsybl_mcp.utils.download_utils.open",
+            side_effect=OSError("disk full"),
+            create=True,
+        ),
+        pytest.raises(OSError, match="disk full"),
+    ):
         generate_download_link(filename, file_data, base_url)
 
     # No entry should have been registered
@@ -211,14 +214,13 @@ async def test_download_file_endpoint_expired_deletion_error_is_logged():
     token = "expired_token_err2"
     temp_dir = tempfile.mkdtemp()
     temp_path = os.path.join(temp_dir, "expired.txt")
-    with open(temp_path, "wb") as f:
-        f.write(b"expired")
+    await asyncio.to_thread(Path(temp_path).write_bytes, b"expired")
 
     with download_links_lock:
         download_links[token] = {
             "filename": "expired.txt",
             "temp_path": temp_path,
-            "expires_at": datetime.now() - timedelta(seconds=1),
+            "expires_at": datetime.now(UTC) - timedelta(seconds=1),
         }
 
     mock_request = MagicMock()
@@ -309,9 +311,9 @@ def test_generate_download_link_failure_after_write_cleanup_error_is_swallowed()
                 side_effect=flaky_info,
             ),
             patch("os.unlink", side_effect=OSError("cannot delete")),
+            pytest.raises(RuntimeError, match="logging backend down"),
         ):
-            with pytest.raises(RuntimeError, match="logging backend down"):
-                generate_download_link(filename, file_data, base_url)
+            generate_download_link(filename, file_data, base_url)
         # Note: the failure happens after the registry entry is inserted
         # (download_links[token] = ...) but before the final "generated link"
         # log line, so the token is left dangling in the registry even though
@@ -338,7 +340,7 @@ async def test_download_file_endpoint_temp_file_missing_on_disk_returns_404():
         download_links[token] = {
             "filename": "gone.txt",
             "temp_path": "/nonexistent/path/gone.txt",
-            "expires_at": datetime.now() + timedelta(seconds=60),
+            "expires_at": datetime.now(UTC) + timedelta(seconds=60),
         }
 
     mock_request = MagicMock()

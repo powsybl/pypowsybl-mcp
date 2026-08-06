@@ -8,6 +8,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import pypowsybl as pp
 import pytest
 from cachetools import TTLCache
 
@@ -1018,7 +1019,7 @@ async def test_create_ieee_network_unsupported_type(network_tools, mock_ctx):
 @pytest.mark.asyncio
 async def test_create_ieee_network_exception(network_tools, mock_ctx):
     with patch("pypowsybl.network.create_ieee14") as mock_create:
-        mock_create.side_effect = Exception("boom")
+        mock_create.side_effect = pp.PyPowsyblError("boom")
 
         result = await network_tools.create_ieee_network(
             network_type="IEEE14", network_id="net1", ctx=mock_ctx
@@ -1044,7 +1045,9 @@ async def test_switch_network_not_found(network_tools, mock_ctx):
 async def test_switch_network_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     proxy.networks["net1"] = MagicMock()
-    proxy._get_network_summary = MagicMock(side_effect=Exception("summary boom"))
+    proxy._get_network_summary = MagicMock(
+        side_effect=pp.PyPowsyblError("summary boom")
+    )
 
     result = await network_tools.switch_network(network_id="net1", ctx=mock_ctx)
 
@@ -1067,7 +1070,7 @@ async def test_list_networks_empty(network_tools, mock_ctx):
 async def test_list_networks_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     proxy.networks["net1"] = MagicMock()
-    proxy._get_network_summary = MagicMock(side_effect=Exception("boom"))
+    proxy._get_network_summary = MagicMock(side_effect=pp.PyPowsyblError("boom"))
 
     result = await network_tools.list_networks(ctx=mock_ctx)
 
@@ -1115,7 +1118,9 @@ async def test_get_network_info_not_found(network_tools, mock_ctx):
 async def test_get_network_info_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     proxy.networks["net1"] = MagicMock()
-    proxy._get_network_summary = MagicMock(side_effect=Exception("summary boom"))
+    proxy._get_network_summary = MagicMock(
+        side_effect=pp.PyPowsyblError("summary boom")
+    )
 
     result = await network_tools.get_network_info(network_id="net1", ctx=mock_ctx)
 
@@ -1389,7 +1394,7 @@ async def test_modify_network_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
     mock_net.get_generators.return_value.index = ["g1"]
-    mock_net.update_generators.side_effect = Exception("update boom")
+    mock_net.update_generators.side_effect = pp.PyPowsyblError("update boom")
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.modify_network(
@@ -1462,7 +1467,7 @@ async def test_set_line_status_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
     mock_net.get_lines.return_value.index = ["l1"]
-    mock_net.update_lines.side_effect = Exception("update boom")
+    mock_net.update_lines.side_effect = pp.PyPowsyblError("update boom")
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.set_line_status(
@@ -1507,7 +1512,7 @@ async def test_set_switch_status_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
     mock_net.get_switches.return_value.index = ["sw1"]
-    mock_net.update_switches.side_effect = Exception("update boom")
+    mock_net.update_switches.side_effect = pp.PyPowsyblError("update boom")
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.set_switch_status(
@@ -1576,7 +1581,7 @@ async def test_set_tap_position_3wt_wrong_side(network_tools, mock_ctx):
 async def test_set_tap_position_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    mock_net.get_ratio_tap_changers.side_effect = Exception("tap boom")
+    mock_net.get_ratio_tap_changers.side_effect = pp.PyPowsyblError("tap boom")
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.set_tap_position(
@@ -1636,7 +1641,7 @@ async def test_remove_network_clears_current_when_last(network_tools, mock_ctx):
 async def test_remove_network_exception(network_tools, mock_ctx):
     class RaisingDict(dict):
         def __delitem__(self, key):
-            raise RuntimeError("delete boom")
+            raise pp.PyPowsyblError("delete boom")
 
     proxy = network_tools.get_proxy("test-session")
     proxy.networks = RaisingDict({"net1": MagicMock()})
@@ -1663,7 +1668,7 @@ async def test_clone_variant_no_network(network_tools, mock_ctx):
 async def test_clone_variant_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    mock_net.clone_variant.side_effect = Exception("clone boom")
+    mock_net.clone_variant.side_effect = pp.PyPowsyblError("clone boom")
     proxy.networks["net1"] = mock_net
     proxy.current_network_id = "net1"
 
@@ -1697,7 +1702,7 @@ async def test_set_working_variant_clears_loadflow_results(network_tools, mock_c
 async def test_set_working_variant_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    mock_net.set_working_variant.side_effect = Exception("switch boom")
+    mock_net.set_working_variant.side_effect = pp.PyPowsyblError("switch boom")
     proxy.networks["net1"] = mock_net
     proxy.current_network_id = "net1"
 
@@ -1717,7 +1722,7 @@ async def test_get_working_variant_no_network(network_tools, mock_ctx):
 async def test_get_working_variant_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    mock_net.get_working_variant_id.side_effect = Exception("get boom")
+    mock_net.get_working_variant_id.side_effect = pp.PyPowsyblError("get boom")
     proxy.networks["net1"] = mock_net
     proxy.current_network_id = "net1"
 
@@ -1737,7 +1742,7 @@ async def test_list_variants_no_network(network_tools, mock_ctx):
 async def test_list_variants_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    mock_net.get_variant_ids.side_effect = Exception("list boom")
+    mock_net.get_variant_ids.side_effect = pp.PyPowsyblError("list boom")
     proxy.networks["net1"] = mock_net
     proxy.current_network_id = "net1"
 
@@ -1768,7 +1773,7 @@ async def test_remove_variant_initial_state_rejected(network_tools, mock_ctx):
 async def test_remove_variant_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    mock_net.remove_variant.side_effect = Exception("remove boom")
+    mock_net.remove_variant.side_effect = pp.PyPowsyblError("remove boom")
     proxy.networks["net1"] = mock_net
     proxy.current_network_id = "net1"
 
@@ -1900,7 +1905,7 @@ async def test_check_voltage_violations_exception(network_tools, mock_ctx):
 
     with patch(
         "pypowsybl_mcp.tools.network_tools.pp.loadflow.run_ac",
-        side_effect=Exception("lf boom"),
+        side_effect=pp.PyPowsyblError("lf boom"),
     ):
         result = await network_tools.check_voltage_violations(
             network_id="net1", ctx=mock_ctx
@@ -2017,7 +2022,7 @@ async def test_get_network_element_data_operational_limits_failure_is_tolerated(
     mock_net.get_lines.return_value = pd.DataFrame(
         {"i1": [10.0], "i2": [-10.0]}, index=["l1"]
     )
-    mock_net.get_operational_limits.side_effect = Exception("limits boom")
+    mock_net.get_operational_limits.side_effect = pp.PyPowsyblError("limits boom")
     mock_net.get_variant_ids.return_value = ["InitialState"]
     proxy.networks["net1"] = mock_net
 
@@ -2037,8 +2042,8 @@ async def test_get_network_element_data_tap_changer_failures_are_tolerated(
     mock_net.get_2_windings_transformers.return_value = pd.DataFrame(
         {"r": [1.0]}, index=["t1"]
     )
-    mock_net.get_ratio_tap_changers.side_effect = Exception("ratio boom")
-    mock_net.get_phase_tap_changers.side_effect = Exception("phase boom")
+    mock_net.get_ratio_tap_changers.side_effect = pp.PyPowsyblError("ratio boom")
+    mock_net.get_phase_tap_changers.side_effect = pp.PyPowsyblError("phase boom")
     mock_net.get_variant_ids.return_value = ["InitialState"]
     proxy.networks["net1"] = mock_net
 
@@ -2186,7 +2191,7 @@ async def test_get_network_element_data_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
     mock_net.get_variant_ids.return_value = ["InitialState"]
-    mock_net.get_generators.side_effect = Exception("data boom")
+    mock_net.get_generators.side_effect = pp.PyPowsyblError("data boom")
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.get_network_element_data(
@@ -2295,7 +2300,7 @@ async def test_get_network_elements_ids_invalid_cursor(network_tools, mock_ctx):
 async def test_get_network_elements_ids_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    mock_net.get_elements_ids.side_effect = Exception("ids boom")
+    mock_net.get_elements_ids.side_effect = pp.PyPowsyblError("ids boom")
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.get_network_elements_ids(
@@ -2481,7 +2486,7 @@ async def test_get_top_active_power_transit_lines_loadflow_failure_tolerated(
 
     with patch(
         "pypowsybl_mcp.tools.network_tools.pp.loadflow.run_ac",
-        side_effect=Exception("lf boom"),
+        side_effect=pp.PyPowsyblError("lf boom"),
     ):
         result = await network_tools.get_top_active_power_transit_lines(
             network_id="net1", ctx=mock_ctx
@@ -2535,7 +2540,7 @@ async def test_get_top_active_power_transit_lines_k_zero_returns_no_elements(
 async def test_get_top_active_power_transit_lines_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    mock_net.get_lines.side_effect = Exception("lines boom")
+    mock_net.get_lines.side_effect = pp.PyPowsyblError("lines boom")
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.get_top_active_power_transit_lines(

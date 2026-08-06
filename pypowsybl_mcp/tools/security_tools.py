@@ -228,7 +228,11 @@ class SecurityTools(PyPowsyblTool):
             return contingencies, "manual"
 
         if not isinstance(auto_contingencies, dict):
-            raise ValueError("Parameter 'auto_contingencies' must be an object")
+            # ValueError kept for consistency with the other input-validation
+            # errors raised in this method (tested contract).
+            raise ValueError(  # noqa: TRY004
+                "Parameter 'auto_contingencies' must be an object"
+            )
 
         filter_result = self._build_contingencies_from_filter(
             network=network,
@@ -633,7 +637,7 @@ class SecurityTools(PyPowsyblTool):
             logger.info(f"Security analysis completed for network '{network_id}'")
             return json.dumps(result, indent=2)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.exception(f"Failed to run security analysis: {e}")
             return json.dumps(
                 {"success": False, "network_id": network_id, "error": str(e)}, indent=2
@@ -783,7 +787,7 @@ class SecurityTools(PyPowsyblTool):
             return json.dumps(
                 {"success": False, "network_id": network_id, "error": str(e)}, indent=2
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.exception(f"Failed to create contingencies list: {e}")
             return json.dumps(
                 {"success": False, "network_id": network_id, "error": str(e)}, indent=2

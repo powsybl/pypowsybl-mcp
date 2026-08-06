@@ -46,7 +46,7 @@ def discover_and_load_plugins(mcp: FastMCP, pypowsybl_proxies: TTLCache) -> None
             register_plugin_tools = ep.load()
             register_plugin_tools(mcp, pypowsybl_proxies)
             logger.success(f"Loaded plugin '{ep.name}'.")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             # STRICT ISOLATION: a failing plugin must never crash the host server.
             logger.error(f"Failed to load plugin '{ep.name}': {e}", exc_info=True)
 
@@ -66,7 +66,7 @@ def discover_and_load_resource_plugins(
             register_plugin_resources = ep.load()
             register_plugin_resources(mcp, pypowsybl_proxies)
             logger.success(f"Loaded resource/prompt plugin '{ep.name}'.")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(
                 f"Failed to load resource/prompt plugin '{ep.name}': {e}", exc_info=True
             )

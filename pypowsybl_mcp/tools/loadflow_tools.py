@@ -85,7 +85,7 @@ class LoadflowTools(PyPowsyblTool):
                             else "",
                         }
                     providers_details[provider_name] = provider_params
-                except Exception as e:
+                except (pp.PyPowsyblError, ValueError, KeyError) as e:
                     logger.warning(
                         f"Could not get parameters for provider '{provider_name}': {e}"
                     )
@@ -104,7 +104,7 @@ class LoadflowTools(PyPowsyblTool):
             )
             return json.dumps(result, indent=2)
 
-        except Exception as e:
+        except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.exception(f"Failed to get loadflow provider info: {e}")
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
@@ -173,7 +173,7 @@ class LoadflowTools(PyPowsyblTool):
             )
             return json.dumps(result, indent=2)
 
-        except Exception as e:
+        except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.exception(f"Failed to set loadflow provider: {e}")
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
@@ -210,7 +210,7 @@ class LoadflowTools(PyPowsyblTool):
                 },
                 indent=2,
             )
-        except Exception as e:
+        except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.exception(f"Failed to restore default load flow parameters: {e}")
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
@@ -301,7 +301,7 @@ class LoadflowTools(PyPowsyblTool):
                 },
                 indent=2,
             )
-        except Exception as e:
+        except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.exception(f"Failed to update load flow parameters: {e}")
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
@@ -469,7 +469,7 @@ class LoadflowTools(PyPowsyblTool):
                 logger.error(f"Load flow failed for network '{network_id}'")
                 return json.dumps(result, indent=2)
 
-        except Exception as e:
+        except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.exception(f"Failed to run load flow: {e}")
             return json.dumps(
                 {"success": False, "network_id": network_id, "error": str(e)}, indent=2

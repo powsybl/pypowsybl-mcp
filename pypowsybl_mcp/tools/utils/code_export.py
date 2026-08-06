@@ -104,7 +104,7 @@ class CodeTools(PyPowsyblTool):
                                 ]
                                 content += f"\n\n# Source from {prefix}{filename}:\n"
                                 content += "\n".join(filtered_lines)
-                    except Exception as e:
+                    except OSError as e:
                         logger.warning(f"Could not read {file_path}: {e}")
             return content
 
@@ -115,7 +115,7 @@ class CodeTools(PyPowsyblTool):
             actions=actions, reference_code=reference_code
         )
         if output.startswith("# Error:"):
-            raise Exception(output)
+            raise RuntimeError(output)
 
         # Generate download link
         link_info = generate_download_link(

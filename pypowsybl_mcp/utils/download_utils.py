@@ -4,6 +4,7 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
+import asyncio
 import mimetypes
 import os
 import re
@@ -23,6 +24,11 @@ download_links_lock = threading.Lock()
 
 # Allow only simple filenames (no path separators or traversal)
 _SAFE_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _read_file_bytes(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
 
 
 def _sanitize_filename(filename: str) -> str:
@@ -55,7 +61,7 @@ def cleanup_expired_links():
                         if os.path.isdir(temp_dir) and not os.listdir(temp_dir):
                             os.rmdir(temp_dir)
                             logger.debug(f"Deleted temporary directory: {temp_dir}")
-                except Exception as e:
+                except OSError as e:
                     logger.warning(
                         f"Failed to delete temporary file/directory {temp_path}: {e}"
                     )
@@ -113,8 +119,10 @@ def generate_download_link(
                 os.unlink(temp_path)
             if os.path.exists(temp_dir):
                 os.rmdir(temp_dir)
-        except Exception:
-            pass
+        except OSError as cleanup_err:
+            logger.warning(
+                f"Failed to clean up temporary copy for {filename}: {cleanup_err}"
+            )
         logger.error(f"Failed to create temporary copy for {filename}: {e}")
         raise
 
@@ -143,7 +151,7 @@ async def download_file_endpoint(request: Request) -> Response:
             try:
                 os.unlink(temp_path)
                 logger.debug(f"Deleted expired temporary file: {temp_path}")
-            except Exception as e:
+            except OSError as e:
                 logger.warning(f"Failed to delete expired temp file {temp_path}: {e}")
 
         with download_links_lock:
@@ -155,8 +163,7 @@ async def download_file_endpoint(request: Request) -> Response:
 
     try:
         if temp_path and os.path.exists(temp_path):
-            with open(temp_path, "rb") as f:
-                data = f.read()
+            data = await asyncio.to_thread(_read_file_bytes, temp_path)
             logger.info(
                 f"Serving download from temp file: {filename} ({len(data)} bytes)"
             )
@@ -182,8 +189,6 @@ async def download_file_endpoint(request: Request) -> Response:
             )
         else:
             return JSONResponse({"error": "File not found"}, status_code=404)
-    except Exception as e:
+    except OSError as e:
         logger.error(f"Error serving download for token {token}: {e}")
-        return JSONResponse(
-            {"error": f"Failed to read file: {e!s}"}, status_code=500
-        )
+        return JSONResponse({"error": f"Failed to read file: {e!s}"}, status_code=500)

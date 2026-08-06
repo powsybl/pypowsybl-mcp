@@ -295,7 +295,7 @@ class ResourceTools(PyPowsyblTool):
                 },
                 indent=2,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             return json.dumps(
                 {"success": False, "error": f"Error fetching resource: {e}"}, indent=2
             )

@@ -7,6 +7,7 @@
 from unittest.mock import Mock
 
 import pandas as pd
+import pypowsybl as pp
 import pytest
 
 from pypowsybl_mcp.proxy import PyPowsyblMCPServerProxy
@@ -151,7 +152,7 @@ class TestGetNetworkSummary:
     def test_get_network_summary_exception_handling(self, proxy):
         """Test error handling when network methods raise exceptions."""
         network = Mock()
-        network.get_buses.side_effect = Exception("Network access error")
+        network.get_buses.side_effect = pp.PyPowsyblError("Network access error")
 
         network_id = "error_network"
         proxy.networks[network_id] = network
@@ -209,7 +210,7 @@ class TestCreateNetworkVisualization:
         """Test that errors raised while generating the SVG are wrapped in a ValueError."""
         network = Mock()
         network.write_network_area_diagram_svg = Mock(
-            side_effect=RuntimeError("pypowsybl failure")
+            side_effect=pp.PyPowsyblError("pypowsybl failure")
         )
         network_id = "broken_network"
         proxy.networks[network_id] = network
