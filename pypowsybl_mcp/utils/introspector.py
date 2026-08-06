@@ -6,6 +6,7 @@
 
 import pypowsybl as pp
 
+
 def get_pypowsybl_version():
     """Retrieve the version of pypowsybl library being used"""
     return pp.__version__

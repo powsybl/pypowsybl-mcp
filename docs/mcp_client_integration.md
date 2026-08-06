@@ -77,6 +77,7 @@ Open **Settings → MCP** and add a new server entry:
 from agents.mcp import MCPServerStreamableHttp
 from agents import Agent, Runner
 
+
 async def main():
     async with MCPServerStreamableHttp(
         name="pypowsybl",

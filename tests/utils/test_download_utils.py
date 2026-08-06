@@ -198,9 +198,8 @@ def test_generate_download_link_write_failure_cleans_up_and_raises():
         "pypowsybl_mcp.utils.download_utils.open",
         side_effect=OSError("disk full"),
         create=True,
-    ):
-        with pytest.raises(OSError, match="disk full"):
-            generate_download_link(filename, file_data, base_url)
+    ), pytest.raises(OSError, match="disk full"):
+        generate_download_link(filename, file_data, base_url)
 
     # No entry should have been registered
     with download_links_lock:

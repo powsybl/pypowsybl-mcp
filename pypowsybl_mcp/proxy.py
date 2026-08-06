@@ -217,7 +217,7 @@ class PyPowsyblMCPServerProxy:
             }
         except Exception as e:
             logger.error(f"Error getting network summary: {e}")
-            return {"error": f"Error getting network summary: {str(e)}"}
+            return {"error": f"Error getting network summary: {e!s}"}
 
     def create_network_visualization_bytes(self, network_id: str) -> bytes:
         """Create a network visualization and return as SVG bytes."""
@@ -263,7 +263,7 @@ class PyPowsyblMCPServerProxy:
 
         except Exception as e:
             logger.error(f"Error creating visualization: {e}")
-            raise ValueError(f"Error creating visualization: {str(e)}")
+            raise ValueError(f"Error creating visualization: {e!s}")
 
     def save_markdown_resource(self, content: str, resource_id: str) -> str:
         """

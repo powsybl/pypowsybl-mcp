@@ -26,8 +26,8 @@ A global TTL cache is defined at server startup:
 ```python
 MAX_NUMBER_OF_CLIENTS = 100
 CLIENT_SESSION_TTL = 3600 * 24  # 1 day
-pypowsybl_proxies: ThreadSafeTTLCache[str, PyPowsyblMCPServerProxy] = ThreadSafeTTLCache(
-    maxsize=MAX_NUMBER_OF_CLIENTS, ttl=CLIENT_SESSION_TTL
+pypowsybl_proxies: ThreadSafeTTLCache[str, PyPowsyblMCPServerProxy] = (
+    ThreadSafeTTLCache(maxsize=MAX_NUMBER_OF_CLIENTS, ttl=CLIENT_SESSION_TTL)
 )
 ```
 

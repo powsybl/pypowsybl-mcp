@@ -137,7 +137,7 @@ class IOTools(PyPowsyblTool):
             logger.error(f"Failed to load network from URL: {e}")
             return {
                 "status": Status.ERROR,
-                "message": f"Failed to load network from URL: {str(e)}",
+                "message": f"Failed to load network from URL: {e!s}",
             }
 
     async def load_network_from_file(
@@ -206,7 +206,7 @@ class IOTools(PyPowsyblTool):
             logger.error(f"Failed to load network from file: {e}")
             return {
                 "status": Status.ERROR,
-                "message": f"Failed to load network from file: {str(e)}",
+                "message": f"Failed to load network from file: {e!s}",
             }
 
     async def export_network(
@@ -345,5 +345,5 @@ class IOTools(PyPowsyblTool):
             logger.error(f"Failed to export network: {e}")
             return {
                 "status": Status.ERROR,
-                "message": f"Failed to export network: {str(e)}",
+                "message": f"Failed to export network: {e!s}",
             }

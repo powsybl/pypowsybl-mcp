@@ -81,21 +81,23 @@ async def test_skill_resources_and_prompts_registered():
 
 @pytest.mark.asyncio
 async def test_read_temp_resource():
-    from pypowsybl_mcp.server import read_temp_resource, pypowsybl_proxies
     from pypowsybl_mcp.proxy import PyPowsyblMCPServerProxy
-    
+    from pypowsybl_mcp.server import pypowsybl_proxies, read_temp_resource
+
     resource_id = "test-resource"
     content = "# Test Content"
     session_id = "test-session"
-    
+
     mock_ctx = MagicMock()
     mock_ctx.session.session_id = session_id
-    
+
     proxy = PyPowsyblMCPServerProxy()
     proxy.resources[resource_id] = content
     pypowsybl_proxies[session_id] = proxy
-    
-    with patch("pypowsybl_mcp.utils.user_session_management.get_session_id") as mock_get_session_id:
+
+    with patch(
+        "pypowsybl_mcp.utils.user_session_management.get_session_id"
+    ) as mock_get_session_id:
         mock_get_session_id.return_value = session_id
         result = read_temp_resource(resource_id, mock_ctx)
         assert result == content

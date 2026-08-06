@@ -13,18 +13,20 @@ Uses FastMCP for simplified server implementation.
 """
 
 import os
+from pathlib import Path
 
 from cachetools import TTLCache
-from pathlib import Path
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.prompts import Prompt
 from mcp.server.fastmcp.resources import FileResource
-
 from starlette.requests import Request
 from starlette.responses import Response
 
 from pypowsybl_mcp import DEFAULT_PORT
-from pypowsybl_mcp.plugins import discover_and_load_plugins, discover_and_load_resource_plugins
+from pypowsybl_mcp.plugins import (
+    discover_and_load_plugins,
+    discover_and_load_resource_plugins,
+)
 from pypowsybl_mcp.proxy import PyPowsyblMCPServerProxy
 from pypowsybl_mcp.tools.loadflow_tools import register_loadflow_tools
 from pypowsybl_mcp.tools.network_tools import register_network_tools
@@ -34,10 +36,9 @@ from pypowsybl_mcp.tools.sensitivity_tools import (
 )
 from pypowsybl_mcp.tools.utils.code_export import register_code_tools
 from pypowsybl_mcp.tools.utils.io import register_io_tools
+from pypowsybl_mcp.tools.utils.resources import register_resource_tools
 from pypowsybl_mcp.tools.utils.session import register_session_tools
 from pypowsybl_mcp.tools.utils.visualization import register_visualization_tools
-from pypowsybl_mcp.tools.utils.resources import register_resource_tools
-
 from pypowsybl_mcp.utils.download_utils import (
     download_file_endpoint,
 )
@@ -106,25 +107,27 @@ def register_skill_resources_and_prompts(mcp: FastMCP):
             )
         )
 
+
 # Resources
 register_skill_resources_and_prompts(mcp)
 discover_and_load_resource_plugins(mcp, pypowsybl_proxies)
+
 
 @mcp.resource("resources://temp/{resource_id}", mime_type="text/markdown")
 def read_temp_resource(resource_id: str, ctx: Context) -> str:
     """Serve a temporary markdown resource stored in the TTL cache."""
     from pypowsybl_mcp.utils.user_session_management import get_session_id
+
     session_id = get_session_id(ctx)
     proxy = pypowsybl_proxies.get(session_id)
     if proxy is None:
         raise ValueError(f"Session '{session_id}' not found.")
-    
+
     content = proxy.resources.get(resource_id)
     if content is None:
-        raise ValueError(
-            f"Markdown resource '{resource_id}' not found or has expired."
-        )
+        raise ValueError(f"Markdown resource '{resource_id}' not found or has expired.")
     return content
+
 
 # Tools
 def register_tools(mcp: FastMCP):
@@ -139,6 +142,7 @@ def register_tools(mcp: FastMCP):
     register_code_tools(mcp, pypowsybl_proxies)
     register_resource_tools(mcp, pypowsybl_proxies)
     discover_and_load_plugins(mcp, pypowsybl_proxies)
+
 
 # HTTP endpoint to serve download links
 @mcp.custom_route("/download/{token}/{filename}", methods=["GET"])

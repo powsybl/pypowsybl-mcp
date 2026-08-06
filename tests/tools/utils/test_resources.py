@@ -97,8 +97,8 @@ def mcp():
 @pytest.fixture
 def mock_proxy():
     proxy = MagicMock()
-    proxy.save_markdown_resource.side_effect = (
-        lambda content, resource_id: f"resources://temp/{resource_id}"
+    proxy.save_markdown_resource.side_effect = lambda content, resource_id: (
+        f"resources://temp/{resource_id}"
     )
     return proxy
 

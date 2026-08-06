@@ -146,7 +146,9 @@ def test_attach_current_limits_temporary_prefers_longest_duration():
 
 def test_loading_percent_uses_current_limit1_from_operational_limits():
     df = attach_current_limits(
-        pd.DataFrame({"i1": [100.0, 150.0], "i2": [-100.0, -150.0]}, index=["line_1", "line_2"]),
+        pd.DataFrame(
+            {"i1": [100.0, 150.0], "i2": [-100.0, -150.0]}, index=["line_1", "line_2"]
+        ),
         _operational_limits(),
     )
 
@@ -239,9 +241,7 @@ def test_attach_tap_changer_data_missing_required_tap_columns_is_skipped():
 def test_attach_tap_changer_data_three_windings_missing_side_is_skipped():
     df = pd.DataFrame({"rated_u1": [110.0]}, index=["t1"])
     # Has the required tap columns but no "side" column, required for 3-winding.
-    ratio_df = pd.DataFrame(
-        {"tap": [1], "low_tap": [0], "high_tap": [2]}, index=["t1"]
-    )
+    ratio_df = pd.DataFrame({"tap": [1], "low_tap": [0], "high_tap": [2]}, index=["t1"])
 
     out = attach_tap_changer_data(df, ratio_df, None, "3_windings_transformers")
 

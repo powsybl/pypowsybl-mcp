@@ -5,7 +5,7 @@
 #  SPDX-License-Identifier: MPL-2.0
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pypowsybl as pp
 from cachetools import TTLCache
@@ -416,7 +416,7 @@ class LoadflowTools(PyPowsyblTool):
                 "converged": all_converged,
                 "dc": dc,
                 "provider": provider,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "components": len(results),
             }
 

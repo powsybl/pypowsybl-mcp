@@ -185,5 +185,5 @@ async def download_file_endpoint(request: Request) -> Response:
     except Exception as e:
         logger.error(f"Error serving download for token {token}: {e}")
         return JSONResponse(
-            {"error": f"Failed to read file: {str(e)}"}, status_code=500
+            {"error": f"Failed to read file: {e!s}"}, status_code=500
         )

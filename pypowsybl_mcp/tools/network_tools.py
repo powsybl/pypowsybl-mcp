@@ -4,7 +4,7 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pandas as pd
 import pypowsybl as pp
@@ -109,7 +109,7 @@ class NetworkTools(PyPowsyblTool):
 
         except Exception as e:
             logger.error(f"Failed to create network: {e}")
-            return f"Failed to create network: {str(e)}"
+            return f"Failed to create network: {e!s}"
 
     async def switch_network(
         self, network_id: str, ctx: Context[ServerSession, None] = None
@@ -169,7 +169,7 @@ class NetworkTools(PyPowsyblTool):
 
         except Exception as e:
             logger.error(f"Failed to switch network: {e}")
-            return f"Failed to switch network: {str(e)}"
+            return f"Failed to switch network: {e!s}"
 
     async def list_networks(self, ctx: Context[ServerSession, None] = None) -> str:
         """
@@ -245,7 +245,7 @@ class NetworkTools(PyPowsyblTool):
             return result
         except Exception as e:
             logger.error(f"Failed to list networks: {e}")
-            return f"Failed to list networks: {str(e)}"
+            return f"Failed to list networks: {e!s}"
 
     async def get_network_info(
         self, network_id: str = None, ctx: Context[ServerSession, None] = None
@@ -316,7 +316,7 @@ class NetworkTools(PyPowsyblTool):
 
         except Exception as e:
             logger.error(f"Failed to get network info: {e}")
-            return f"Failed to get network info: {str(e)}"
+            return f"Failed to get network info: {e!s}"
 
     async def modify_network(
         self,
@@ -476,14 +476,14 @@ class NetworkTools(PyPowsyblTool):
                     return error
 
                 if parameter == "target_p":
-                    network.update_generators(**{"id": element_id, "target_p": value})
+                    network.update_generators(id=element_id, target_p=value)
                     error = f"Updated generator '{element_id}' target_p to {value} MW in network '{network_id}'"
                     logger.warning(error)
                     return error
 
                 elif parameter == "target_v":
                     network.update_generators(
-                        **{"id": [element_id], "target_v": [value]}
+                        id=[element_id], target_v=[value]
                     )
                     error = f"Updated generator '{element_id}' target_v to {value} p.u. in network '{network_id}'"
                     logger.warning(error)
@@ -502,13 +502,13 @@ class NetworkTools(PyPowsyblTool):
                     return error
 
                 if parameter == "p0":
-                    network.update_loads(**{"id": [element_id], "p0": [value]})
+                    network.update_loads(id=[element_id], p0=[value])
                     info = f"Updated load '{element_id}' p0 to {value} MW in network '{network_id}'"
                     logger.success(info)
                     return info
 
                 elif parameter == "q0":
-                    network.update_loads(**{"id": [element_id], "q0": [value]})
+                    network.update_loads(id=[element_id], q0=[value])
                     info = f"Updated load '{element_id}' q0 to {value} MVAr in network '{network_id}'"
                     logger.success(info)
                     return info
@@ -526,13 +526,13 @@ class NetworkTools(PyPowsyblTool):
                     return error
 
                 if parameter == "r":
-                    network.update_lines(**{"id": [element_id], "r": [value]})
+                    network.update_lines(id=[element_id], r=[value])
                     info = f"Updated line '{element_id}' resistance to {value} Ω in network '{network_id}'"
                     logger.success(info)
                     return info
 
                 elif parameter == "x":
-                    network.update_lines(**{"id": [element_id], "x": [value]})
+                    network.update_lines(id=[element_id], x=[value])
                     info = f"Updated line '{element_id}' reactance to {value} Ω in network '{network_id}'"
                     logger.success(info)
                     return info
@@ -549,7 +549,7 @@ class NetworkTools(PyPowsyblTool):
 
         except Exception as e:
             logger.error(f"Failed to modify network: {e}")
-            return f"Failed to modify network: {str(e)}"
+            return f"Failed to modify network: {e!s}"
 
     async def set_line_status(
         self,
@@ -704,7 +704,7 @@ class NetworkTools(PyPowsyblTool):
 
         except Exception as e:
             logger.error(f"Failed to set line status: {e}")
-            return f"Failed to set line status: {str(e)}"
+            return f"Failed to set line status: {e!s}"
 
     async def set_switch_status(
         self,
@@ -815,7 +815,7 @@ class NetworkTools(PyPowsyblTool):
 
         except Exception as e:
             logger.error(f"Failed to set switch status: {e}")
-            return f"Failed to set switch status: {str(e)}"
+            return f"Failed to set switch status: {e!s}"
 
     async def set_tap_position(
         self,
@@ -997,7 +997,7 @@ class NetworkTools(PyPowsyblTool):
 
         except Exception as e:
             logger.error(f"Failed to set tap position: {e}")
-            return f"Failed to set tap position: {str(e)}"
+            return f"Failed to set tap position: {e!s}"
 
     async def remove_network(
         self, network_id: str, ctx: Context[ServerSession, None] = None
@@ -1099,7 +1099,7 @@ class NetworkTools(PyPowsyblTool):
 
         except Exception as e:
             logger.error(f"Failed to remove network: {e}")
-            return f"Failed to remove network: {str(e)}"
+            return f"Failed to remove network: {e!s}"
 
     async def clone_variant(
         self,
@@ -1143,7 +1143,7 @@ class NetworkTools(PyPowsyblTool):
             return f"Variant '{variant_id}' created from '{base_variant_id}' in network '{network_id}'"
         except Exception as e:
             logger.error(f"Failed to clone variant: {e}")
-            return f"Failed to clone variant: {str(e)}"
+            return f"Failed to clone variant: {e!s}"
 
     async def set_working_variant(
         self,
@@ -1185,7 +1185,7 @@ class NetworkTools(PyPowsyblTool):
             return f"Switched to variant '{variant_id}' in network '{network_id}'"
         except Exception as e:
             logger.error(f"Failed to set working variant: {e}")
-            return f"Failed to set working variant: {str(e)}"
+            return f"Failed to set working variant: {e!s}"
 
     async def get_working_variant(
         self,
@@ -1214,7 +1214,7 @@ class NetworkTools(PyPowsyblTool):
             return variant_id
         except Exception as e:
             logger.error(f"Failed to get working variant: {e}")
-            return f"Failed to get working variant: {str(e)}"
+            return f"Failed to get working variant: {e!s}"
 
     async def list_variants(
         self,
@@ -1245,7 +1245,7 @@ class NetworkTools(PyPowsyblTool):
             return json.dumps(result, indent=2)
         except Exception as e:
             logger.error(f"Failed to list variants: {e}")
-            return f"Failed to list variants: {str(e)}"
+            return f"Failed to list variants: {e!s}"
 
     async def remove_variant(
         self,
@@ -1289,7 +1289,7 @@ class NetworkTools(PyPowsyblTool):
             return f"Variant '{variant_id}' removed from network '{network_id}'. Setting working variant to '{fallback_variant_id}'."
         except Exception as e:
             logger.error(f"Failed to remove variant: {e}")
-            return f"Failed to remove variant: {str(e)}"
+            return f"Failed to remove variant: {e!s}"
 
     async def check_voltage_violations(
         self,
@@ -1409,7 +1409,7 @@ class NetworkTools(PyPowsyblTool):
 
                 self.get_proxy(session_id).loadflow_results[network_id] = {
                     "converged": True,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                 }
 
             # Get buses and check for violations
@@ -1481,7 +1481,7 @@ class NetworkTools(PyPowsyblTool):
         mode: str | None = None,
         metric: str | None = None,
         filter_op: str | None = None,
-        filter_value: float | int | str | None = None,
+        filter_value: float | str | None = None,
         sort: str = "desc",
         limit_kind: str = "permanent",
         limit: int | None = None,
@@ -1804,7 +1804,7 @@ class NetworkTools(PyPowsyblTool):
 
         except Exception as e:
             logger.error(f"Failed to get network element data: {e}")
-            return f"Failed to get network element data: {str(e)}"
+            return f"Failed to get network element data: {e!s}"
 
     async def get_network_elements_ids(
         self,
@@ -1979,7 +1979,7 @@ class NetworkTools(PyPowsyblTool):
 
         except Exception as e:
             logger.error(f"Failed to get network element IDs: {e}")
-            return f"Failed to get network element IDs: {str(e)}"
+            return f"Failed to get network element IDs: {e!s}"
 
     async def get_top_active_power_transit_lines(
         self,
@@ -2037,8 +2037,7 @@ class NetworkTools(PyPowsyblTool):
                 k = int(k)
             except Exception:
                 k = 10
-            if k < 0:
-                k = 0
+            k = max(k, 0)
             if k > 50:
                 logger.debug(f"Parameter k={k} above 50, capping to 50")
                 k = 50
@@ -2116,4 +2115,4 @@ class NetworkTools(PyPowsyblTool):
 
         except Exception as e:
             logger.error(f"Failed to compute top active power transit lines: {e}")
-            return f"Failed to compute top active power transit lines: {str(e)}"
+            return f"Failed to compute top active power transit lines: {e!s}"

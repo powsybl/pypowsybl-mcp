@@ -4,7 +4,7 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pypowsybl as pp
@@ -365,7 +365,7 @@ class SecurityTools(PyPowsyblTool):
         30 % over). If that table is empty but there are still many violations, the
         problems are voltage ones, not overloads; look at "violation_types_breakdown"
         to see what they are.
-        
+
         For pypowsybl security-analysis API details not exposed here (other
         contingency types, monitored elements, result fields), call
         get_online_resource(class_object='security') rather than relying on
@@ -525,7 +525,7 @@ class SecurityTools(PyPowsyblTool):
                 self.get_proxy(session_id), "security_results", {}
             )
             self.get_proxy(session_id).security_results[network_id] = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             }
 
             # Process pre-contingency results

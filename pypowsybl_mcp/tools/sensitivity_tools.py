@@ -63,7 +63,7 @@ class SensitivityTools(PyPowsyblTool):
             return json.dumps({"success": False, "error": str(e)}, indent=2)
         except Exception as e:
             logger.error(f"Error formatting sensitivity results: {e}")
-            return f"Error formatting sensitivity results: {str(e)}"
+            return f"Error formatting sensitivity results: {e!s}"
 
     async def run_dc_sensitivity_analysis(
         self,
@@ -178,7 +178,7 @@ class SensitivityTools(PyPowsyblTool):
 
         except Exception as e:
             logger.error(f"DC Sensitivity Analysis failed: {e}")
-            return f"DC Sensitivity Analysis failed: {str(e)}"
+            return f"DC Sensitivity Analysis failed: {e!s}"
 
     async def run_ac_sensitivity_analysis(
         self,
@@ -257,7 +257,7 @@ class SensitivityTools(PyPowsyblTool):
 
         except Exception as e:
             logger.error(f"AC Sensitivity Analysis failed: {e}")
-            return f"AC Sensitivity Analysis failed: {str(e)}"
+            return f"AC Sensitivity Analysis failed: {e!s}"
 
     async def run_psdf_analysis(
         self,
@@ -316,7 +316,7 @@ class SensitivityTools(PyPowsyblTool):
             )
         except Exception as e:
             logger.error(f"PSDF Analysis failed: {e}")
-            return f"PSDF Analysis failed: {str(e)}"
+            return f"PSDF Analysis failed: {e!s}"
 
     async def run_dcdf_analysis(
         self,
@@ -374,7 +374,7 @@ class SensitivityTools(PyPowsyblTool):
             )
         except Exception as e:
             logger.error(f"DCDF Analysis failed: {e}")
-            return f"DCDF Analysis failed: {str(e)}"
+            return f"DCDF Analysis failed: {e!s}"
 
     async def run_ptdf_analysis(
         self,
@@ -462,7 +462,7 @@ class SensitivityTools(PyPowsyblTool):
             )
         except Exception as e:
             logger.error(f"PTDF Analysis failed: {e}")
-            return f"PTDF Analysis failed: {str(e)}"
+            return f"PTDF Analysis failed: {e!s}"
 
     async def run_custom_sensitivity_analysis(
         self,
@@ -557,4 +557,4 @@ class SensitivityTools(PyPowsyblTool):
             )
         except Exception as e:
             logger.error(f"Custom Sensitivity Analysis failed: {e}")
-            return f"Custom Sensitivity Analysis failed: {str(e)}"
+            return f"Custom Sensitivity Analysis failed: {e!s}"

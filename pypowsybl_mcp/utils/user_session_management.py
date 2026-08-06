@@ -4,7 +4,6 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
-from typing import Union
 import uuid
 
 from loguru import logger
@@ -24,7 +23,7 @@ def check_session_id(ctx: Context) -> Context:
     return ctx
 
 
-def get_session_id(ctx: Context) -> Union[str, uuid.UUID]:
+def get_session_id(ctx: Context) -> str | uuid.UUID:
     """Retrieve the session ID from the context"""
     ctx = check_session_id(ctx)
     logger.debug(ctx.session.session_id)

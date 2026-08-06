@@ -414,7 +414,10 @@ async def test_run_dcdf_analysis_failure(sens_tools, mock_ctx):
     with patch("pypowsybl.sensitivity.create_dc_analysis") as mock_create:
         mock_create.side_effect = RuntimeError("dcdf boom")
         result = await sens_tools.run_dcdf_analysis(
-            network_id="net1", branches_ids=["l0"], hvdc_line_ids=["hvdc0"], ctx=mock_ctx
+            network_id="net1",
+            branches_ids=["l0"],
+            hvdc_line_ids=["hvdc0"],
+            ctx=mock_ctx,
         )
         assert "DCDF Analysis failed" in result
         assert "dcdf boom" in result

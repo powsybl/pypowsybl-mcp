@@ -239,11 +239,11 @@ async def generate_code_from_macro(
             )
             return f"# Error: Generated code has a syntax error: {syntax_error}"
         return response
-    except asyncio.TimeoutError:
+    except TimeoutError:
         error_msg = f"Code generation timed out after {AI_TIMEOUT} seconds"
         logger.error(error_msg)
         return f"# Error: {error_msg}"
     except Exception as e:
-        error_msg = f"Error during code generation: {str(e)}"
+        error_msg = f"Error during code generation: {e!s}"
         logger.error(error_msg)
         return f"# Error: {error_msg}"

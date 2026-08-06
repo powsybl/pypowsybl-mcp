@@ -306,6 +306,7 @@ async def test_get_overloaded_elements_rejects_unknown_study(sa_tools, mock_ctx)
     assert data["success"] is False
     assert "n2" in data["error"]
 
+
 @pytest.mark.asyncio
 async def test_run_security_analysis_auto_contingencies(sa_tools, mock_ctx):
     proxy = sa_tools.get_proxy("test-session")
@@ -940,7 +941,9 @@ async def test_overloaded_after_contingencies_auto_generates_list(sa_tools, mock
 
 
 @pytest.mark.asyncio
-async def test_overloaded_after_contingencies_auto_generation_failure(sa_tools, mock_ctx):
+async def test_overloaded_after_contingencies_auto_generation_failure(
+    sa_tools, mock_ctx
+):
     proxy = sa_tools.get_proxy("test-session")
     mock_net = MagicMock()
     mock_net._handle = MagicMock()
