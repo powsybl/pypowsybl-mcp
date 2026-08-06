@@ -199,7 +199,7 @@ def _check_syntax(code: str) -> str | None:
 
 async def generate_code_from_macro(
     actions: str,
-    reference_code: str = None,
+    reference_code: str | None = None,
 ) -> str:
     """
     Generate a standalone Python script from a sequence of tool actions.

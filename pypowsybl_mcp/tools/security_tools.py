@@ -135,8 +135,8 @@ class SecurityTools(PyPowsyblTool):
     def _build_contingencies_from_filter(
         network,
         element_type: str,
-        min_nominal_voltage: float = None,
-        max_nominal_voltage: float = None,
+        min_nominal_voltage: float | None = None,
+        max_nominal_voltage: float | None = None,
     ) -> dict:
         """Build N-1 single-element contingencies from topology filters.
 
@@ -200,8 +200,8 @@ class SecurityTools(PyPowsyblTool):
     def _resolve_contingencies(
         self,
         network,
-        contingencies: list[dict] | str = None,
-        auto_contingencies: dict | str = None,
+        contingencies: list[dict] | str | None = None,
+        auto_contingencies: dict | str | None = None,
     ) -> tuple[list[dict], str]:
         """Choose the contingency source and return the list to run.
 
@@ -322,9 +322,9 @@ class SecurityTools(PyPowsyblTool):
 
     async def run_security_analysis(
         self,
-        network_id: str = None,
-        contingencies: list[dict] | str = None,
-        auto_contingencies: dict | str = None,
+        network_id: str | None = None,
+        contingencies: list[dict] | str | None = None,
+        auto_contingencies: dict | str | None = None,
         mode: str = "summary",
         top_k: int = 10,
         detail_limit: int = 25,
@@ -641,10 +641,10 @@ class SecurityTools(PyPowsyblTool):
 
     async def create_contingencies_list(
         self,
-        network_id: str = None,
+        network_id: str | None = None,
         element_type: str = "lines",
-        min_nominal_voltage: float = None,
-        max_nominal_voltage: float = None,
+        min_nominal_voltage: float | None = None,
+        max_nominal_voltage: float | None = None,
         limit: int | None = None,
         cursor: str | int | None = None,
         ctx: Context[ServerSession, None] = None,  # FastMCP injects this
@@ -791,13 +791,13 @@ class SecurityTools(PyPowsyblTool):
 
     async def get_overloaded_elements(
         self,
-        network_id: str = None,
+        network_id: str | None = None,
         element_type: str = "lines",
         study: str = "n",
         threshold_percent: float = 100.0,
-        limit_kind: str = None,
-        contingencies: list[dict] | str = None,
-        min_nominal_voltage: float = None,
+        limit_kind: str | None = None,
+        contingencies: list[dict] | str | None = None,
+        min_nominal_voltage: float | None = None,
         ctx: Context[ServerSession, None] = None,
     ) -> str:
         """

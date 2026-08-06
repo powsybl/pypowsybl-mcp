@@ -229,7 +229,7 @@ class NetworkTools(PyPowsyblTool):
                 return "No networks loaded"
 
             result = "Loaded networks:\n"
-            for network_id in self.get_proxy(session_id).networks.keys():
+            for network_id in self.get_proxy(session_id).networks:
                 summary = self.get_proxy(session_id)._get_network_summary(network_id)
                 current_marker = (
                     " (CURRENT)"
@@ -248,7 +248,7 @@ class NetworkTools(PyPowsyblTool):
             return f"Failed to list networks: {e!s}"
 
     async def get_network_info(
-        self, network_id: str = None, ctx: Context[ServerSession, None] = None
+        self, network_id: str | None = None, ctx: Context[ServerSession, None] = None
     ) -> str:
         """
         Get detailed information and statistics about a power system network.
@@ -324,7 +324,7 @@ class NetworkTools(PyPowsyblTool):
         element_id: str,
         parameter: str,
         value: float,
-        network_id: str = None,
+        network_id: str | None = None,
         ctx: Context[ServerSession, None] = None,  # FastMCP injects this
     ) -> str:
         """
@@ -555,7 +555,7 @@ class NetworkTools(PyPowsyblTool):
         self,
         line_id: str,
         active: bool,
-        network_id: str = None,
+        network_id: str | None = None,
         ctx: Context[ServerSession, None] = None,  # FastMCP injects this
     ) -> str:
         """
@@ -710,7 +710,7 @@ class NetworkTools(PyPowsyblTool):
         self,
         switch_id: str,
         open: bool,
-        network_id: str = None,
+        network_id: str | None = None,
         ctx: Context[ServerSession, None] = None,
     ) -> str:
         """
@@ -822,8 +822,8 @@ class NetworkTools(PyPowsyblTool):
         transformer_id: str,
         tap_position: int,
         tap_changer_type: str = "ratio",
-        side: str = None,
-        network_id: str = None,
+        side: str | None = None,
+        network_id: str | None = None,
         ctx: Context[ServerSession, None] = None,
     ) -> str:
         """
@@ -1085,7 +1085,7 @@ class NetworkTools(PyPowsyblTool):
 
             if self.get_proxy(session_id).current_network_id == network_id:
                 if self.get_proxy(session_id).networks:
-                    new_current = list(self.get_proxy(session_id).networks.keys())[0]
+                    new_current = next(iter(self.get_proxy(session_id).networks.keys()))
                     self.get_proxy(session_id).current_network_id = new_current
                     self.get_proxy(session_id).current_network = self.get_proxy(
                         session_id
@@ -1105,7 +1105,7 @@ class NetworkTools(PyPowsyblTool):
         self,
         variant_id: str,
         base_variant_id: str = "InitialState",
-        network_id: str = None,
+        network_id: str | None = None,
         ctx: Context[ServerSession, None] = None,
     ) -> str:
         """
@@ -1148,7 +1148,7 @@ class NetworkTools(PyPowsyblTool):
     async def set_working_variant(
         self,
         variant_id: str,
-        network_id: str = None,
+        network_id: str | None = None,
         ctx: Context[ServerSession, None] = None,
     ) -> str:
         """
@@ -1189,7 +1189,7 @@ class NetworkTools(PyPowsyblTool):
 
     async def get_working_variant(
         self,
-        network_id: str = None,
+        network_id: str | None = None,
         ctx: Context[ServerSession, None] = None,
     ) -> str:
         """
@@ -1218,7 +1218,7 @@ class NetworkTools(PyPowsyblTool):
 
     async def list_variants(
         self,
-        network_id: str = None,
+        network_id: str | None = None,
         ctx: Context[ServerSession, None] = None,
     ) -> str:
         """
@@ -1250,8 +1250,8 @@ class NetworkTools(PyPowsyblTool):
     async def remove_variant(
         self,
         variant_id: str,
-        network_id: str = None,
-        fallback_variant_id: str = None,
+        network_id: str | None = None,
+        fallback_variant_id: str | None = None,
         ctx: Context[ServerSession, None] = None,
     ) -> str:
         """
@@ -1293,7 +1293,7 @@ class NetworkTools(PyPowsyblTool):
 
     async def check_voltage_violations(
         self,
-        network_id: str = None,
+        network_id: str | None = None,
         min_voltage: float = 0.95,
         max_voltage: float = 1.05,
         limit: int | None = None,
@@ -1474,10 +1474,10 @@ class NetworkTools(PyPowsyblTool):
 
     async def get_network_element_data(
         self,
-        network_id: str = None,
+        network_id: str | None = None,
         variant_id="InitialState",
-        element_type: str = None,
-        compare_with_variant_id: str = None,
+        element_type: str | None = None,
+        compare_with_variant_id: str | None = None,
         mode: str | None = None,
         metric: str | None = None,
         filter_op: str | None = None,
@@ -1808,8 +1808,8 @@ class NetworkTools(PyPowsyblTool):
 
     async def get_network_elements_ids(
         self,
-        network_id: str = None,
-        element_type: str = None,
+        network_id: str | None = None,
+        element_type: str | None = None,
         limit: int | None = None,
         cursor: str | int | None = None,
         ctx: Context[ServerSession, None] = None,

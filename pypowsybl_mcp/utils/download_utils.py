@@ -10,7 +10,7 @@ import re
 import secrets
 import tempfile
 import threading
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
@@ -36,7 +36,7 @@ def _sanitize_filename(filename: str) -> str:
 def cleanup_expired_links():
     """Remove expired download links from registry and delete temporary files."""
     with download_links_lock:
-        now = datetime.now()
+        now = datetime.now(UTC)
         expired = [
             token for token, info in download_links.items() if info["expires_at"] < now
         ]
@@ -76,7 +76,7 @@ def generate_download_link(
 
     filename = _sanitize_filename(filename)
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.now() + timedelta(seconds=expiry_seconds)
+    expires_at = datetime.now(UTC) + timedelta(seconds=expiry_seconds)
 
     # Create a temporary directory to store the file with its original name
     temp_dir = tempfile.mkdtemp()
@@ -94,7 +94,7 @@ def generate_download_link(
                 "filename": filename,
                 "temp_path": temp_path,
                 "expires_at": expires_at,
-                "created_at": datetime.now(),
+                "created_at": datetime.now(UTC),
             }
 
         download_url = f"{download_base_url}/{token}/{filename}"
@@ -136,7 +136,7 @@ async def download_file_endpoint(request: Request) -> Response:
         )
 
     # Check expiration
-    if link_info["expires_at"] < datetime.now():
+    if link_info["expires_at"] < datetime.now(UTC):
         # Clean up temp file and registry entry
         temp_path = link_info.get("temp_path")
         if temp_path and os.path.exists(temp_path):

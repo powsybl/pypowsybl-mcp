@@ -211,8 +211,8 @@ class IOTools(PyPowsyblTool):
 
     async def export_network(
         self,
-        network_id: str = None,
-        file_name: str = None,
+        network_id: str | None = None,
+        file_name: str | None = None,
         format_type: str = "XIIDM",
         ctx: Context[ServerSession, None] = None,  # FastMCP injects this
     ) -> dict:

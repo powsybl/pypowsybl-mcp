@@ -110,7 +110,7 @@ async def test_run_dc_sensitivity_analysis_success(sens_tools, mock_ctx):
         mock_create.assert_called_once()
         mock_analysis.run.assert_called_once()
         # Verify first argument is our mock network
-        args, kwargs = mock_analysis.run.call_args
+        args, _kwargs = mock_analysis.run.call_args
         assert args[0] == mock_net
 
 
@@ -445,7 +445,7 @@ async def test_run_ptdf_analysis_with_string_zones(sens_tools, mock_ctx):
         )
         assert "Sensitivity Analysis Results" in result
         assert mock_empty_zone.call_count == 2
-        args, kwargs = mock_analysis.add_branch_flow_factor_matrix.call_args
+        _args, kwargs = mock_analysis.add_branch_flow_factor_matrix.call_args
         assert kwargs["variables_ids"] == [("FR", "DE")]
 
 

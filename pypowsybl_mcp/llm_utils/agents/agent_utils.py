@@ -16,7 +16,7 @@ def create_agent(
     base_url: str,
     instructions: str,
     mcp_servers: list[MCPServer],
-    tools: list[function_tool] = None,
+    tools: list[function_tool] | None = None,
     model_settings: ModelSettings = None,
     **kwargs,
 ) -> Agent:

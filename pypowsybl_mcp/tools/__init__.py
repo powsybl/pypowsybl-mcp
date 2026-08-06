@@ -11,7 +11,7 @@ from mcp.server import FastMCP
 from pypowsybl_mcp.proxy import PyPowsyblMCPServerProxy
 
 
-def wrap_class_methods_with_mcp_tool(obj, mcp: FastMCP, exclude: list[str] = None):
+def wrap_class_methods_with_mcp_tool(obj, mcp: FastMCP, exclude: list[str] | None = None):
     """
     Wrap all user-defined methods of an instance `obj` with mcp.tool(),
     skipping inherited methods, magic methods, and optionally some user-specified methods.
@@ -47,6 +47,6 @@ class PyPowsyblTool:
             self.pypowsybl_proxies[session_id] = PyPowsyblMCPServerProxy()
         return self.pypowsybl_proxies[session_id]
 
-    def register_tools_with_mcp(self, mcp: FastMCP, exclude: list[str] = None):
+    def register_tools_with_mcp(self, mcp: FastMCP, exclude: list[str] | None = None):
         """Register a MCP instance to be used for tool wrapping."""
         wrap_class_methods_with_mcp_tool(self, mcp, exclude)

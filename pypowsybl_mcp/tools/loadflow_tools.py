@@ -216,22 +216,22 @@ class LoadflowTools(PyPowsyblTool):
 
     async def update_loadflow_params(
         self,
-        voltage_init_mode: str = None,
-        transformer_voltage_control_on: bool = None,
-        use_reactive_limits: bool = None,
-        phase_shifter_regulation_on: bool = None,
-        twt_split_shunt_admittance: bool = None,
-        shunt_compensator_voltage_control_on: bool = None,
-        read_slack_bus: bool = None,
-        write_slack_bus: bool = None,
-        distributed_slack: bool = None,
-        balance_type: str = None,
-        dc_use_transformer_ratio: bool = None,
-        countries_to_balance: list[str] = None,
-        component_mode: str = None,
-        connected_component_mode: str = None,
-        dc_power_factor: float = None,
-        hvdc_ac_emulation: bool = None,
+        voltage_init_mode: str | None = None,
+        transformer_voltage_control_on: bool | None = None,
+        use_reactive_limits: bool | None = None,
+        phase_shifter_regulation_on: bool | None = None,
+        twt_split_shunt_admittance: bool | None = None,
+        shunt_compensator_voltage_control_on: bool | None = None,
+        read_slack_bus: bool | None = None,
+        write_slack_bus: bool | None = None,
+        distributed_slack: bool | None = None,
+        balance_type: str | None = None,
+        dc_use_transformer_ratio: bool | None = None,
+        countries_to_balance: list[str] | None = None,
+        component_mode: str | None = None,
+        connected_component_mode: str | None = None,
+        dc_power_factor: float | None = None,
+        hvdc_ac_emulation: bool | None = None,
         ctx: Context[ServerSession, None] = None,
     ) -> str:
         """
@@ -307,7 +307,7 @@ class LoadflowTools(PyPowsyblTool):
 
     async def run_loadflow(
         self,
-        network_id: str = None,
+        network_id: str | None = None,
         dc: bool = False,
         ctx: Context[ServerSession, None] = None,  # FastMCP injects this
     ) -> str:

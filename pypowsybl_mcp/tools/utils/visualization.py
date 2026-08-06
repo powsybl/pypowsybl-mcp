@@ -24,8 +24,8 @@ def register_visualization_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
 class VisualizationTools(PyPowsyblTool):
     async def plot_substation_single_line_diagram(
         self,
-        network_id: str = None,
-        substation_id: str = None,
+        network_id: str | None = None,
+        substation_id: str | None = None,
         ctx: Context[ServerSession, None] = None,
     ) -> str:
         """
