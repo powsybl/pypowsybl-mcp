@@ -37,7 +37,7 @@ dependencies = [
     "cachetools>=7.1.4",
     "loguru>=0.7.3",
     "markdownify>=1.2.2",
-    "mcp>=1.27.2",
+    "mcp<2",
     "openai>=2.41.0",
     "openai-agents[litellm]>=0.17.4",
     "pandas>=3.0.1",
