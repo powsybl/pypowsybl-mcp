@@ -1,0 +1,32 @@
+# Git
+.git
+.github
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+.env
+.pytest_cache/
+.coverage
+htmlcov/
+
+# UV
+uv.lock
+.uv/
+
+# Local data and logs (these should be mounted)
+data/
+logs/
+
+# IDEs
+.idea/
+.vscode/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/

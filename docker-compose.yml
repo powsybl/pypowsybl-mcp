@@ -1,0 +1,44 @@
+#  Copyright (c) 2026, RTE (http://www.rte-france.com)
+#  This Source Code Form is subject to the terms of the Mozilla Public
+#  License, v. 2.0. If a copy of the MPL was not distributed with this
+#  file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#  SPDX-License-Identifier: MPL-2.0
+
+services:
+  pypowsybl-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Use HOST_UID and HOST_GID as requested for volume permission handling
+        - USER_UID=${HOST_UID:-1000}
+        - USER_GID=${HOST_GID:-1000}
+        # Proxy settings for build-time access (e.g. if you are behind a corporate proxy)
+        - HTTP_PROXY=${HTTP_PROXY:-}
+        - HTTPS_PROXY=${HTTPS_PROXY:-}
+        - NO_PROXY=${NO_PROXY:-}
+        - http_proxy=${http_proxy:-}
+        - https_proxy=${https_proxy:-}
+        - no_proxy=${no_proxy:-}
+    image: pypowsybl-mcp:latest
+    container_name: pypowsybl-mcp-server
+    env_file:
+      - .env
+    environment:
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - http_proxy=${http_proxy:-}
+      - https_proxy=${https_proxy:-}
+      - NO_PROXY=$NO_PROXY # to avoid communication issues 
+      - no_proxy=$no_proxy # to avoid communication issues
+      - MCP_PORT=${MCP_PORT:-9992}
+      - HOST_UID=${HOST_UID:-1000}
+      - HOST_GID=${HOST_GID:-1000}
+      - MCP_VERIFY_SSL=${MCP_VERIFY_SSL:-false}
+    network_mode: "host" # to make links accessible
+    volumes:
+      # Share grid files with the host
+      - ./data:/app/data:rw
+      # Persist logs
+      - ./logs:/app/logs:rw
+    restart: unless-stopped

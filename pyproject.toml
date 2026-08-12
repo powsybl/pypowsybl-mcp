@@ -1,0 +1,70 @@
+#  Copyright (c) 2026, RTE (http://www.rte-france.com)
+#  This Source Code Form is subject to the terms of the Mozilla Public
+#  License, v. 2.0. If a copy of the MPL was not distributed with this
+#  file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#  SPDX-License-Identifier: MPL-2.0
+
+[project]
+name = "pypowsybl-mcp"
+version = "0.1.0.dev1"
+description = "A MCP server for PyPowSyBl: use with a LLM to chat with power grid simulations"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Jérôme Picault", email = "jerome.picault@rte-france.com" },
+    { name = "Clément Goubet", email = "clement.goubet@rte-france.com" }
+]
+maintainers = [
+    { name = "Jérôme Picault", email = "jerome.picault@rte-france.com" },
+    { name = "Clément Goubet", email = "clement.goubet@rte-france.com" }
+]
+keywords = ["LLM", "MCP", "pypowsybl", "power grids", "simulations"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "beautifulsoup4>=4.15.0",
+    "cachetools>=7.1.4",
+    "loguru>=0.7.3",
+    "markdownify>=1.2.2",
+    "mcp<2",
+    "openai>=2.41.0",
+    "openai-agents[litellm]>=0.17.4",
+    "pandas>=3.0.1",
+    "pypowsybl==1.15.0",
+    "starlette>=0.52.1",
+    "tabulate>=0.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "coverage>=7.14.1",
+    "ipython",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov",
+    "ruff>=0.16.1",
+]
+
+[project.urls]
+homepage = "https://github.com/powsybl/pypowsybl-mcp"
+repository = "https://github.com/powsybl/pypowsybl-mcp"
+documentation = "https://github.com/powsybl/pypowsybl-mcp/tree/main/docs"
+"Bug Tracker" = "https://github.com/powsybl/pypowsybl-mcp/issues"
+
+[tool.setuptools.packages.find]
+include = ["pypowsybl_mcp*"]
+exclude = ["data*", "logs*", "tests*", "docs*"]
+
+[tool.setuptools.package-data]
+pypowsybl_mcp = ["config/*.toml", "skills/*.md"]
