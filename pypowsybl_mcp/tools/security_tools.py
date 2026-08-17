@@ -22,23 +22,8 @@ from pypowsybl_mcp.utils.user_session_management import get_session_id
 
 def register_security_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
     tools = SecurityTools(pypowsybl_proxies)
-    tools.register_tools_with_mcp(
-        mcp,
-        exclude=[
-            "_parse_json_if_needed",
-            "_status_name",
-            "_limit_type_name",
-            "_limit_violation_data",
-            "_loading_and_excess",
-            "_element_nominal_voltage",
-            "_build_contingencies_from_filter",
-            "_resolve_contingencies",
-            "_compute_ranked_contingencies",
-            "_flatten_ranked_violations",
-            "_overloaded_in_normal_operation",
-            "_overloaded_after_contingencies",
-        ],
-    )
+    # Private helpers (underscore-prefixed) are skipped automatically.
+    tools.register_tools_with_mcp(mcp)
 
 
 class SecurityTools(PyPowsyblTool):

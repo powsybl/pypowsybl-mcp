@@ -19,7 +19,8 @@ from pypowsybl_mcp.utils.pagination import attach_pagination, paginate
 
 def register_sensitivity_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
     tools = SensitivityTools(pypowsybl_proxies)
-    tools.register_tools_with_mcp(mcp, exclude=["_handle_sensitivity_result"])
+    # Private helpers (underscore-prefixed) are skipped automatically.
+    tools.register_tools_with_mcp(mcp)
 
 
 class SensitivityTools(PyPowsyblTool):

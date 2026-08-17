@@ -44,16 +44,13 @@ def test_wrap_class_methods_with_mcp_tool():
 
     # method_one should be wrapped
     assert mcp.tool.called
-    # method_two should be excluded
-    # _private_method starts with _, but the function only checks for __
-    # Actually the code says: if not name.startswith("__") and callable(func) and name not in exclude:
-    # So _private_method SHOULD be wrapped.
 
-    # Let's check what was wrapped.
-    # The tool() decorator is called for each method.
+    # Only public methods are wrapped: method_two is explicitly excluded,
+    # _private_method is skipped as an underscore-prefixed helper, and
+    # __magic_method__ is skipped as a dunder.
     wrapped_methods = [call[0][0].__name__ for call in mcp.tool().call_args_list]
     assert "method_one" in wrapped_methods
-    assert "_private_method" in wrapped_methods
+    assert "_private_method" not in wrapped_methods
     assert "method_two" not in wrapped_methods
     assert "__magic_method__" not in wrapped_methods
 

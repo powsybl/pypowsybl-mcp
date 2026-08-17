@@ -21,13 +21,18 @@ def wrap_class_methods_with_mcp_tool(
     obj, mcp: FastMCP, exclude: list[str] | None = None
 ):
     """
-    Wrap all user-defined methods of an instance `obj` with mcp.tool(),
-    skipping inherited methods, magic methods, and optionally some user-specified methods.
+    Wrap all public methods of an instance `obj` with mcp.tool(),
+    skipping inherited methods, underscore-prefixed (private) methods, and
+    optionally some user-specified methods.
+
+    Methods whose name starts with an underscore are treated as internal
+    helpers and are never exposed as tools, so private helpers do not need to
+    be enumerated in `exclude`.
 
     Args:
         obj: the instance whose methods will be wrapped
         mcp: object that has a .tool() decorator
-        exclude: list of method names to skip (default: None)
+        exclude: list of additional public method names to skip (default: None)
     """
     if exclude is None:
         exclude = []
@@ -35,8 +40,8 @@ def wrap_class_methods_with_mcp_tool(
     cls = obj.__class__
 
     for name, func in cls.__dict__.items():
-        # Skip magic methods, excluded methods, and non-callables
-        if not name.startswith("__") and callable(func) and name not in exclude:
+        # Skip private/underscore-prefixed methods, excluded methods, and non-callables
+        if not name.startswith("_") and callable(func) and name not in exclude:
             logger.debug(f"Wrapping tool into MCP: {name}")
             bound_method = getattr(obj, name)
             wrapped = mcp.tool()(bound_method)
