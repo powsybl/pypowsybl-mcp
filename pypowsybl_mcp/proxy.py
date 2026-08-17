@@ -145,6 +145,27 @@ class PyPowsyblMCPServerProxy:
         """Thread-safe check for network existence."""
         return network_id in self.networks
 
+    def register_network(
+        self, network_id: str, network: Network, set_as_current: bool = True
+    ) -> None:
+        """Store a network and optionally make it the current one.
+
+        Uses the thread-safe accessor and centralizes the "set as current"
+        bookkeeping shared by the network-creation and loading tools.
+        """
+        self.set_network(network_id, network)
+        if set_as_current:
+            self.current_network_id = network_id
+            self.current_network = network
+
+    def invalidate_loadflow(self, network_id: str) -> None:
+        """Drop any cached loadflow result for a network.
+
+        Called when a topology or parameter change makes previously computed
+        results stale. A no-op when nothing is cached for the network.
+        """
+        self.loadflow_results.pop(network_id, None)
+
     def get_plugin_result(self, key: str) -> Any | None:
         """Thread-safe retrieval of a plugin-owned cached result by key."""
         return self.plugin_results.get(key)

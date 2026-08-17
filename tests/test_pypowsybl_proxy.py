@@ -277,6 +277,31 @@ class TestNetworkAccessors:
         proxy.delete_network("does_not_exist")
         assert proxy.network_ids() == []
 
+    def test_register_network_sets_as_current_by_default(self, proxy):
+        network = Mock()
+        proxy.register_network("net1", network)
+
+        assert proxy.get_network("net1") is network
+        assert proxy.current_network_id == "net1"
+        assert proxy.current_network is network
+
+    def test_register_network_without_setting_current(self, proxy):
+        network = Mock()
+        proxy.register_network("net1", network, set_as_current=False)
+
+        assert proxy.get_network("net1") is network
+        assert proxy.current_network_id is None
+        assert proxy.current_network is None
+
+    def test_invalidate_loadflow_drops_cached_result(self, proxy):
+        proxy.loadflow_results["net1"] = {"converged": True}
+        proxy.invalidate_loadflow("net1")
+        assert "net1" not in proxy.loadflow_results
+
+    def test_invalidate_loadflow_missing_id_is_noop(self, proxy):
+        # Should not raise even though nothing is cached for the network.
+        proxy.invalidate_loadflow("does_not_exist")
+
 
 class TestPluginResultAccessors:
     """Test the plugin-owned result cache"""

@@ -81,7 +81,7 @@ class NetworkTools(PyPowsyblTool):
             - Larger networks (IEEE118, IEEE300) are better for scalability testing
         """
         logger.debug(f"Creating IEEE {network_type} network '{network_id}'")
-        session_id = get_session_id(ctx)
+        proxy = self.get_proxy(get_session_id(ctx))
 
         try:
             network_creators = {
@@ -97,12 +97,7 @@ class NetworkTools(PyPowsyblTool):
 
             # Create the network
             network = network_creators[network_type]()
-            self.get_proxy(session_id).networks[network_id] = network
-
-            # Set as current if requested
-            if set_as_current:
-                self.get_proxy(session_id).current_network_id = network_id
-                self.get_proxy(session_id).current_network = network
+            proxy.register_network(network_id, network, set_as_current)
 
             buses = network.get_buses()
             return f"Successfully created {network_type} network '{network_id}' with {len(buses)} buses"
@@ -443,8 +438,7 @@ class NetworkTools(PyPowsyblTool):
         logger.debug(f"Modifying network element parameter for network {network_id}")
 
         try:
-            if network_id in proxy.loadflow_results:
-                del proxy.loadflow_results[network_id]
+            proxy.invalidate_loadflow(network_id)
 
             if element_type == "generator":
                 generators = network.get_generators()
@@ -652,8 +646,7 @@ class NetworkTools(PyPowsyblTool):
 
         try:
             # Clear loadflow results since network topology is changing
-            if network_id in proxy.loadflow_results:
-                del proxy.loadflow_results[network_id]
+            proxy.invalidate_loadflow(network_id)
 
             # Get the line and check if it exists
             lines = network.get_lines()
@@ -750,8 +743,7 @@ class NetworkTools(PyPowsyblTool):
         )
 
         # Topology changed: previously computed loadflow results are no longer valid.
-        if network_id in proxy.loadflow_results:
-            del proxy.loadflow_results[network_id]
+        proxy.invalidate_loadflow(network_id)
 
         try:
             # Check that the switch exists before attempting to modify it.
@@ -909,8 +901,7 @@ class NetworkTools(PyPowsyblTool):
                 return error
 
             # Changing the topology/state invalidates any cached loadflow.
-            if network_id in proxy.loadflow_results:
-                del proxy.loadflow_results[network_id]
+            proxy.invalidate_loadflow(network_id)
 
             if is_three_windings:
                 # A three-winding tap changer is addressed by (id, side); pass a
@@ -1023,8 +1014,7 @@ class NetworkTools(PyPowsyblTool):
         try:
             del proxy.networks[network_id]
 
-            if network_id in proxy.loadflow_results:
-                del proxy.loadflow_results[network_id]
+            proxy.invalidate_loadflow(network_id)
 
             if proxy.current_network_id == network_id:
                 if proxy.networks:
@@ -1119,8 +1109,7 @@ class NetworkTools(PyPowsyblTool):
             network = proxy.networks[network_id]
             network.set_working_variant(variant_id)
             # Clear cached loadflow results when switching variants as they might not apply
-            if network_id in proxy.loadflow_results:
-                del proxy.loadflow_results[network_id]
+            proxy.invalidate_loadflow(network_id)
 
             logger.info(f"Switched to variant '{variant_id}' in network '{network_id}'")
             return f"Switched to variant '{variant_id}' in network '{network_id}'"
