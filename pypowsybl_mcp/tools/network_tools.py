@@ -150,21 +150,19 @@ class NetworkTools(PyPowsyblTool):
             - remove_network(): Remove a network from memory
         """
         logger.debug(f"Switching to network '{network_id}'")
-        session_id = get_session_id(ctx)
+        proxy = self.get_proxy(get_session_id(ctx))
 
         try:
-            if network_id not in self.get_proxy(session_id).networks:
-                available = list(self.get_proxy(session_id).networks.keys())
+            if network_id not in proxy.networks:
+                available = list(proxy.networks.keys())
                 return (
                     f"Network '{network_id}' not found. Available networks: {available}"
                 )
 
-            self.get_proxy(session_id).current_network_id = network_id
-            self.get_proxy(session_id).current_network = self.get_proxy(
-                session_id
-            ).networks[network_id]
+            proxy.current_network_id = network_id
+            proxy.current_network = proxy.networks[network_id]
 
-            summary = self.get_proxy(session_id)._get_network_summary(network_id)
+            summary = proxy._get_network_summary(network_id)
             return f"Switched to network '{network_id}' - {summary.get('buses', 0)} buses, {summary.get('generators', 0)} generators, {summary.get('loads', 0)} loads"
 
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
@@ -222,18 +220,18 @@ class NetworkTools(PyPowsyblTool):
             4. list_networks() → Verify [LF✓] marker appears
         """
         logger.debug("Listing loaded networks")
-        session_id = get_session_id(ctx)
+        proxy = self.get_proxy(get_session_id(ctx))
 
         try:
-            if not self.get_proxy(session_id).networks:
+            if not proxy.networks:
                 return "No networks loaded"
 
             result = "Loaded networks:\n"
-            for network_id in self.get_proxy(session_id).networks:
-                summary = self.get_proxy(session_id)._get_network_summary(network_id)
+            for network_id in proxy.networks:
+                summary = proxy._get_network_summary(network_id)
                 current_marker = (
                     " (CURRENT)"
-                    if network_id == self.get_proxy(session_id).current_network_id
+                    if network_id == proxy.current_network_id
                     else ""
                 )
                 loadflow_marker = (
@@ -1016,30 +1014,28 @@ class NetworkTools(PyPowsyblTool):
             remove_network("scenario_1")
             create_ieee_network("IEEE30", "scenario_2")
         """
-        session_id = get_session_id(ctx)
+        proxy = self.get_proxy(get_session_id(ctx))
 
         logger.debug(f"Removing network '{network_id}'")
-        if network_id not in self.get_proxy(session_id).networks:
+        if network_id not in proxy.networks:
             return f"Network '{network_id}' not found"
 
         try:
-            del self.get_proxy(session_id).networks[network_id]
+            del proxy.networks[network_id]
 
-            if network_id in self.get_proxy(session_id).loadflow_results:
-                del self.get_proxy(session_id).loadflow_results[network_id]
+            if network_id in proxy.loadflow_results:
+                del proxy.loadflow_results[network_id]
 
-            if self.get_proxy(session_id).current_network_id == network_id:
-                if self.get_proxy(session_id).networks:
-                    new_current = next(iter(self.get_proxy(session_id).networks.keys()))
-                    self.get_proxy(session_id).current_network_id = new_current
-                    self.get_proxy(session_id).current_network = self.get_proxy(
-                        session_id
-                    ).networks[new_current]
+            if proxy.current_network_id == network_id:
+                if proxy.networks:
+                    new_current = next(iter(proxy.networks.keys()))
+                    proxy.current_network_id = new_current
+                    proxy.current_network = proxy.networks[new_current]
                 else:
-                    self.get_proxy(session_id).current_network_id = None
-                    self.get_proxy(session_id).current_network = None
+                    proxy.current_network_id = None
+                    proxy.current_network = None
 
-            remaining = list(self.get_proxy(session_id).networks.keys())
+            remaining = list(proxy.networks.keys())
             return f"Removed network '{network_id}'. Remaining networks: {remaining}"
 
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
