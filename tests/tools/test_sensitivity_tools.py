@@ -169,6 +169,17 @@ async def test_run_dc_sensitivity_network_not_found(sens_tools, mock_ctx):
 
 
 @pytest.mark.asyncio
+async def test_run_dc_sensitivity_no_current_network(sens_tools, mock_ctx):
+    # No network_id given and no current network selected: the message must
+    # describe the missing selection, not report a network named 'None'.
+    result = await sens_tools.run_dc_sensitivity_analysis(
+        branches_ids=["l1"], variables_ids=["v1"], ctx=mock_ctx
+    )
+    assert "No network specified" in result
+    assert "None" not in result
+
+
+@pytest.mark.asyncio
 async def test_run_dc_sensitivity_default_network_id(sens_tools, mock_ctx):
     _setup_network(sens_tools)
 
