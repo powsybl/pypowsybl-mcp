@@ -14,7 +14,7 @@ from mcp import ServerSession
 from mcp.server import FastMCP
 from mcp.server.fastmcp import Context
 
-from pypowsybl_mcp.tools import PyPowsyblTool
+from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.utils.user_session_management import get_session_id
 
 
@@ -366,37 +366,21 @@ class LoadflowTools(PyPowsyblTool):
               ]
             }
         """
-        session_id = get_session_id(ctx)
+        try:
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
 
-        if network_id is None:
-            network_id = self.get_proxy(session_id).current_network_id
         logger.debug(
             f"Running {'DC' if dc else 'AC'} load flow for network '{network_id}'"
         )
 
-        if network_id is None:
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": "No network specified and no current network selected",
-                },
-                indent=2,
-            )
-
-        if network_id not in self.get_proxy(session_id).networks:
-            return json.dumps(
-                {"success": False, "error": f"Network '{network_id}' not found"},
-                indent=2,
-            )
-
         try:
-            network = self.get_proxy(session_id).networks[network_id]
-
             # Get current LF config
-            loadflow_params = self.get_proxy(session_id).lf_params
+            loadflow_params = proxy.lf_params
 
             # Use the session's active provider
-            provider = self.get_proxy(session_id).lf_provider
+            provider = proxy.lf_provider
 
             # Run loadflow
             if dc:
@@ -412,7 +396,7 @@ class LoadflowTools(PyPowsyblTool):
             all_converged = all(result.status.name == "CONVERGED" for result in results)
 
             # Store results
-            self.get_proxy(session_id).loadflow_results[network_id] = {
+            proxy.loadflow_results[network_id] = {
                 "converged": all_converged,
                 "dc": dc,
                 "provider": provider,

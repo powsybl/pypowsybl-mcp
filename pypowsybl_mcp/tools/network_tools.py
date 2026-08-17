@@ -15,7 +15,7 @@ from mcp.server import FastMCP
 from mcp.server.fastmcp import Context
 from pypowsybl import _pypowsybl as _pp
 
-from pypowsybl_mcp.tools import PyPowsyblTool
+from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.utils.element_data_filter import (
     apply_element_filter,
     attach_current_limits,
@@ -294,24 +294,16 @@ class NetworkTools(PyPowsyblTool):
             - switch_network(): Change the active network
             - visualize_network(): Generate visual representation
         """
-        session_id = get_session_id(ctx)
+        try:
+            proxy, network_id, _ = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
+
+        logger.debug(f"Getting network info for network '{network_id}'")
 
         try:
-            if network_id is None:
-                network_id = self.get_proxy(session_id).current_network_id
-            logger.debug(f"Getting network info for network '{network_id}'")
-
-            if network_id is None:
-                msg = "No network specified and no current network selected"
-                logger.warning(msg)
-                return msg
-
-            if network_id not in self.get_proxy(session_id).networks:
-                msg = f"Network '{network_id}' not found"
-                logger.warning(msg)
-                return msg
-
-            summary = self.get_proxy(session_id)._get_network_summary(network_id)
+            summary = proxy._get_network_summary(network_id)
             return json.dumps(summary, indent=2)
 
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
@@ -444,27 +436,17 @@ class NetworkTools(PyPowsyblTool):
             - Corrective actions (fix violations)
             - Training and education (show cause-and-effect)
         """
-        session_id = get_session_id(ctx)
+        try:
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
 
-        if network_id is None:
-            network_id = self.get_proxy(session_id).current_network_id
         logger.debug(f"Modifying network element parameter for network {network_id}")
 
-        if network_id is None:
-            error = "No network specified and no current network selected"
-            logger.warning(error)
-            return error
-
-        if network_id not in self.get_proxy(session_id).networks:
-            error = f"Network '{network_id}' not found"
-            logger.warning(error)
-            return error
-
         try:
-            network = self.get_proxy(session_id).networks[network_id]
-
-            if network_id in self.get_proxy(session_id).loadflow_results:
-                del self.get_proxy(session_id).loadflow_results[network_id]
+            if network_id in proxy.loadflow_results:
+                del proxy.loadflow_results[network_id]
 
             if element_type == "generator":
                 generators = network.get_generators()
@@ -660,30 +642,20 @@ class NetworkTools(PyPowsyblTool):
             - Grid expansion planning (test with/without new lines)
             - Training and education (demonstrate system response to outages)
         """
-        session_id = get_session_id(ctx)
+        try:
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
 
-        if network_id is None:
-            network_id = self.get_proxy(session_id).current_network_id
         logger.debug(
             f"Setting line '{line_id}' status to {active} in network {network_id}"
         )
 
-        if network_id is None:
-            error = "No network specified and no current network selected"
-            logger.warning(error)
-            return error
-
-        if network_id not in self.get_proxy(session_id).networks:
-            error = f"Network '{network_id}' not found"
-            logger.warning(error)
-            return error
-
         try:
-            network = self.get_proxy(session_id).networks[network_id]
-
             # Clear loadflow results since network topology is changing
-            if network_id in self.get_proxy(session_id).loadflow_results:
-                del self.get_proxy(session_id).loadflow_results[network_id]
+            if network_id in proxy.loadflow_results:
+                del proxy.loadflow_results[network_id]
 
             # Get the line and check if it exists
             lines = network.get_lines()
@@ -769,28 +741,15 @@ class NetworkTools(PyPowsyblTool):
             - get_network_element_data(): inspect switch kind and current status
             - export_network(): save the network with modified switch states
         """
-        session_id = get_session_id(ctx)
-        proxy = self.get_proxy(session_id)
-
-        # If no network is specified, use the current network for this session.
-        if network_id is None:
-            network_id = proxy.current_network_id
+        try:
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
 
         logger.debug(
             f"Setting switch '{switch_id}' open={open} in network {network_id}"
         )
-
-        if network_id is None:
-            error = "No network specified and no current network selected"
-            logger.warning(error)
-            return error
-
-        if network_id not in proxy.networks:
-            error = f"Network '{network_id}' not found"
-            logger.warning(error)
-            return error
-
-        network = proxy.networks[network_id]
 
         # Topology changed: previously computed loadflow results are no longer valid.
         if network_id in proxy.loadflow_results:
@@ -877,26 +836,16 @@ class NetworkTools(PyPowsyblTool):
             - run_loadflow(): required after the change to compute new state
             - modify_network(): change generator/load/line parameters
         """
-        session_id = get_session_id(ctx)
-        proxy = self.get_proxy(session_id)
-
-        if network_id is None:
-            network_id = proxy.current_network_id
+        try:
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
 
         logger.debug(
             f"Setting {tap_changer_type} tap position of '{transformer_id}' "
             f"to {tap_position} in network {network_id}"
         )
-
-        if network_id is None:
-            error = "No network specified and no current network selected"
-            logger.warning(error)
-            return error
-
-        if network_id not in proxy.networks:
-            error = f"Network '{network_id}' not found"
-            logger.warning(error)
-            return error
 
         kind = (tap_changer_type or "ratio").strip().lower()
         if kind not in ("ratio", "phase"):
@@ -906,8 +855,6 @@ class NetworkTools(PyPowsyblTool):
             )
             logger.warning(error)
             return error
-
-        network = proxy.networks[network_id]
 
         try:
             if kind == "ratio":
@@ -1351,33 +1298,18 @@ class NetworkTools(PyPowsyblTool):
               ]
             }
         """
-        session_id = get_session_id(ctx)
+        try:
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
 
-        if network_id is None:
-            network_id = self.get_proxy(session_id).current_network_id
         logger.debug(f"Checking voltage violations for network '{network_id}'")
 
-        if network_id is None:
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": "No network specified and no current network selected",
-                },
-                indent=2,
-            )
-
-        if network_id not in self.get_proxy(session_id).networks:
-            return json.dumps(
-                {"success": False, "error": f"Network '{network_id}' not found"},
-                indent=2,
-            )
-
         try:
-            network = self.get_proxy(session_id).networks[network_id]
             loadflow_executed = False
 
             # Check if loadflow needs to be run
-            if network_id not in self.get_proxy(session_id).loadflow_results:
+            if network_id not in proxy.loadflow_results:
                 loadflow_executed = True
                 results = pp.loadflow.run_ac(network)
                 all_converged = all(
@@ -1405,7 +1337,7 @@ class NetworkTools(PyPowsyblTool):
                         indent=2,
                     )
 
-                self.get_proxy(session_id).loadflow_results[network_id] = {
+                proxy.loadflow_results[network_id] = {
                     "converged": True,
                     "timestamp": datetime.now(UTC).isoformat(),
                 }
@@ -1593,30 +1525,20 @@ class NetworkTools(PyPowsyblTool):
               pypowsybl network API (methods, signatures, parameters) instead of
               relying on prior knowledge
         """
-        session_id = get_session_id(ctx)
+        try:
+            _, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
+
+        logger.debug(f"Getting {element_type} data for network '{network_id}'")
+
+        if element_type is None:
+            msg = "Element type is required"
+            logger.warning(msg)
+            return msg
 
         try:
-            if network_id is None:
-                network_id = self.get_proxy(session_id).current_network_id
-            logger.debug(f"Getting {element_type} data for network '{network_id}'")
-
-            if network_id is None:
-                msg = "No network specified and no current network selected"
-                logger.warning(msg)
-                return msg
-
-            if network_id not in self.get_proxy(session_id).networks:
-                msg = f"Network '{network_id}' not found"
-                logger.warning(msg)
-                return msg
-
-            if element_type is None:
-                msg = "Element type is required"
-                logger.warning(msg)
-                return msg
-
-            network = self.get_proxy(session_id).networks[network_id]
-
             if variant_id not in network.get_variant_ids():
                 msg = f"Variant '{variant_id}' not found in network '{network_id}'"
                 logger.warning(msg)
@@ -1877,30 +1799,20 @@ class NetworkTools(PyPowsyblTool):
               pypowsybl network API (methods, signatures, parameters) instead of
               relying on prior knowledge
         """
-        session_id = get_session_id(ctx)
+        try:
+            _, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
+
+        logger.debug(f"Getting {element_type} IDs for network '{network_id}'")
+
+        if element_type is None:
+            msg = "Element type is required"
+            logger.warning(msg)
+            return msg
 
         try:
-            if network_id is None:
-                network_id = self.get_proxy(session_id).current_network_id
-            logger.debug(f"Getting {element_type} IDs for network '{network_id}'")
-
-            if network_id is None:
-                msg = "No network specified and no current network selected"
-                logger.warning(msg)
-                return msg
-
-            if network_id not in self.get_proxy(session_id).networks:
-                msg = f"Network '{network_id}' not found"
-                logger.warning(msg)
-                return msg
-
-            if element_type is None:
-                msg = "Element type is required"
-                logger.warning(msg)
-                return msg
-
-            network = self.get_proxy(session_id).networks[network_id]
-
             # Map element types to ElementType enum for get_elements_ids()
             # Only use get_elements_ids() for types that support it
             element_type_map = {
@@ -2011,23 +1923,13 @@ class NetworkTools(PyPowsyblTool):
                  - unit = "MW"
                  - flow_side (explicit description, e.g., "from (p1)")
         """
-        session_id = get_session_id(ctx)
+        try:
+            _, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
 
         try:
-            # Retrieve the network
-            if network_id is None:
-                network_id = self.get_proxy(session_id).current_network_id
-            if network_id is None:
-                msg = "No network specified and no current network selected"
-                logger.warning(msg)
-                return msg
-            if network_id not in self.get_proxy(session_id).networks:
-                msg = f"Network '{network_id}' not found"
-                logger.warning(msg)
-                return msg
-
-            network = self.get_proxy(session_id).networks[network_id]
-
             # Normalize and cap K
             if k is None:
                 k = 10

@@ -14,7 +14,7 @@ from mcp import ServerSession
 from mcp.server import FastMCP
 from mcp.server.fastmcp import Context
 
-from pypowsybl_mcp.tools import PyPowsyblTool
+from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.tools.network_tools import NetworkTools
 from pypowsybl_mcp.utils.pagination import paginate
 from pypowsybl_mcp.utils.user_session_management import get_session_id
@@ -443,26 +443,12 @@ class SecurityTools(PyPowsyblTool):
               "sample_contingencies": [...]
             }
         """
-        session_id = get_session_id(ctx)
+        try:
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
 
-        if network_id is None:
-            network_id = self.get_proxy(session_id).current_network_id
         logger.debug(f"Running security analysis for network '{network_id}'")
-
-        if network_id is None:
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": "No network specified and no current network selected",
-                },
-                indent=2,
-            )
-
-        if network_id not in self.get_proxy(session_id).networks:
-            return json.dumps(
-                {"success": False, "error": f"Network '{network_id}' not found"},
-                indent=2,
-            )
 
         if mode not in {"summary", "detail"}:
             return json.dumps(
@@ -503,7 +489,6 @@ class SecurityTools(PyPowsyblTool):
             } or None
 
         try:
-            network = self.get_proxy(session_id).networks[network_id]
             contingencies, contingency_source = self._resolve_contingencies(
                 network=network,
                 contingencies=contingencies,
@@ -525,10 +510,8 @@ class SecurityTools(PyPowsyblTool):
 
             results = analysis.run_ac(network)
             # Store results
-            self.get_proxy(session_id).security_results = getattr(
-                self.get_proxy(session_id), "security_results", {}
-            )
-            self.get_proxy(session_id).security_results[network_id] = {
+            proxy.security_results = getattr(proxy, "security_results", {})
+            proxy.security_results[network_id] = {
                 "timestamp": datetime.now(UTC).isoformat(),
             }
 
@@ -731,29 +714,14 @@ class SecurityTools(PyPowsyblTool):
               of the two connected voltage levels
             - Generators are filtered by their connected voltage level
         """
-        session_id = get_session_id(ctx)
+        try:
+            _, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
 
-        if network_id is None:
-            network_id = self.get_proxy(session_id).current_network_id
         logger.debug(f"Creating contingencies list for network '{network_id}'")
 
-        if network_id is None:
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": "No network specified and no current network selected",
-                },
-                indent=2,
-            )
-
-        if network_id not in self.get_proxy(session_id).networks:
-            return json.dumps(
-                {"success": False, "error": f"Network '{network_id}' not found"},
-                indent=2,
-            )
-
         try:
-            network = self.get_proxy(session_id).networks[network_id]
             filter_result = self._build_contingencies_from_filter(
                 network=network,
                 element_type=element_type,
@@ -855,26 +823,10 @@ class SecurityTools(PyPowsyblTool):
             # N-1 violations above 100 % on all lines
             get_overloaded_elements(study="n1", threshold_percent=100)
         """
-        session_id = get_session_id(ctx)
-        proxy = self.get_proxy(session_id)
-
-        if network_id is None:
-            network_id = proxy.current_network_id
-
-        if network_id is None:
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": "No network specified and no current network selected",
-                },
-                indent=2,
-            )
-
-        if network_id not in proxy.networks:
-            return json.dumps(
-                {"success": False, "error": f"Network '{network_id}' not found"},
-                indent=2,
-            )
+        try:
+            _, network_id, _ = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
 
         study_normalized = (study or "n").strip().lower()
         if study_normalized not in ("n", "n1"):
