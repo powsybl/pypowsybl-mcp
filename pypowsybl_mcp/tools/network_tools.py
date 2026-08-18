@@ -21,6 +21,7 @@ from pypowsybl_mcp.utils.element_data_filter import (
     attach_current_limits,
     attach_tap_changer_data,
 )
+from pypowsybl_mcp.utils.element_types import ELEMENT_TYPE_TO_GETTER
 from pypowsybl_mcp.utils.pagination import (
     DEFAULT_PAGINATION_LIMIT,
     attach_pagination,
@@ -1519,24 +1520,7 @@ class NetworkTools(PyPowsyblTool):
             network.set_working_variant(variant_id)
 
             # Map element types to network methods
-            element_methods = {
-                "voltage_levels": "get_voltage_levels",
-                "substations": "get_substations",
-                "buses": "get_buses",
-                "generators": "get_generators",
-                "loads": "get_loads",
-                "lines": "get_lines",
-                "transformers": "get_2_windings_transformers",
-                "2_windings_transformers": "get_2_windings_transformers",
-                "3_windings_transformers": "get_3_windings_transformers",
-                "hvdc_lines": "get_hvdc_lines",
-                "shunt_compensators": "get_shunt_compensators",
-                "static_var_compensators": "get_static_var_compensators",
-                "svc": "get_static_var_compensators",
-                "vsc_converter_stations": "get_vsc_converter_stations",
-                "lcc_converter_stations": "get_lcc_converter_stations",
-                "switches": "get_switches",
-            }
+            element_methods = ELEMENT_TYPE_TO_GETTER
 
             if element_type not in element_methods:
                 msg = f"Invalid element type '{element_type}'. Supported types: {', '.join(element_methods.keys())}"
@@ -1785,8 +1769,9 @@ class NetworkTools(PyPowsyblTool):
             return msg
 
         try:
-            # Map element types to ElementType enum for get_elements_ids()
-            # Only use get_elements_ids() for types that support it
+            # Types with native get_elements_ids() support: use the ElementType
+            # enum fast path. Every other supported type falls back to its
+            # canonical getter (see ELEMENT_TYPE_TO_GETTER).
             element_type_map = {
                 "generators": _pp.ElementType.GENERATOR,
                 "loads": _pp.ElementType.LOAD,
@@ -1795,30 +1780,15 @@ class NetworkTools(PyPowsyblTool):
                 "2_windings_transformers": _pp.ElementType.TWO_WINDINGS_TRANSFORMER,
             }
 
-            # For types that don't support get_elements_ids(), use the old method
-            element_methods = {
-                "voltage_levels": "get_voltage_levels",
-                "substations": "get_substations",
-                "buses": "get_buses",
-                "3_windings_transformers": "get_3_windings_transformers",
-                "hvdc_lines": "get_hvdc_lines",
-                "shunt_compensators": "get_shunt_compensators",
-                "static_var_compensators": "get_static_var_compensators",
-                "svc": "get_static_var_compensators",
-                "vsc_converter_stations": "get_vsc_converter_stations",
-                "lcc_converter_stations": "get_lcc_converter_stations",
-                "switches": "get_switches",
-            }
-
             # Try to use get_elements_ids() for supported types
             if element_type in element_type_map:
                 element_ids = network.get_elements_ids(element_type_map[element_type])
                 logger.debug(
                     f"Retrieved {len(element_ids)} {element_type} IDs from network '{network_id}' using get_elements_ids()"
                 )
-            elif element_type in element_methods:
-                # Fall back to old method for unsupported types
-                method_name = element_methods[element_type]
+            elif element_type in ELEMENT_TYPE_TO_GETTER:
+                # Fall back to the canonical getter for types without enum support
+                method_name = ELEMENT_TYPE_TO_GETTER[element_type]
                 if not hasattr(network, method_name):
                     msg = f"Method '{method_name}' not available for this network"
                     logger.warning(msg)
@@ -1831,11 +1801,8 @@ class NetworkTools(PyPowsyblTool):
                     f"Retrieved {len(element_ids)} {element_type} IDs from network '{network_id}' using {method_name}()"
                 )
             else:
-                # Combine both maps for error message
-                all_supported = list(element_type_map.keys()) + list(
-                    element_methods.keys()
-                )
-                msg = f"Invalid element type '{element_type}'. Supported types: {', '.join(all_supported)}"
+                supported = ", ".join(ELEMENT_TYPE_TO_GETTER)
+                msg = f"Invalid element type '{element_type}'. Supported types: {supported}"
                 logger.warning(msg)
                 return msg
 

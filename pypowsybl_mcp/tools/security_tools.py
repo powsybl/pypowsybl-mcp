@@ -16,6 +16,7 @@ from mcp.server.fastmcp import Context
 
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.tools.network_tools import NetworkTools
+from pypowsybl_mcp.utils.element_types import ELEMENT_TYPE_TO_GETTER
 from pypowsybl_mcp.utils.pagination import paginate
 from pypowsybl_mcp.utils.user_session_management import get_session_id
 
@@ -128,13 +129,18 @@ class SecurityTools(PyPowsyblTool):
         This is shared by create_contingencies_list and run_security_analysis
         so both tools apply the same element-type and voltage-filter rules.
         """
-        # This mapping keeps the public filter values stable.
+        # Only these element types make sense as N-1 contingencies. The getter
+        # names come from the canonical map so they cannot drift from the rest
+        # of the code base.
         supported_types = {
-            "lines": "get_lines",
-            "generators": "get_generators",
-            "transformers": "get_2_windings_transformers",
-            "2_windings_transformers": "get_2_windings_transformers",
-            "hvdc_lines": "get_hvdc_lines",
+            key: ELEMENT_TYPE_TO_GETTER[key]
+            for key in (
+                "lines",
+                "generators",
+                "transformers",
+                "2_windings_transformers",
+                "hvdc_lines",
+            )
         }
 
         if element_type not in supported_types:
