@@ -28,6 +28,41 @@ from pypowsybl_mcp.utils.pagination import (
 )
 from pypowsybl_mcp.utils.user_session_management import get_session_id
 
+# Specification driving modify_network. Each element type maps to the network
+# getter used to check existence, a label used in messages, the update method
+# to call, and the parameters that may be modified. Each parameter maps to
+# (update_kwarg, display_name, unit) where display_name/unit only affect the
+# success message.
+MODIFY_NETWORK_SPEC: dict[str, dict] = {
+    "generator": {
+        "getter": "get_generators",
+        "label": "Generator",
+        "updater": "update_generators",
+        "parameters": {
+            "target_p": ("target_p", "target_p", "MW"),
+            "target_v": ("target_v", "target_v", "p.u."),
+        },
+    },
+    "load": {
+        "getter": "get_loads",
+        "label": "Load",
+        "updater": "update_loads",
+        "parameters": {
+            "p0": ("p0", "p0", "MW"),
+            "q0": ("q0", "q0", "MVAr"),
+        },
+    },
+    "line": {
+        "getter": "get_lines",
+        "label": "Line",
+        "updater": "update_lines",
+        "parameters": {
+            "r": ("r", "resistance", "Ω"),
+            "x": ("x", "reactance", "Ω"),
+        },
+    },
+}
+
 
 def register_network_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
     tools = NetworkTools(pypowsybl_proxies)
@@ -440,84 +475,36 @@ class NetworkTools(PyPowsyblTool):
         try:
             proxy.invalidate_loadflow(network_id)
 
-            if element_type == "generator":
-                generators = network.get_generators()
-                if element_id not in generators.index:
-                    error = (
-                        f"Generator '{element_id}' not found in network '{network_id}'"
-                    )
-                    logger.warning(error)
-                    return error
-
-                if parameter == "target_p":
-                    network.update_generators(id=element_id, target_p=value)
-                    error = f"Updated generator '{element_id}' target_p to {value} MW in network '{network_id}'"
-                    logger.warning(error)
-                    return error
-
-                elif parameter == "target_v":
-                    network.update_generators(id=[element_id], target_v=[value])
-                    error = f"Updated generator '{element_id}' target_v to {value} p.u. in network '{network_id}'"
-                    logger.warning(error)
-                    return error
-
-                else:
-                    error = f"Unsupported parameter '{parameter}' for generator"
-                    logger.warning(error)
-                    return error
-
-            elif element_type == "load":
-                loads = network.get_loads()
-                if element_id not in loads.index:
-                    error = f"Load '{element_id}' not found in network '{network_id}'"
-                    logger.warning(error)
-                    return error
-
-                if parameter == "p0":
-                    network.update_loads(id=[element_id], p0=[value])
-                    info = f"Updated load '{element_id}' p0 to {value} MW in network '{network_id}'"
-                    logger.success(info)
-                    return info
-
-                elif parameter == "q0":
-                    network.update_loads(id=[element_id], q0=[value])
-                    info = f"Updated load '{element_id}' q0 to {value} MVAr in network '{network_id}'"
-                    logger.success(info)
-                    return info
-
-                else:
-                    error = f"Unsupported parameter '{parameter}' for load"
-                    logger.warning(error)
-                    return error
-
-            elif element_type == "line":
-                lines = network.get_lines()
-                if element_id not in lines.index:
-                    error = f"Line '{element_id}' not found in network '{network_id}'"
-                    logger.warning(error)
-                    return error
-
-                if parameter == "r":
-                    network.update_lines(id=[element_id], r=[value])
-                    info = f"Updated line '{element_id}' resistance to {value} Ω in network '{network_id}'"
-                    logger.success(info)
-                    return info
-
-                elif parameter == "x":
-                    network.update_lines(id=[element_id], x=[value])
-                    info = f"Updated line '{element_id}' reactance to {value} Ω in network '{network_id}'"
-                    logger.success(info)
-                    return info
-
-                else:
-                    error = f"Unsupported parameter '{parameter}' for line"
-                    logger.warning(error)
-                    return error
-
-            else:
+            spec = MODIFY_NETWORK_SPEC.get(element_type)
+            if spec is None:
                 error = f"Unsupported element type '{element_type}'"
                 logger.warning(error)
                 return error
+
+            elements = getattr(network, spec["getter"])()
+            if element_id not in elements.index:
+                error = (
+                    f"{spec['label']} '{element_id}' not found "
+                    f"in network '{network_id}'"
+                )
+                logger.warning(error)
+                return error
+
+            param_spec = spec["parameters"].get(parameter)
+            if param_spec is None:
+                error = f"Unsupported parameter '{parameter}' for {element_type}"
+                logger.warning(error)
+                return error
+
+            update_kwarg, display_name, unit = param_spec
+            getattr(network, spec["updater"])(id=[element_id], **{update_kwarg: [value]})
+
+            info = (
+                f"Updated {element_type} '{element_id}' {display_name} "
+                f"to {value} {unit} in network '{network_id}'"
+            )
+            logger.success(info)
+            return info
 
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.error(f"Failed to modify network: {e}")

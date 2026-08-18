@@ -1191,7 +1191,7 @@ async def test_modify_network_generator_target_p_success(network_tools, mock_ctx
     )
 
     assert "Updated generator 'g1' target_p to 150.0 MW in network 'net1'" in result
-    mock_net.update_generators.assert_called_once_with(id="g1", target_p=150.0)
+    mock_net.update_generators.assert_called_once_with(id=["g1"], target_p=[150.0])
 
 
 @pytest.mark.asyncio
