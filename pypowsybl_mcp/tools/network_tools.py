@@ -261,9 +261,7 @@ class NetworkTools(PyPowsyblTool):
             for network_id in proxy.networks:
                 summary = proxy._get_network_summary(network_id)
                 current_marker = (
-                    " (CURRENT)"
-                    if network_id == proxy.current_network_id
-                    else ""
+                    " (CURRENT)" if network_id == proxy.current_network_id else ""
                 )
                 loadflow_marker = (
                     " [LF✓]" if summary.get("has_loadflow_results", False) else ""
@@ -498,7 +496,9 @@ class NetworkTools(PyPowsyblTool):
                 return error
 
             update_kwarg, display_name, unit = param_spec
-            getattr(network, spec["updater"])(id=[element_id], **{update_kwarg: [value]})
+            getattr(network, spec["updater"])(
+                id=[element_id], **{update_kwarg: [value]}
+            )
 
             info = (
                 f"Updated {element_type} '{element_id}' {display_name} "
