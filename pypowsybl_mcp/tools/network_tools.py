@@ -21,7 +21,10 @@ from pypowsybl_mcp.utils.element_data_filter import (
     attach_current_limits,
     attach_tap_changer_data,
 )
-from pypowsybl_mcp.utils.element_types import ELEMENT_TYPE_TO_GETTER
+from pypowsybl_mcp.utils.element_types import (
+    ELEMENT_TYPE_TO_GETTER,
+    element_type_hint,
+)
 from pypowsybl_mcp.utils.pagination import (
     DEFAULT_PAGINATION_LIMIT,
     attach_pagination,
@@ -295,7 +298,7 @@ class NetworkTools(PyPowsyblTool):
                 - generators: Number of generation units
                 - loads: Number of load points
                 - lines: Number of transmission lines
-                - transformers: Number of transformers
+                - 2_windings_transformers: Number of two-winding transformers
                 - has_loadflow_results: Whether loadflow has been run
                 - voltage_levels: Voltage level information
 
@@ -1408,14 +1411,20 @@ class NetworkTools(PyPowsyblTool):
                 - "generators": Generation units with power output
                 - "loads": Load points with consumption
                 - "lines": Transmission lines with ratings
-                - "transformers" or "2_windings_transformers": Two-winding transformers
+                - "2_windings_transformers": Two-winding transformers ("transformer"
+                  on its own always means this one)
                 - "3_windings_transformers": Three-winding transformers
                 - "hvdc_lines": HVDC transmission lines
                 - "shunt_compensators": Shunt compensation devices
-                - "static_var_compensators" or "svc": Static var compensators
+                - "static_var_compensators": Static var compensators
                 - "vsc_converter_stations": VSC converter stations
                 - "lcc_converter_stations": LCC converter stations
                 - "switches": Switching devices
+                Any other pypowsybl element table is accepted too, named after
+                its getter without the "get_" prefix (e.g. "batteries",
+                "tie_lines", "busbar_sections"). Names are canonical: no
+                abbreviations or plural variants. An invalid name comes back
+                with the full list and a suggestion.
             compare_with_variant_id (str, optional): Variant to compare with. If None, do not do comparison. Default: None.
             mode (str, optional): Use "filter" to keep only the elements that match a
                 condition. Omit it (or use "list") to get the full element list. Default: None.
@@ -1523,7 +1532,10 @@ class NetworkTools(PyPowsyblTool):
             element_methods = ELEMENT_TYPE_TO_GETTER
 
             if element_type not in element_methods:
-                msg = f"Invalid element type '{element_type}'. Supported types: {', '.join(element_methods.keys())}"
+                msg = (
+                    f"Invalid element type '{element_type}'. "
+                    f"{element_type_hint(element_type, element_methods)}"
+                )
                 logger.warning(msg)
                 return msg
 
@@ -1540,7 +1552,6 @@ class NetworkTools(PyPowsyblTool):
             # get_operational_limits(). We join it here so loading_percent works.
             if compare_with_variant_id is None and element_type in (
                 "lines",
-                "transformers",
                 "2_windings_transformers",
             ):
                 limits_df = None
@@ -1555,7 +1566,6 @@ class NetworkTools(PyPowsyblTool):
             # tap position, range and regulated side so the caller sees them in
             # one call (see set_tap_position() to change the position).
             if compare_with_variant_id is None and element_type in (
-                "transformers",
                 "2_windings_transformers",
                 "3_windings_transformers",
             ):
@@ -1706,14 +1716,17 @@ class NetworkTools(PyPowsyblTool):
                 - "generators": Generator IDs
                 - "loads": Load IDs
                 - "lines": Transmission line IDs
-                - "transformers" or "2_windings_transformers": Transformer IDs
+                - "2_windings_transformers": Two-winding transformer IDs
+                  ("transformer" on its own always means this one)
                 - "3_windings_transformers": Three-winding transformer IDs
                 - "hvdc_lines": HVDC line IDs
                 - "shunt_compensators": Shunt compensator IDs
-                - "static_var_compensators" or "svc": SVC IDs
+                - "static_var_compensators": SVC IDs
                 - "vsc_converter_stations": VSC converter station IDs
                 - "lcc_converter_stations": LCC converter station IDs
                 - "switches": Switch IDs
+                Any other pypowsybl element table is accepted too, named after
+                its getter without the "get_" prefix.
             limit (int, optional): Max IDs per page. None = full list (legacy format).
             cursor (str | int, optional): Page offset.
 
@@ -1776,7 +1789,6 @@ class NetworkTools(PyPowsyblTool):
                 "generators": _pp.ElementType.GENERATOR,
                 "loads": _pp.ElementType.LOAD,
                 "lines": _pp.ElementType.LINE,
-                "transformers": _pp.ElementType.TWO_WINDINGS_TRANSFORMER,
                 "2_windings_transformers": _pp.ElementType.TWO_WINDINGS_TRANSFORMER,
             }
 
@@ -1801,8 +1813,10 @@ class NetworkTools(PyPowsyblTool):
                     f"Retrieved {len(element_ids)} {element_type} IDs from network '{network_id}' using {method_name}()"
                 )
             else:
-                supported = ", ".join(ELEMENT_TYPE_TO_GETTER)
-                msg = f"Invalid element type '{element_type}'. Supported types: {supported}"
+                msg = (
+                    f"Invalid element type '{element_type}'. "
+                    f"{element_type_hint(element_type)}"
+                )
                 logger.warning(msg)
                 return msg
 

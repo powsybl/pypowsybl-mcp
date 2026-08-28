@@ -232,7 +232,7 @@ class PyPowsyblMCPServerProxy:
                 "loads": len(loads),
                 "total_load_mw": float(f"{total_load:.2f}"),
                 "lines": len(lines),
-                "transformers": len(transformers),
+                "2_windings_transformers": len(transformers),
                 "is_current": network_id == self.current_network_id,
                 "has_loadflow_results": network_id in self.loadflow_results,
             }

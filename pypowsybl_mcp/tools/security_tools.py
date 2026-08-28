@@ -16,7 +16,10 @@ from mcp.server.fastmcp import Context
 
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.tools.network_tools import NetworkTools
-from pypowsybl_mcp.utils.element_types import ELEMENT_TYPE_TO_GETTER
+from pypowsybl_mcp.utils.element_types import (
+    ELEMENT_TYPE_TO_GETTER,
+    element_type_hint,
+)
 from pypowsybl_mcp.utils.pagination import paginate
 from pypowsybl_mcp.utils.user_session_management import get_session_id
 
@@ -101,7 +104,7 @@ class SecurityTools(PyPowsyblTool):
         are classified by the highest side. This keeps mixed-voltage assets
         visible in high-voltage studies.
         """
-        if element_type in ["lines", "transformers", "2_windings_transformers"]:
+        if element_type in ["lines", "2_windings_transformers"]:
             voltage_level1_id = element_row.get("voltage_level1_id")
             voltage_level2_id = element_row.get("voltage_level2_id")
             voltage1 = voltage_by_level.get(voltage_level1_id, 0)
@@ -137,7 +140,6 @@ class SecurityTools(PyPowsyblTool):
             for key in (
                 "lines",
                 "generators",
-                "transformers",
                 "2_windings_transformers",
                 "hvdc_lines",
             )
@@ -145,7 +147,8 @@ class SecurityTools(PyPowsyblTool):
 
         if element_type not in supported_types:
             raise ValueError(
-                f"Unsupported element type '{element_type}'. Supported types: {', '.join(supported_types.keys())}"
+                f"Unsupported element type '{element_type}'. "
+                f"{element_type_hint(element_type, supported_types)}"
             )
 
         method_name = supported_types[element_type]
@@ -375,7 +378,7 @@ class SecurityTools(PyPowsyblTool):
                 Mutually exclusive with auto_contingencies. Default: None.
             auto_contingencies (dict | str, optional): Compact filter to auto-build contingencies.
                 Format:
-                - element_type (str): lines, generators, transformers, 2_windings_transformers, hvdc_lines
+                - element_type (str): lines, generators, 2_windings_transformers, hvdc_lines
                 - min_nominal_voltage (float, optional)
                 - max_nominal_voltage (float, optional)
                 Mutually exclusive with contingencies. Default: None.
@@ -639,7 +642,8 @@ class SecurityTools(PyPowsyblTool):
             element_type (str, optional): Type of elements to create contingencies for. Supported types:
                 - "lines": Transmission lines (default)
                 - "generators": Generators
-                - "transformers" or "2_windings_transformers": Two-winding transformers
+                - "2_windings_transformers": Two-winding transformers ("transformer"
+                  on its own always means this one)
                 - "hvdc_lines": HVDC lines
                 Default: "lines".
             min_nominal_voltage (float, optional): Minimum nominal voltage in kV to filter elements.

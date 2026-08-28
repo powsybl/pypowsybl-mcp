@@ -35,7 +35,7 @@ COMPARISONS = {
 DERIVED_METRICS = ("loading_percent", "p_abs", "q_abs")
 
 # Lines and transformers have two terminals (side 1 and side 2).
-TWO_SIDED_TYPES = ("lines", "hvdc_lines", "transformers", "2_windings_transformers")
+TWO_SIDED_TYPES = ("lines", "hvdc_lines", "2_windings_transformers")
 
 
 def _max_abs(df, columns):

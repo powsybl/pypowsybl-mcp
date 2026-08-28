@@ -2007,7 +2007,7 @@ async def test_get_network_element_data_method_not_available(network_tools, mock
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.get_network_element_data(
-        network_id="net1", element_type="svc", ctx=mock_ctx
+        network_id="net1", element_type="static_var_compensators", ctx=mock_ctx
     )
 
     assert "not available for this network" in result

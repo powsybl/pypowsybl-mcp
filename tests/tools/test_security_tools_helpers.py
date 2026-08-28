@@ -49,7 +49,9 @@ def test_element_nominal_voltage():
         "voltage_level2_id": "VL2",
     }.get(k)
     assert (
-        SecurityTools._element_nominal_voltage("transformers", row, vl_voltages, None)
+        SecurityTools._element_nominal_voltage(
+            "2_windings_transformers", row, vl_voltages, None
+        )
         == 225.0
     )
 
@@ -109,7 +111,9 @@ def test_build_contingencies_from_filter_transformers():
         {"voltage_level1_id": ["VL400"], "voltage_level2_id": ["VL225"]}, index=["T1"]
     )
 
-    res = SecurityTools._build_contingencies_from_filter(mock_net, "transformers")
+    res = SecurityTools._build_contingencies_from_filter(
+        mock_net, "2_windings_transformers"
+    )
     assert res["filtered_count"] == 1
     assert res["contingencies"][0]["element_id"] == "T1"
 

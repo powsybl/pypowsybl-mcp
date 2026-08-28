@@ -96,7 +96,7 @@ class TestGetNetworkSummary:
         assert result["loads"] == 3
         assert result["total_load_mw"] == 225.0
         assert result["lines"] == 4
-        assert result["transformers"] == 2
+        assert result["2_windings_transformers"] == 2
         assert result["is_current"] is True
         assert result["has_loadflow_results"] is True
 
