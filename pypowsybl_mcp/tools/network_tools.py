@@ -1305,7 +1305,8 @@ class NetworkTools(PyPowsyblTool):
 
         Identifies all buses where voltage magnitude falls outside the acceptable
         operating range. This is a critical check for power system security and
-        equipment protection. Automatically runs loadflow if needed.
+        equipment protection. Runs an AC load flow only if no load flow results
+        are cached for the network yet; otherwise the cached solution is reused.
 
         Bus voltages returned by pypowsybl are expressed in kV, while networks mix
         several nominal voltages (400, 225, 90, 63, 20 kV...). A single threshold is
@@ -1337,7 +1338,8 @@ class NetworkTools(PyPowsyblTool):
                 - success (bool): Whether check completed successfully
                 - network_id (str): Network identifier
                 - loadflow_executed (bool): Whether loadflow was run automatically
-                - voltage_limits (dict): Fallback limits and unit used
+                - parameter_limits (dict): Fallback min/max/unit from the request,
+                    applied only to buses with limit_source = "parameter"
                 - limit_sources (dict): Bus counts per limit source
                 - total_buses (int): Total number of buses checked
                 - evaluated_buses (int): Buses with a usable voltage and nominal voltage
@@ -1351,7 +1353,7 @@ class NetworkTools(PyPowsyblTool):
               "success": true,
               "network_id": "vendee",
               "loadflow_executed": false,
-              "voltage_limits": {"min": 0.95, "max": 1.05, "unit": "pu"},
+              "parameter_limits": {"min": 0.95, "max": 1.05, "unit": "pu"},
               "limit_sources": {"network": 439, "parameter": 0},
               "total_buses": 439,
               "evaluated_buses": 439,
@@ -1505,11 +1507,15 @@ class NetworkTools(PyPowsyblTool):
 
                 is_low = v_kv < low_kv
                 breached = low_kv if is_low else high_kv
+                bus_name = bus.get("name", "")
+                voltage_level_id = bus.get("voltage_level_id", "")
                 violations.append(
                     {
                         "bus_id": str(bus_id),
-                        "bus_name": bus.get("name", ""),
-                        "voltage_level_id": bus.get("voltage_level_id", ""),
+                        "bus_name": "" if pd.isna(bus_name) else bus_name,
+                        "voltage_level_id": ""
+                        if pd.isna(voltage_level_id)
+                        else voltage_level_id,
                         "nominal_v": None
                         if pd.isna(nominal_v)
                         else round(nominal_v, 3),
@@ -1538,7 +1544,7 @@ class NetworkTools(PyPowsyblTool):
                     "success": True,
                     "network_id": network_id,
                     "loadflow_executed": loadflow_executed,
-                    "voltage_limits": {
+                    "parameter_limits": {
                         "min": min_voltage,
                         "max": max_voltage,
                         "unit": unit,

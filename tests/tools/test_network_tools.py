@@ -351,7 +351,7 @@ async def test_check_voltage_violations_kv_unit(network_tools, mock_ctx):
     data = json.loads(result)
     assert data["violation_count"] == 1
     assert data["violations"][0]["limit_kv"] == 405.0
-    assert data["voltage_limits"]["unit"] == "kv"
+    assert data["parameter_limits"]["unit"] == "kv"
 
 
 @pytest.mark.asyncio
@@ -550,7 +550,7 @@ async def test_check_voltage_violations_pagination(network_tools, mock_ctx):
 
     data = json.loads(result)
     assert data["success"] is True
-    assert data["voltage_limits"] == {"min": V_MIN, "max": V_MAX, "unit": "pu"}
+    assert data["parameter_limits"] == {"min": V_MIN, "max": V_MAX, "unit": "pu"}
     assert data["violation_count"] == BUS_COUNT
     low_limit_kv = V_MIN * NOMINAL_V
     assert data["violations"] == [
