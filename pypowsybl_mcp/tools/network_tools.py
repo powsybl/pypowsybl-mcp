@@ -1294,23 +1294,42 @@ class NetworkTools(PyPowsyblTool):
         network_id: str | None = None,
         min_voltage: float = 0.95,
         max_voltage: float = 1.05,
+        unit: str = "pu",
+        use_network_limits: bool = True,
         limit: int | None = None,
         cursor: str | int | None = None,
         ctx: Context[ServerSession, None] = None,  # FastMCP injects this
     ) -> str:
         """
-        Check for bus voltage violations against specified limits.
+        Check for bus voltage violations against operating limits.
 
-        Identifies all buses where voltage magnitude falls outside acceptable operating
-        range. This is a critical check for power system security and equipment protection.
-        Automatically runs loadflow if needed.
+        Identifies all buses where voltage magnitude falls outside the acceptable
+        operating range. This is a critical check for power system security and
+        equipment protection. Runs an AC load flow only if no load flow results
+        are cached for the network yet; otherwise the cached solution is reused.
+
+        Bus voltages returned by pypowsybl are expressed in kV, while networks mix
+        several nominal voltages (400, 225, 90, 63, 20 kV...). A single threshold is
+        therefore meaningless across a whole network, so each bus is compared against
+        a limit expressed in kV and derived per voltage level:
+
+        - if the voltage level defines low/high voltage limits and use_network_limits
+          is True, those limits are used (limit_source = "network");
+        - otherwise min_voltage/max_voltage are applied, converted to kV using the
+          bus nominal voltage when they are given in per-unit (limit_source =
+          "parameter").
 
         Args:
             network_id (str, optional): Network to check. If None, uses current network. Default: None.
-            min_voltage (float, optional): Minimum acceptable voltage in per-unit (p.u.).
-                Typical values: 0.95-0.90. Default: 0.95 p.u.
-            max_voltage (float, optional): Maximum acceptable voltage in per-unit (p.u.).
-                Typical values: 1.05-1.10. Default: 1.05 p.u.
+            min_voltage (float, optional): Minimum acceptable voltage, in the unit given
+                by `unit`. Used only where the network defines no limit. Default: 0.95 p.u.
+            max_voltage (float, optional): Maximum acceptable voltage, in the unit given
+                by `unit`. Used only where the network defines no limit. Default: 1.05 p.u.
+            unit (str, optional): Unit of min_voltage/max_voltage, "pu" or "kv".
+                Default: "pu". Per-unit values are multiplied by each bus nominal
+                voltage; kV values are applied as given to every bus.
+            use_network_limits (bool, optional): Use the low/high voltage limits carried
+                by the voltage levels when available. Default: True.
             limit (int, optional): Max violations per page. None = all violations.
             cursor (str | int, optional): Page offset (default 0). See pagination.nextCursor.
 
@@ -1319,8 +1338,11 @@ class NetworkTools(PyPowsyblTool):
                 - success (bool): Whether check completed successfully
                 - network_id (str): Network identifier
                 - loadflow_executed (bool): Whether loadflow was run automatically
-                - voltage_limits (dict): Min and max voltage limits used
+                - parameter_limits (dict): Fallback min/max/unit from the request,
+                    applied only to buses with limit_source = "parameter"
+                - limit_sources (dict): Bus counts per limit source
                 - total_buses (int): Total number of buses checked
+                - evaluated_buses (int): Buses with a usable voltage and nominal voltage
                 - violation_count (int): Number of buses with violations
                 - violations (list): Detailed violation information (paginated if limit set)
                 - pagination (dict, optional): limit, cursor, total, nextCursor
@@ -1329,24 +1351,25 @@ class NetworkTools(PyPowsyblTool):
         Example Output:
             {
               "success": true,
-              "network_id": "ieee_30",
+              "network_id": "vendee",
               "loadflow_executed": false,
-              "voltage_limits": {
-                "min": 0.95,
-                "max": 1.05
-              },
-              "total_buses": 30,
-              "violation_count": 3,
+              "parameter_limits": {"min": 0.95, "max": 1.05, "unit": "pu"},
+              "limit_sources": {"network": 439, "parameter": 0},
+              "total_buses": 439,
+              "evaluated_buses": 439,
+              "violation_count": 68,
               "violations": [
                 {
-                  "bus_name": "VL_5",
-                  "voltage": 0.932,
-                  "violation_type": "LOW_VOLTAGE"
-                },
-                {
-                  "bus_name": "VL_8",
-                  "voltage": 1.067,
-                  "violation_type": "HIGH_VOLTAGE"
+                  "bus_id": "ABCD P6_5",
+                  "bus_name": "",
+                  "voltage_level_id": "ABCD P6",
+                  "nominal_v": 225.0,
+                  "v_kv": 258.127,
+                  "v_pu": 1.147,
+                  "violation_type": "HIGH_VOLTAGE",
+                  "limit_kv": 245.0,
+                  "limit_source": "network",
+                  "deviation_kv": 13.127
                 }
               ]
             }
@@ -1369,6 +1392,16 @@ class NetworkTools(PyPowsyblTool):
         if network_id not in self.get_proxy(session_id).networks:
             return json.dumps(
                 {"success": False, "error": f"Network '{network_id}' not found"},
+                indent=2,
+            )
+
+        unit = (unit or "pu").strip().lower()
+        if unit not in ("pu", "kv"):
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": f"Invalid unit '{unit}': expected 'pu' or 'kv'",
+                },
                 indent=2,
             )
 
@@ -1410,34 +1443,94 @@ class NetworkTools(PyPowsyblTool):
                     "timestamp": datetime.now(UTC).isoformat(),
                 }
 
-            # Get buses and check for violations
+            # Get buses, enriched with the nominal voltage and the limits of their
+            # voltage level, so every comparison happens in kV.
             buses = network.get_buses()
-            violations = []
+            vl_columns = ["nominal_v", "low_voltage_limit", "high_voltage_limit"]
+            try:
+                voltage_levels = network.get_voltage_levels()
+            except (pp.PyPowsyblError, KeyError):
+                voltage_levels = None
+            if not isinstance(voltage_levels, pd.DataFrame):
+                voltage_levels = pd.DataFrame(columns=vl_columns)
+            else:
+                voltage_levels = voltage_levels.copy()
+            for column in vl_columns:
+                if column not in voltage_levels.columns:
+                    voltage_levels[column] = float("nan")
 
-            for _, bus in buses.iterrows():
-                v_mag = float(bus["v_mag"])
-                if v_mag < min_voltage or v_mag > max_voltage:
-                    violation_type = (
-                        "LOW_VOLTAGE" if v_mag < min_voltage else "HIGH_VOLTAGE"
-                    )
-                    violations.append(
-                        {
-                            "bus_name": bus["name"],
-                            "voltage": round(v_mag, 3),
-                            "violation_type": violation_type,
-                            "deviation": round(
-                                abs(
-                                    v_mag
-                                    - (
-                                        min_voltage
-                                        if v_mag < min_voltage
-                                        else max_voltage
-                                    )
-                                ),
-                                3,
-                            ),
-                        }
-                    )
+            if "voltage_level_id" in buses.columns:
+                enriched = buses.join(voltage_levels[vl_columns], on="voltage_level_id")
+            else:
+                enriched = buses.copy()
+                for column in vl_columns:
+                    enriched[column] = float("nan")
+
+            violations = []
+            evaluated = 0
+            limit_sources = {"network": 0, "parameter": 0}
+
+            for bus_id, bus in enriched.iterrows():
+                v_kv = float(bus.get("v_mag", float("nan")))
+                nominal_v = float(bus.get("nominal_v", float("nan")))
+
+                # Disconnected or islanded buses carry no solved voltage.
+                if pd.isna(v_kv):
+                    continue
+
+                low_kv = bus.get("low_voltage_limit", float("nan"))
+                high_kv = bus.get("high_voltage_limit", float("nan"))
+                has_network_limits = use_network_limits and not (
+                    pd.isna(low_kv) and pd.isna(high_kv)
+                )
+
+                if has_network_limits:
+                    limit_source = "network"
+                    low_kv = float("-inf") if pd.isna(low_kv) else float(low_kv)
+                    high_kv = float("inf") if pd.isna(high_kv) else float(high_kv)
+                elif unit == "kv":
+                    limit_source = "parameter"
+                    low_kv, high_kv = float(min_voltage), float(max_voltage)
+                else:
+                    # Per-unit thresholds need a nominal voltage to become kV.
+                    if pd.isna(nominal_v) or nominal_v <= 0:
+                        continue
+                    limit_source = "parameter"
+                    low_kv = float(min_voltage) * nominal_v
+                    high_kv = float(max_voltage) * nominal_v
+
+                evaluated += 1
+                limit_sources[limit_source] += 1
+
+                if low_kv <= v_kv <= high_kv:
+                    continue
+
+                is_low = v_kv < low_kv
+                breached = low_kv if is_low else high_kv
+                bus_name = bus.get("name", "")
+                voltage_level_id = bus.get("voltage_level_id", "")
+                violations.append(
+                    {
+                        "bus_id": str(bus_id),
+                        "bus_name": "" if pd.isna(bus_name) else bus_name,
+                        "voltage_level_id": ""
+                        if pd.isna(voltage_level_id)
+                        else voltage_level_id,
+                        "nominal_v": None
+                        if pd.isna(nominal_v)
+                        else round(nominal_v, 3),
+                        "v_kv": round(v_kv, 3),
+                        "v_pu": (
+                            None
+                            if pd.isna(nominal_v) or nominal_v <= 0
+                            else round(v_kv / nominal_v, 4)
+                        ),
+                        "violation_type": "LOW_VOLTAGE" if is_low else "HIGH_VOLTAGE",
+                        "limit_kv": round(breached, 3),
+                        "limit_source": limit_source,
+                        "deviation_kv": round(abs(v_kv - breached), 3),
+                    }
+                )
 
             try:
                 violations_out, pagination = paginate(
@@ -1451,8 +1544,14 @@ class NetworkTools(PyPowsyblTool):
                     "success": True,
                     "network_id": network_id,
                     "loadflow_executed": loadflow_executed,
-                    "voltage_limits": {"min": min_voltage, "max": max_voltage},
+                    "parameter_limits": {
+                        "min": min_voltage,
+                        "max": max_voltage,
+                        "unit": unit,
+                    },
+                    "limit_sources": limit_sources,
                     "total_buses": len(buses),
+                    "evaluated_buses": evaluated,
                     "violation_count": len(violations),
                     "violations": violations_out,
                 },

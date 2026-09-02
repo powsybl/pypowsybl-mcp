@@ -245,15 +245,35 @@ async def test_variant_management(network_tools, mock_ctx):
     mock_net.remove_variant.assert_called_with("v1")
 
 
+def _mock_network_with_buses(v_mag, nominal_v=400.0, low=None, high=None):
+    """Bus voltages are in kV, as pypowsybl returns them."""
+    count = len(v_mag)
+    mock_net = MagicMock()
+    mock_net.get_buses.return_value = pd.DataFrame(
+        {
+            "v_mag": v_mag,
+            "name": [f"b{i}" for i in range(1, count + 1)],
+            "voltage_level_id": ["VL1"] * count,
+        },
+        index=[f"b{i}" for i in range(1, count + 1)],
+    )
+    mock_net.get_voltage_levels.return_value = pd.DataFrame(
+        {
+            "nominal_v": [nominal_v],
+            "low_voltage_limit": [low if low is not None else float("nan")],
+            "high_voltage_limit": [high if high is not None else float("nan")],
+        },
+        index=["VL1"],
+    )
+    return mock_net
+
+
 @pytest.mark.asyncio
 async def test_check_voltage_violations_success(network_tools, mock_ctx):
+    """Default p.u. bounds are converted to kV with the bus nominal voltage."""
     proxy = network_tools.get_proxy("test-session")
-    mock_net = MagicMock()
-    # Mock buses dataframe
-    mock_net.get_buses.return_value = pd.DataFrame(
-        {"v_mag": [1.0, 1.1], "v_nom": [400.0, 400.0], "name": ["b1", "b2"]},
-        index=["b1", "b2"],
-    )
+    # 400 kV = 1.00 p.u. (ok), 440 kV = 1.10 p.u. (too high)
+    mock_net = _mock_network_with_buses([400.0, 440.0])
     # Mocking that loadflow has already run (so it doesn't try to run it)
     proxy.loadflow_results["net1"] = {"converged": True}
 
@@ -267,7 +287,104 @@ async def test_check_voltage_violations_success(network_tools, mock_ctx):
     data = json.loads(result)
     assert data["success"] is True
     assert data["violation_count"] == 1
-    assert data["violations"][0]["bus_name"] == "b2"
+    violation = data["violations"][0]
+    assert violation["bus_name"] == "b2"
+    assert violation["violation_type"] == "HIGH_VOLTAGE"
+    assert violation["v_kv"] == 440.0
+    assert violation["v_pu"] == 1.1
+    assert violation["limit_kv"] == 420.0
+    assert violation["limit_source"] == "parameter"
+
+
+@pytest.mark.asyncio
+async def test_check_voltage_violations_uses_network_limits(network_tools, mock_ctx):
+    """Limits carried by the voltage level take precedence over the p.u. bounds."""
+    proxy = network_tools.get_proxy("test-session")
+    # 1.03 p.u. would pass the default bounds but breaches the 405 kV network limit.
+    mock_net = _mock_network_with_buses([412.0], low=380.0, high=405.0)
+    proxy.loadflow_results["net1"] = {"converged": True}
+    proxy.networks["net1"] = mock_net
+
+    result = await network_tools.check_voltage_violations(
+        network_id="net1", ctx=mock_ctx
+    )
+
+    data = json.loads(result)
+    assert data["violation_count"] == 1
+    assert data["violations"][0]["limit_kv"] == 405.0
+    assert data["violations"][0]["limit_source"] == "network"
+    assert data["limit_sources"] == {"network": 1, "parameter": 0}
+
+
+@pytest.mark.asyncio
+async def test_check_voltage_violations_ignores_network_limits_on_request(
+    network_tools, mock_ctx
+):
+    """use_network_limits=False falls back to the p.u. bounds."""
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = _mock_network_with_buses([412.0], low=380.0, high=405.0)
+    proxy.loadflow_results["net1"] = {"converged": True}
+    proxy.networks["net1"] = mock_net
+
+    result = await network_tools.check_voltage_violations(
+        network_id="net1", use_network_limits=False, ctx=mock_ctx
+    )
+
+    data = json.loads(result)
+    # 412 kV is 1.03 p.u., inside the default 0.95-1.05 band
+    assert data["violation_count"] == 0
+    assert data["limit_sources"] == {"network": 0, "parameter": 1}
+
+
+@pytest.mark.asyncio
+async def test_check_voltage_violations_kv_unit(network_tools, mock_ctx):
+    """Bounds given in kV are applied as such."""
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = _mock_network_with_buses([412.0])
+    proxy.loadflow_results["net1"] = {"converged": True}
+    proxy.networks["net1"] = mock_net
+
+    result = await network_tools.check_voltage_violations(
+        network_id="net1", min_voltage=380.0, max_voltage=405.0, unit="kv", ctx=mock_ctx
+    )
+
+    data = json.loads(result)
+    assert data["violation_count"] == 1
+    assert data["violations"][0]["limit_kv"] == 405.0
+    assert data["parameter_limits"]["unit"] == "kv"
+
+
+@pytest.mark.asyncio
+async def test_check_voltage_violations_rejects_bad_unit(network_tools, mock_ctx):
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = _mock_network_with_buses([400.0])
+    proxy.loadflow_results["net1"] = {"converged": True}
+
+    result = await network_tools.check_voltage_violations(
+        network_id="net1", unit="volts", ctx=mock_ctx
+    )
+
+    data = json.loads(result)
+    assert data["success"] is False
+    assert "volts" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_check_voltage_violations_skips_islanded_buses(network_tools, mock_ctx):
+    """Buses with no solved voltage are reported as not evaluated, not as violations."""
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = _mock_network_with_buses([400.0, float("nan")])
+    proxy.loadflow_results["net1"] = {"converged": True}
+    proxy.networks["net1"] = mock_net
+
+    result = await network_tools.check_voltage_violations(
+        network_id="net1", ctx=mock_ctx
+    )
+
+    data = json.loads(result)
+    assert data["total_buses"] == 2
+    assert data["evaluated_buses"] == 1
+    assert data["violation_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -418,17 +535,12 @@ async def test_check_voltage_violations_pagination(network_tools, mock_ctx):
     PAGE_LIMIT = 2
     V_MIN = 0.95
     V_MAX = 1.05
-    V_MAG = [0.90, 0.92, 1.08, 1.10]
+    NOMINAL_V = 400.0
+    # kV values equivalent to 0.90, 0.92, 1.08 and 1.10 p.u. on a 400 kV level
+    V_MAG = [360.0, 368.0, 432.0, 440.0]
 
     proxy = network_tools.get_proxy("test-session")
-    mock_net = MagicMock()
-    mock_net.get_buses.return_value = pd.DataFrame(
-        {
-            "v_mag": V_MAG,
-            "name": [f"VL_HV_{i}" for i in range(1, BUS_COUNT + 1)],
-        },
-        index=[f"b{i}" for i in range(1, BUS_COUNT + 1)],
-    )
+    mock_net = _mock_network_with_buses(V_MAG, nominal_v=NOMINAL_V)
     proxy.loadflow_results["net1"] = {"converged": True}
     proxy.networks["net1"] = mock_net
 
@@ -438,20 +550,33 @@ async def test_check_voltage_violations_pagination(network_tools, mock_ctx):
 
     data = json.loads(result)
     assert data["success"] is True
-    assert data["voltage_limits"] == {"min": V_MIN, "max": V_MAX}
+    assert data["parameter_limits"] == {"min": V_MIN, "max": V_MAX, "unit": "pu"}
     assert data["violation_count"] == BUS_COUNT
+    low_limit_kv = V_MIN * NOMINAL_V
     assert data["violations"] == [
         {
-            "bus_name": "VL_HV_1",
-            "voltage": V_MAG[0],
+            "bus_id": "b1",
+            "bus_name": "b1",
+            "voltage_level_id": "VL1",
+            "nominal_v": NOMINAL_V,
+            "v_kv": V_MAG[0],
+            "v_pu": round(V_MAG[0] / NOMINAL_V, 4),
             "violation_type": "LOW_VOLTAGE",
-            "deviation": round(V_MIN - V_MAG[0], 3),
+            "limit_kv": low_limit_kv,
+            "limit_source": "parameter",
+            "deviation_kv": round(low_limit_kv - V_MAG[0], 3),
         },
         {
-            "bus_name": "VL_HV_2",
-            "voltage": V_MAG[1],
+            "bus_id": "b2",
+            "bus_name": "b2",
+            "voltage_level_id": "VL1",
+            "nominal_v": NOMINAL_V,
+            "v_kv": V_MAG[1],
+            "v_pu": round(V_MAG[1] / NOMINAL_V, 4),
             "violation_type": "LOW_VOLTAGE",
-            "deviation": round(V_MIN - V_MAG[1], 3),
+            "limit_kv": low_limit_kv,
+            "limit_source": "parameter",
+            "deviation_kv": round(low_limit_kv - V_MAG[1], 3),
         },
     ]
     assert data["pagination"] == {
