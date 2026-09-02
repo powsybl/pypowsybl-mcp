@@ -13,7 +13,6 @@ from loguru import logger
 from mcp import ServerSession
 from mcp.server import FastMCP
 from mcp.server.fastmcp import Context
-from pypowsybl import _pypowsybl as _pp
 
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.utils.element_data_filter import (
@@ -23,6 +22,7 @@ from pypowsybl_mcp.utils.element_data_filter import (
 )
 from pypowsybl_mcp.utils.element_types import (
     ELEMENT_TYPE_TO_GETTER,
+    element_type_enum,
     element_type_hint,
 )
 from pypowsybl_mcp.utils.pagination import (
@@ -682,8 +682,8 @@ class NetworkTools(PyPowsyblTool):
 
         Args:
             switch_id (str): ID of the switch to modify. Use
-                get_network_elements_ids(element_type="switches") or
-                get_network_element_data(element_type="switches") to list
+                get_network_elements_ids(element_type="switch") or
+                get_network_element_data(element_type="switch") to list
                 available switches and check their current open status.
             open (bool): Target state — True to open (isolate), False to close
                 (connect).
@@ -772,7 +772,7 @@ class NetworkTools(PyPowsyblTool):
         shift, used to control active power flow). This tool moves the selected
         tap changer to a new position. Inspect the current position and the
         allowed range first with get_network_element_data(element_type=
-        "2_windings_transformers" or "3_windings_transformers"), which now
+        "two_windings_transformer" or "three_windings_transformer"), which now
         returns tap_position, tap_min, tap_max and regulated_side.
 
         **Important**: Changing a tap position clears cached loadflow results.
@@ -1405,25 +1405,25 @@ class NetworkTools(PyPowsyblTool):
             network_id (str, optional): Network to query. If None, uses current network. Default: None.
             variant_id (str, optional): Variant to query. If None, uses default variant_id. Default: 'InitialState'.
             element_type (str): Type of elements to retrieve. Supported types:
-                - "voltage_levels": Voltage level information
-                - "substations": Substation information
-                - "buses": Bus/node data with voltages
-                - "generators": Generation units with power output
-                - "loads": Load points with consumption
-                - "lines": Transmission lines with ratings
-                - "2_windings_transformers": Two-winding transformers ("transformer"
-                  on its own always means this one)
-                - "3_windings_transformers": Three-winding transformers
-                - "hvdc_lines": HVDC transmission lines
-                - "shunt_compensators": Shunt compensation devices
-                - "static_var_compensators": Static var compensators
-                - "vsc_converter_stations": VSC converter stations
-                - "lcc_converter_stations": LCC converter stations
-                - "switches": Switching devices
+                - "voltage_level": Voltage level information
+                - "substation": Substation information
+                - "bus": Bus/node data with voltages
+                - "generator": Generation units with power output
+                - "load": Load points with consumption
+                - "line": Transmission lines with ratings
+                - "two_windings_transformer": Two-winding transformers
+                  ("transformer" on its own always means this one)
+                - "three_windings_transformer": Three-winding transformers
+                - "hvdc_line": HVDC transmission lines
+                - "shunt_compensator": Shunt compensation devices
+                - "static_var_compensator": Static var compensators
+                - "vsc_converter_station": VSC converter stations
+                - "lcc_converter_station": LCC converter stations
+                - "switch": Switching devices
                 Any other pypowsybl element table is accepted too, named after
-                its getter without the "get_" prefix (e.g. "batteries",
-                "tie_lines", "busbar_sections"). Names are canonical: no
-                abbreviations or plural variants. An invalid name comes back
+                its pypowsybl ElementType lowercased (e.g. "battery",
+                "tie_line", "busbar_section"). Names are canonical and singular:
+                no abbreviations or plural variants. An invalid name comes back
                 with the full list and a suggestion.
             compare_with_variant_id (str, optional): Variant to compare with. If None, do not do comparison. Default: None.
             mode (str, optional): Use "filter" to keep only the elements that match a
@@ -1469,13 +1469,13 @@ class NetworkTools(PyPowsyblTool):
 
         Example Usage:
             # Get all substations
-            substations = get_network_element_data("ieee_14", "substations")
+            substations = get_network_element_data("ieee_14", "substation")
 
             # Get all generators
-            generators = get_network_element_data("ieee_14", "generators")
+            generators = get_network_element_data("ieee_14", "generator")
 
             # Get lines from current network
-            lines = get_network_element_data(None, "lines")
+            lines = get_network_element_data(None, "line")
 
         Use Cases:
             - compare variants from same network
@@ -1551,8 +1551,8 @@ class NetworkTools(PyPowsyblTool):
             # get_lines() returns i1/i2 (current in A) but not Imax. Imax is in
             # get_operational_limits(). We join it here so loading_percent works.
             if compare_with_variant_id is None and element_type in (
-                "lines",
-                "2_windings_transformers",
+                "line",
+                "two_windings_transformer",
             ):
                 limits_df = None
                 try:
@@ -1566,8 +1566,8 @@ class NetworkTools(PyPowsyblTool):
             # tap position, range and regulated side so the caller sees them in
             # one call (see set_tap_position() to change the position).
             if compare_with_variant_id is None and element_type in (
-                "2_windings_transformers",
-                "3_windings_transformers",
+                "two_windings_transformer",
+                "three_windings_transformer",
             ):
                 ratio_df = None
                 phase_df = None
@@ -1710,23 +1710,23 @@ class NetworkTools(PyPowsyblTool):
         Args:
             network_id (str, optional): Network to query. If None, uses current network. Default: None.
             element_type (str): Type of elements to list IDs for. Supported types:
-                - "voltage_levels": Voltage level IDs
-                - "substations": Substation IDs
-                - "buses": Bus/node IDs
-                - "generators": Generator IDs
-                - "loads": Load IDs
-                - "lines": Transmission line IDs
-                - "2_windings_transformers": Two-winding transformer IDs
+                - "voltage_level": Voltage level IDs
+                - "substation": Substation IDs
+                - "bus": Bus/node IDs
+                - "generator": Generator IDs
+                - "load": Load IDs
+                - "line": Transmission line IDs
+                - "two_windings_transformer": Two-winding transformer IDs
                   ("transformer" on its own always means this one)
-                - "3_windings_transformers": Three-winding transformer IDs
-                - "hvdc_lines": HVDC line IDs
-                - "shunt_compensators": Shunt compensator IDs
-                - "static_var_compensators": SVC IDs
-                - "vsc_converter_stations": VSC converter station IDs
-                - "lcc_converter_stations": LCC converter station IDs
-                - "switches": Switch IDs
+                - "three_windings_transformer": Three-winding transformer IDs
+                - "hvdc_line": HVDC line IDs
+                - "shunt_compensator": Shunt compensator IDs
+                - "static_var_compensator": SVC IDs
+                - "vsc_converter_station": VSC converter station IDs
+                - "lcc_converter_station": LCC converter station IDs
+                - "switch": Switch IDs
                 Any other pypowsybl element table is accepted too, named after
-                its getter without the "get_" prefix.
+                its pypowsybl ElementType lowercased.
             limit (int, optional): Max IDs per page. None = full list (legacy format).
             cursor (str | int, optional): Page offset.
 
@@ -1736,15 +1736,15 @@ class NetworkTools(PyPowsyblTool):
 
         Example Usage:
             # Get all substation IDs
-            substation_ids = get_network_elements_ids("ieee_14", "substations")
+            substation_ids = get_network_elements_ids("ieee_14", "substation")
             → ["S1", "S2", "S3", ...]
 
             # Get all generator IDs
-            generator_ids = get_network_elements_ids("ieee_14", "generators")
+            generator_ids = get_network_elements_ids("ieee_14", "generator")
             → ["GEN_1", "GEN_2", ...]
 
             # Get line IDs from current network
-            line_ids = get_network_elements_ids(None, "lines")
+            line_ids = get_network_elements_ids(None, "line")
 
         Use Cases:
             - List available elements for selection
@@ -1783,18 +1783,20 @@ class NetworkTools(PyPowsyblTool):
 
         try:
             # Types with native get_elements_ids() support: use the ElementType
-            # enum fast path. Every other supported type falls back to its
-            # canonical getter (see ELEMENT_TYPE_TO_GETTER).
-            element_type_map = {
-                "generators": _pp.ElementType.GENERATOR,
-                "loads": _pp.ElementType.LOAD,
-                "lines": _pp.ElementType.LINE,
-                "2_windings_transformers": _pp.ElementType.TWO_WINDINGS_TRANSFORMER,
+            # enum fast path. The enum comes straight from the element-type name
+            # (keys of ELEMENT_TYPE_TO_GETTER are lowercased ElementType names),
+            # so there is no second lookup to keep in sync. Every other supported
+            # type falls back to its canonical getter.
+            fast_path_types = {
+                "generator",
+                "load",
+                "line",
+                "two_windings_transformer",
             }
 
             # Try to use get_elements_ids() for supported types
-            if element_type in element_type_map:
-                element_ids = network.get_elements_ids(element_type_map[element_type])
+            if element_type in fast_path_types:
+                element_ids = network.get_elements_ids(element_type_enum(element_type))
                 logger.debug(
                     f"Retrieved {len(element_ids)} {element_type} IDs from network '{network_id}' using get_elements_ids()"
                 )

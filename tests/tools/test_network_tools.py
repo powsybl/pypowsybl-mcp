@@ -285,7 +285,7 @@ async def test_get_network_element_data_success(network_tools, mock_ctx):
     proxy.current_network_id = "net1"
 
     result = await network_tools.get_network_element_data(
-        network_id="net1", element_type="generators", ctx=mock_ctx
+        network_id="net1", element_type="generator", ctx=mock_ctx
     )
 
     assert "g1" in result
@@ -305,7 +305,7 @@ async def test_get_network_elements_ids_success(network_tools, mock_ctx):
     proxy.current_network_id = "net1"
 
     result = await network_tools.get_network_elements_ids(
-        network_id="net1", element_type="loads", ctx=mock_ctx
+        network_id="net1", element_type="load", ctx=mock_ctx
     )
 
     assert "l1" in result
@@ -328,7 +328,7 @@ async def test_get_voltage_level_data_success(network_tools, mock_ctx):
 
     # Test get_network_element_data for voltage_levels
     result = await network_tools.get_network_element_data(
-        network_id="net1", element_type="voltage_levels", ctx=mock_ctx
+        network_id="net1", element_type="voltage_level", ctx=mock_ctx
     )
     assert "VL1" in result
     assert "400.0" in result
@@ -336,7 +336,7 @@ async def test_get_voltage_level_data_success(network_tools, mock_ctx):
 
     # Test get_network_elements_ids for voltage_levels
     result_ids = await network_tools.get_network_elements_ids(
-        network_id="net1", element_type="voltage_levels", ctx=mock_ctx
+        network_id="net1", element_type="voltage_level", ctx=mock_ctx
     )
     assert "VL1" in result_ids
     assert "VL2" in result_ids
@@ -357,7 +357,7 @@ async def test_get_network_element_data_pagination(network_tools, mock_ctx):
 
     result = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="generators",
+        element_type="generator",
         limit=2,
         cursor="2",
         ctx=mock_ctx,
@@ -367,7 +367,7 @@ async def test_get_network_element_data_pagination(network_tools, mock_ctx):
     assert list(data["elements"].keys()) == ["GEN_2", "GEN_3"]
     assert data["elements"]["GEN_2"]["p"] == 2.0
     assert data["elements"]["GEN_3"]["p"] == 3.0
-    assert data["element_type"] == "generators"
+    assert data["element_type"] == "generator"
     assert data["pagination"] == {
         "limit": 2,
         "cursor": "2",
@@ -393,7 +393,7 @@ async def test_get_network_elements_ids_pagination_last_page(network_tools, mock
 
     result = await network_tools.get_network_elements_ids(
         network_id="net1",
-        element_type="lines",
+        element_type="line",
         limit=PAGE_LIMIT,
         cursor="2",
         ctx=mock_ctx,
@@ -401,7 +401,7 @@ async def test_get_network_elements_ids_pagination_last_page(network_tools, mock
 
     data = json.loads(result)
     assert data["element_ids"] == [f"LINE_{LINE_COUNT}"]
-    assert data["element_type"] == "lines"
+    assert data["element_type"] == "line"
     assert data["pagination"] == {
         "limit": PAGE_LIMIT,
         "cursor": "2",
@@ -478,7 +478,7 @@ async def test_get_network_element_data_filter_full_dataset(network_tools, mock_
 
     result = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="generators",
+        element_type="generator",
         mode="filter",
         metric="loading_percent",
         filter_op=">",
@@ -510,7 +510,7 @@ async def test_get_network_element_data_filter_sorted(network_tools, mock_ctx):
 
     result = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="lines",
+        element_type="line",
         mode="filter",
         metric="loading_percent",
         filter_op=">",
@@ -544,7 +544,7 @@ async def test_get_network_element_data_filter_respects_limit(network_tools, moc
 
     result = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="lines",
+        element_type="line",
         mode="filter",
         metric="loading_percent",
         filter_op=">",
@@ -591,7 +591,7 @@ async def test_get_network_element_data_filter_caps_without_limit(
 
     result = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="lines",
+        element_type="line",
         mode="filter",
         metric="loading_percent",
         filter_op=">",
@@ -630,7 +630,7 @@ async def test_get_network_element_data_filter_pagination_cursor(
 
     result = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="lines",
+        element_type="line",
         mode="filter",
         metric="loading_percent",
         filter_op=">",
@@ -657,7 +657,7 @@ async def test_get_network_element_data_filter_errors(network_tools, mock_ctx):
 
     result = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="generators",
+        element_type="generator",
         mode="filter",
         metric="loading_percent",
         filter_op="???",
@@ -693,7 +693,7 @@ async def test_filter_lines_loading_from_operational_limits(network_tools, mock_
 
     result = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="lines",
+        element_type="line",
         mode="filter",
         metric="loading_percent",
         filter_op=">",
@@ -732,7 +732,7 @@ async def test_get_network_element_data_filter_temporary_limit(network_tools, mo
     )
     result_perm = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="lines",
+        element_type="line",
         mode="filter",
         metric="loading_percent",
         filter_op=">",
@@ -752,7 +752,7 @@ async def test_get_network_element_data_filter_temporary_limit(network_tools, mo
     )
     result_temp = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="lines",
+        element_type="line",
         mode="filter",
         metric="loading_percent",
         filter_op=">",
@@ -790,7 +790,7 @@ async def test_get_network_element_data_filter_temporary_limit_still_overloaded(
     # 220 A / limite temporaire 200 A = 110 % -> toujours surchargé en N-1.
     result = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="lines",
+        element_type="line",
         mode="filter",
         metric="loading_percent",
         filter_op=">",
@@ -845,7 +845,7 @@ async def test_get_network_element_data_2wt_tap_changer(network_tools, mock_ctx)
     proxy.current_network_id = "net1"
 
     result = await network_tools.get_network_element_data(
-        network_id="net1", element_type="2_windings_transformers", ctx=mock_ctx
+        network_id="net1", element_type="two_windings_transformer", ctx=mock_ctx
     )
     data = json.loads(result)
 
@@ -868,7 +868,7 @@ async def test_get_network_element_data_3wt_tap_changer(network_tools, mock_ctx)
     proxy.current_network_id = "net1"
 
     result = await network_tools.get_network_element_data(
-        network_id="net1", element_type="3_windings_transformers", ctx=mock_ctx
+        network_id="net1", element_type="three_windings_transformer", ctx=mock_ctx
     )
     data = json.loads(result)
 
@@ -1932,7 +1932,7 @@ async def test_get_network_element_data_uses_current_network(network_tools, mock
     proxy.current_network_id = "net1"
 
     result = await network_tools.get_network_element_data(
-        element_type="generators", ctx=mock_ctx
+        element_type="generator", ctx=mock_ctx
     )
 
     assert "g1" in result
@@ -1941,7 +1941,7 @@ async def test_get_network_element_data_uses_current_network(network_tools, mock
 @pytest.mark.asyncio
 async def test_get_network_element_data_no_network_selected(network_tools, mock_ctx):
     result = await network_tools.get_network_element_data(
-        element_type="generators", ctx=mock_ctx
+        element_type="generator", ctx=mock_ctx
     )
 
     assert "No network specified and no current network selected" in result
@@ -1950,7 +1950,7 @@ async def test_get_network_element_data_no_network_selected(network_tools, mock_
 @pytest.mark.asyncio
 async def test_get_network_element_data_network_not_found(network_tools, mock_ctx):
     result = await network_tools.get_network_element_data(
-        network_id="missing", element_type="generators", ctx=mock_ctx
+        network_id="missing", element_type="generator", ctx=mock_ctx
     )
 
     assert "Network 'missing' not found" in result
@@ -1978,7 +1978,7 @@ async def test_get_network_element_data_variant_not_found(network_tools, mock_ct
     result = await network_tools.get_network_element_data(
         network_id="net1",
         variant_id="Bogus",
-        element_type="generators",
+        element_type="generator",
         ctx=mock_ctx,
     )
 
@@ -2007,7 +2007,7 @@ async def test_get_network_element_data_method_not_available(network_tools, mock
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.get_network_element_data(
-        network_id="net1", element_type="static_var_compensators", ctx=mock_ctx
+        network_id="net1", element_type="static_var_compensator", ctx=mock_ctx
     )
 
     assert "not available for this network" in result
@@ -2027,7 +2027,7 @@ async def test_get_network_element_data_operational_limits_failure_is_tolerated(
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.get_network_element_data(
-        network_id="net1", element_type="lines", ctx=mock_ctx
+        network_id="net1", element_type="line", ctx=mock_ctx
     )
 
     assert "l1" in result
@@ -2048,7 +2048,7 @@ async def test_get_network_element_data_tap_changer_failures_are_tolerated(
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.get_network_element_data(
-        network_id="net1", element_type="2_windings_transformers", ctx=mock_ctx
+        network_id="net1", element_type="two_windings_transformer", ctx=mock_ctx
     )
 
     assert "t1" in result
@@ -2066,7 +2066,7 @@ async def test_get_network_element_data_compare_filter_conflict(
 
     result = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="generators",
+        element_type="generator",
         mode="filter",
         compare_with_variant_id="v2",
         ctx=mock_ctx,
@@ -2089,7 +2089,7 @@ async def test_get_network_element_data_compare_variant_not_found(
 
     result = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="generators",
+        element_type="generator",
         compare_with_variant_id="missing_variant",
         ctx=mock_ctx,
     )
@@ -2109,7 +2109,7 @@ async def test_get_network_element_data_compare_success(network_tools, mock_ctx)
 
     result = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="generators",
+        element_type="generator",
         compare_with_variant_id="v2",
         ctx=mock_ctx,
     )
@@ -2132,7 +2132,7 @@ async def test_get_network_element_data_filter_pagination_invalid_cursor(
 
     result = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="generators",
+        element_type="generator",
         mode="filter",
         metric="loading_percent",
         filter_op=">",
@@ -2155,7 +2155,7 @@ async def test_get_network_element_data_unsupported_mode(network_tools, mock_ctx
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.get_network_element_data(
-        network_id="net1", element_type="generators", mode="bogus", ctx=mock_ctx
+        network_id="net1", element_type="generator", mode="bogus", ctx=mock_ctx
     )
 
     data = json.loads(result)
@@ -2175,7 +2175,7 @@ async def test_get_network_element_data_list_pagination_invalid_cursor(
 
     result = await network_tools.get_network_element_data(
         network_id="net1",
-        element_type="generators",
+        element_type="generator",
         cursor="bogus-cursor",
         limit=1,
         ctx=mock_ctx,
@@ -2195,7 +2195,7 @@ async def test_get_network_element_data_exception(network_tools, mock_ctx):
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.get_network_element_data(
-        network_id="net1", element_type="generators", ctx=mock_ctx
+        network_id="net1", element_type="generator", ctx=mock_ctx
     )
 
     assert "Failed to get network element data: data boom" in result
@@ -2215,7 +2215,7 @@ async def test_get_network_elements_ids_uses_current_network(network_tools, mock
     proxy.current_network_id = "net1"
 
     result = await network_tools.get_network_elements_ids(
-        element_type="generators", ctx=mock_ctx
+        element_type="generator", ctx=mock_ctx
     )
 
     assert "g1" in result
@@ -2224,7 +2224,7 @@ async def test_get_network_elements_ids_uses_current_network(network_tools, mock
 @pytest.mark.asyncio
 async def test_get_network_elements_ids_no_network_selected(network_tools, mock_ctx):
     result = await network_tools.get_network_elements_ids(
-        element_type="generators", ctx=mock_ctx
+        element_type="generator", ctx=mock_ctx
     )
 
     assert "No network specified and no current network selected" in result
@@ -2233,7 +2233,7 @@ async def test_get_network_elements_ids_no_network_selected(network_tools, mock_
 @pytest.mark.asyncio
 async def test_get_network_elements_ids_network_not_found(network_tools, mock_ctx):
     result = await network_tools.get_network_elements_ids(
-        network_id="missing", element_type="generators", ctx=mock_ctx
+        network_id="missing", element_type="generator", ctx=mock_ctx
     )
 
     assert "Network 'missing' not found" in result
@@ -2258,7 +2258,7 @@ async def test_get_network_elements_ids_method_not_available(network_tools, mock
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.get_network_elements_ids(
-        network_id="net1", element_type="switches", ctx=mock_ctx
+        network_id="net1", element_type="switch", ctx=mock_ctx
     )
 
     assert "not available for this network" in result
@@ -2285,7 +2285,7 @@ async def test_get_network_elements_ids_invalid_cursor(network_tools, mock_ctx):
 
     result = await network_tools.get_network_elements_ids(
         network_id="net1",
-        element_type="generators",
+        element_type="generator",
         limit=1,
         cursor="bogus-cursor",
         ctx=mock_ctx,
@@ -2304,7 +2304,7 @@ async def test_get_network_elements_ids_exception(network_tools, mock_ctx):
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.get_network_elements_ids(
-        network_id="net1", element_type="generators", ctx=mock_ctx
+        network_id="net1", element_type="generator", ctx=mock_ctx
     )
 
     assert "Failed to get network element IDs: ids boom" in result

@@ -104,18 +104,18 @@ class SecurityTools(PyPowsyblTool):
         are classified by the highest side. This keeps mixed-voltage assets
         visible in high-voltage studies.
         """
-        if element_type in ["lines", "2_windings_transformers"]:
+        if element_type in ["line", "two_windings_transformer"]:
             voltage_level1_id = element_row.get("voltage_level1_id")
             voltage_level2_id = element_row.get("voltage_level2_id")
             voltage1 = voltage_by_level.get(voltage_level1_id, 0)
             voltage2 = voltage_by_level.get(voltage_level2_id, 0)
             return max(voltage1, voltage2)
 
-        if element_type == "generators":
+        if element_type == "generator":
             voltage_level_id = element_row.get("voltage_level_id")
             return voltage_by_level.get(voltage_level_id, 0)
 
-        if element_type == "hvdc_lines":
+        if element_type == "hvdc_line":
             return float("inf") if min_nominal_voltage else 0
 
         return 0
@@ -138,10 +138,10 @@ class SecurityTools(PyPowsyblTool):
         supported_types = {
             key: ELEMENT_TYPE_TO_GETTER[key]
             for key in (
-                "lines",
-                "generators",
-                "2_windings_transformers",
-                "hvdc_lines",
+                "line",
+                "generator",
+                "two_windings_transformer",
+                "hvdc_line",
             )
         }
 
@@ -230,7 +230,7 @@ class SecurityTools(PyPowsyblTool):
 
         filter_result = self._build_contingencies_from_filter(
             network=network,
-            element_type=auto_contingencies.get("element_type", "lines"),
+            element_type=auto_contingencies.get("element_type", "line"),
             min_nominal_voltage=auto_contingencies.get("min_nominal_voltage"),
             max_nominal_voltage=auto_contingencies.get("max_nominal_voltage"),
         )
@@ -352,7 +352,7 @@ class SecurityTools(PyPowsyblTool):
 
             run_security_analysis(
                 network_id,
-                auto_contingencies={"element_type": "lines", "min_nominal_voltage": 63.0},
+                auto_contingencies={"element_type": "line", "min_nominal_voltage": 63.0},
                 limit_type="CURRENT",
                 top_violations=20,
             )
@@ -623,7 +623,7 @@ class SecurityTools(PyPowsyblTool):
     async def create_contingencies_list(
         self,
         network_id: str | None = None,
-        element_type: str = "lines",
+        element_type: str = "line",
         min_nominal_voltage: float | None = None,
         max_nominal_voltage: float | None = None,
         limit: int | None = None,
@@ -640,12 +640,12 @@ class SecurityTools(PyPowsyblTool):
         Args:
             network_id (str, optional): Network to query. If None, uses current network. Default: None.
             element_type (str, optional): Type of elements to create contingencies for. Supported types:
-                - "lines": Transmission lines (default)
-                - "generators": Generators
-                - "2_windings_transformers": Two-winding transformers ("transformer"
+                - "line": Transmission lines (default)
+                - "generator": Generators
+                - "two_windings_transformer": Two-winding transformers ("transformer"
                   on its own always means this one)
-                - "hvdc_lines": HVDC lines
-                Default: "lines".
+                - "hvdc_line": HVDC lines
+                Default: "line".
             min_nominal_voltage (float, optional): Minimum nominal voltage in kV to filter elements.
                 Only elements connected to voltage levels >= this value are included.
                 For lines/transformers, uses the higher voltage level of the two terminals.
@@ -674,7 +674,7 @@ class SecurityTools(PyPowsyblTool):
             {
               "success": true,
               "network_id": "ieee_14",
-              "element_type": "lines",
+              "element_type": "line",
               "filters_applied": {
                 "min_nominal_voltage": 220.0,
                 "max_nominal_voltage": null
@@ -690,16 +690,16 @@ class SecurityTools(PyPowsyblTool):
 
         Example Usage:
             # Get all lines as contingencies
-            contingencies = create_contingencies_list("ieee_14", "lines")
+            contingencies = create_contingencies_list("ieee_14", "line")
 
             # Get only high-voltage lines (>= 220 kV)
-            contingencies = create_contingencies_list("ieee_14", "lines", min_nominal_voltage=220)
+            contingencies = create_contingencies_list("ieee_14", "line", min_nominal_voltage=220)
 
             # Get all generators as contingencies
-            contingencies = create_contingencies_list("ieee_14", "generators")
+            contingencies = create_contingencies_list("ieee_14", "generator")
 
             # Use with run_security_analysis
-            result = create_contingencies_list("ieee_14", "lines", min_nominal_voltage=220)
+            result = create_contingencies_list("ieee_14", "line", min_nominal_voltage=220)
             contingencies = json.loads(result)["contingencies"]
             security_result = run_security_analysis("ieee_14", contingencies=contingencies)
 
@@ -759,7 +759,7 @@ class SecurityTools(PyPowsyblTool):
     async def get_overloaded_elements(
         self,
         network_id: str | None = None,
-        element_type: str = "lines",
+        element_type: str = "line",
         study: str = "n",
         threshold_percent: float = 100.0,
         limit_kind: str | None = None,
@@ -776,7 +776,7 @@ class SecurityTools(PyPowsyblTool):
 
         Args:
             network_id (str, optional): Network to analyze. Uses the current network if omitted.
-            element_type (str, optional): Kind of elements to look at (default: "lines").
+            element_type (str, optional): Kind of elements to look at (default: "line").
                 For study="n", passed to get_network_element_data.
                 For study="n1", used to build the contingency list when contingencies is omitted.
             study (str, optional): Operating case to check:

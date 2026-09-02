@@ -11,23 +11,26 @@ Several tools take an `element_type` argument: `get_network_element_data`,
 
 ## The one rule
 
-**An element type is named exactly like the pypowsybl `Network` getter that
-returns its table, minus the `get_` prefix.**
+**An element type is named exactly like the pypowsybl `ElementType` enum member
+that it maps to, lowercased.** Names are singular.
 
-| pypowsybl getter                  | element_type                |
-| --------------------------------- | --------------------------- |
-| `get_lines()`                     | `lines`                     |
-| `get_2_windings_transformers()`   | `2_windings_transformers`   |
-| `get_static_var_compensators()`   | `static_var_compensators`   |
-| `get_busbar_sections()`           | `busbar_sections`           |
+Note the getter that returns the table is often *plural* and does not match the
+name character-for-character — the mapping is maintained for you:
 
-There are no aliases, no abbreviations and no shorter synonyms: `transformers`,
-`svc`, `2wt`, `xfmr` and `bus_bars` are **not** valid values. The accepted names
-follow the installed pypowsybl version, so anything the network object can
-return as a table is available — including `branches`, `injections`,
-`identifiables`, `terminals`, `areas`, `batteries`, `tie_lines`,
-`boundary_lines`, `operational_limits`, `ratio_tap_changers`,
-`phase_tap_changers` and the `dc_*` tables.
+| element_type                 | pypowsybl getter                  | ElementType enum              |
+| ---------------------------- | --------------------------------- | ----------------------------- |
+| `line`                       | `get_lines()`                     | `LINE`                        |
+| `two_windings_transformer`   | `get_2_windings_transformers()`   | `TWO_WINDINGS_TRANSFORMER`    |
+| `static_var_compensator`     | `get_static_var_compensators()`   | `STATIC_VAR_COMPENSATOR`      |
+| `busbar_section`             | `get_busbar_sections()`           | `BUSBAR_SECTION`              |
+
+There are no aliases, no abbreviations and no plurals: `transformers`,
+`transformer`, `svc`, `2wt`, `xfmr`, `lines` and `bus_bars` are **not** valid
+values. The accepted names follow the installed pypowsybl version, so anything
+the network object can return as a table is available — including `branch`,
+`injection`, `identifiable`, `terminal`, `area`, `battery`, `tie_line`,
+`boundary_line`, `selected_operational_limits`, `ratio_tap_changer`,
+`phase_tap_changer` and the `dc_*` tables.
 
 Use `get_online_resource(class_object='network')` (see the `remote-resource`
 skill) to list the getters of the pypowsybl version actually running, and hence
@@ -35,32 +38,32 @@ the element types it supports.
 
 ## Everyday wording to canonical name
 
-Grid operators rarely speak in getter names. Translate before calling:
+Grid operators rarely speak in enum names. Translate before calling:
 
 | The user says                              | element_type to use                                        |
 | ------------------------------------------ | ---------------------------------------------------------- |
-| transformer, transfo, TR, two-winding      | `2_windings_transformers` — **"transformer" alone always means the two-winding one** |
-| three-winding transformer, autotransformer with tertiary | `3_windings_transformers`                     |
-| PST, phase shifter, phase-shifting transformer | `2_windings_transformers` (tap details in `phase_tap_changers`) |
-| SVC, static var compensator, reactive compensator | `static_var_compensators`                           |
-| shunt, capacitor bank, reactor             | `shunt_compensators`                                       |
-| dangling line                              | `boundary_lines` (renamed upstream in pypowsybl 1.15)      |
-| busbar, bar                                | `busbar_sections`                                          |
-| node, bus, electrical node                 | `buses` (topology view: `bus_breaker_view_buses`)          |
-| HVDC link, DC link                         | `hvdc_lines`                                               |
-| converter station                          | `vsc_converter_stations` or `lcc_converter_stations`        |
-| branch (line *or* transformer)             | `branches`, or query `lines` and `2_windings_transformers` separately |
-| substation vs. voltage level               | `substations` (site) vs. `voltage_levels` (one voltage inside it) |
+| transformer, transfo, TR, two-winding      | `two_windings_transformer` — **"transformer" alone always means the two-winding one** |
+| three-winding transformer, autotransformer with tertiary | `three_windings_transformer`                  |
+| PST, phase shifter, phase-shifting transformer | `two_windings_transformer` (tap details in `phase_tap_changer`) |
+| SVC, static var compensator, reactive compensator | `static_var_compensator`                            |
+| shunt, capacitor bank, reactor             | `shunt_compensator`                                        |
+| dangling line                              | `boundary_line` (renamed upstream in pypowsybl 1.15)       |
+| busbar, bar                                | `busbar_section`                                           |
+| node, bus, electrical node                 | `bus` (topology view: `bus_from_bus_breaker_view`)         |
+| HVDC link, DC link                         | `hvdc_line`                                                |
+| converter station                          | `vsc_converter_station` or `lcc_converter_station`         |
+| branch (line *or* transformer)             | `branch`, or query `line` and `two_windings_transformer` separately |
+| substation vs. voltage level               | `substation` (site) vs. `voltage_level` (one voltage inside it) |
 
 When a request mixes lines and transformers ("show me every overloaded
-branch"), either query `branches` once, or run the tool twice — once with
-`lines`, once with `2_windings_transformers` — and merge the results.
+branch"), either query `branch` once, or run the tool twice — once with `line`,
+once with `two_windings_transformer` — and merge the results.
 
 ## Types that accept a subset
 
 `create_contingencies_list` and `run_security_analysis(auto_contingencies=...)`
-build N-1 contingencies, which only makes sense for a few types: `lines`,
-`generators`, `2_windings_transformers`, `hvdc_lines`.
+build N-1 contingencies, which only makes sense for a few types: `line`,
+`generator`, `two_windings_transformer`, `hvdc_line`.
 
 ## When a call is rejected
 

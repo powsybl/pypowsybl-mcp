@@ -7,27 +7,34 @@
 """Canonical mapping from public element-type names to pypowsybl getters.
 
 Several tools accept an ``element_type`` string from the MCP client and turn it
-into a call on the network object. That mapping is *derived* from the pypowsybl
-``Network`` class instead of being written by hand: every getter that returns a
-whole element table becomes one supported element type, named exactly like the
-getter minus its ``get_`` prefix (``get_2_windings_transformers`` ->
-``2_windings_transformers``).
+into a call on the network object. That mapping is *derived* from pypowsybl
+instead of being written by hand: every getter that returns a whole element
+table is associated with the :class:`pypowsybl._pypowsybl.ElementType` it
+resolves to, and the public name is that enum member lowercased
+(``ElementType.TWO_WINDINGS_TRANSFORMER`` -> ``"two_windings_transformer"``,
+whose getter is ``get_2_windings_transformers``).
 
-Deriving it gives us two things a handwritten dict could not:
+Keying on the enum name rather than the getter name gives us three things:
 
-* No human-invented names. ``"transformers"`` used to be accepted as a synonym
-  of ``"2_windings_transformers"`` (and ``"svc"`` of
-  ``"static_var_compensators"``); those names exist nowhere in pypowsybl, yet
-  every consumer had to special-case them. Everyday wording is now a
-  documentation concern, handled by the ``element-types`` skill, and unknown
-  names come back with a "did you mean" hint (see
+* A direct, bidirectional link to ``ElementType``. Any consumer recovers the
+  enum with ``getattr(ElementType, name.upper())`` (see :func:`element_type_enum`),
+  so the same string drives both the dataframe getter and enum-based APIs such
+  as ``Network.get_elements_ids`` -- no second hand-maintained lookup.
+* No human-invented names. ``"transformers"`` and ``"svc"`` exist nowhere in
+  pypowsybl; everyday wording is a documentation concern (the ``element-types``
+  skill) and unknown names come back with a "did you mean" hint (see
   :func:`element_type_hint`).
 * Exhaustiveness that follows the installed pypowsybl version: element types
-  added upstream (or renamed, as ``dangling_lines`` -> ``boundary_lines``) show
-  up without a code change here.
+  added or renamed upstream show up without a code change here.
+
+The getter a plain ``method()`` call dispatches to is *observed at runtime*, not
+parsed from source: a getter may route to different ElementType values
+depending on its own defaults (``get_operational_limits`` ->
+``SELECTED_OPERATIONAL_LIMITS`` unless ``show_inactive_sets=True``), so only
+calling it with defaults reveals which enum a bare call resolves to.
 
 Consumers that only accept a subset should derive their allow-list from this
-dict rather than redefining the getter names.
+dict rather than redefining the names.
 """
 
 from __future__ import annotations
@@ -36,7 +43,8 @@ import difflib
 import inspect
 from collections.abc import Iterable
 
-from pypowsybl.network import Network
+from pypowsybl import _pypowsybl as _pp
+from pypowsybl.network import Network, create_empty
 
 
 def _returns_a_table(signature: inspect.Signature) -> bool:
@@ -63,9 +71,9 @@ def _needs_arguments(signature: inspect.Signature) -> bool:
     )
 
 
-def _table_getters() -> dict[str, str]:
-    """Public element-type name -> name of the Network getter returning its table."""
-    getters: dict[str, str] = {}
+def _table_getter_names() -> list[str]:
+    """Names of the Network getters that return a whole element table with no args."""
+    names: list[str] = []
     for name in dir(Network):
         if not name.startswith("get_"):
             continue
@@ -79,14 +87,57 @@ def _table_getters() -> dict[str, str]:
         if not _returns_a_table(signature) or _needs_arguments(signature):
             continue
         # Deprecated getters are kept upstream as thin wrappers that warn; the
-        # replacement is already in the mapping under its own name.
+        # replacement is already exposed under its own name.
         if ".. deprecated::" in (inspect.getdoc(getter) or ""):
             continue
-        getters[name.removeprefix("get_")] = name
-    return getters
+        names.append(name)
+    return names
 
 
-ELEMENT_TYPE_TO_GETTER: dict[str, str] = _table_getters()
+def _element_type_to_getter() -> dict[str, str]:
+    """Lowercased ElementType name -> the get_* method returning its table.
+
+    Every table getter funnels through ``Network.get_elements(element_type, ...)``,
+    so we temporarily spy on it and call each getter with its defaults to observe
+    which ``ElementType`` a bare call resolves to. The public key is that enum
+    member's name lowercased.
+    """
+    captured: dict[str, _pp.ElementType] = {}
+    original = Network.get_elements
+
+    def spy(self, element_type, *args, **kwargs):
+        captured["type"] = element_type
+        return original(self, element_type, *args, **kwargs)
+
+    network = create_empty()
+    mapping: dict[str, str] = {}
+    Network.get_elements = spy
+    try:
+        for getter_name in _table_getter_names():
+            captured.pop("type", None)
+            try:
+                getattr(network, getter_name)()
+            except (TypeError, ValueError, _pp.PyPowsyblError):  # pragma: no cover
+                continue
+            element_type = captured.get("type")
+            if element_type is not None:
+                mapping[element_type.name.lower()] = getter_name
+    finally:
+        Network.get_elements = original
+    return mapping
+
+
+ELEMENT_TYPE_TO_GETTER: dict[str, str] = _element_type_to_getter()
+
+
+def element_type_enum(element_type: str) -> _pp.ElementType:
+    """Return the ElementType enum member for a public element-type name.
+
+    Keys of :data:`ELEMENT_TYPE_TO_GETTER` are ElementType names lowercased, so
+    the enum is recovered directly. Raises KeyError-like AttributeError for an
+    unknown name; callers should validate against ELEMENT_TYPE_TO_GETTER first.
+    """
+    return getattr(_pp.ElementType, element_type.upper())
 
 
 def element_type_hint(
@@ -95,7 +146,7 @@ def element_type_hint(
     """Build the tail of an "invalid element type" message.
 
     Lists the accepted names and, when the caller used an everyday word instead
-    of a canonical one ("transformers" for "2_windings_transformers"), points at
+    of a canonical one ("transformer" for "two_windings_transformer"), points at
     the closest matches so the model can retry without guessing.
     """
     candidates = (

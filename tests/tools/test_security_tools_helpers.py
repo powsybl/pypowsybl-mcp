@@ -41,7 +41,7 @@ def test_element_nominal_voltage():
         "voltage_level2_id": "VL2",
     }.get(k)
     assert (
-        SecurityTools._element_nominal_voltage("lines", row, vl_voltages, None) == 400.0
+        SecurityTools._element_nominal_voltage("line", row, vl_voltages, None) == 400.0
     )
 
     row.get.side_effect = lambda k: {
@@ -50,7 +50,7 @@ def test_element_nominal_voltage():
     }.get(k)
     assert (
         SecurityTools._element_nominal_voltage(
-            "2_windings_transformers", row, vl_voltages, None
+            "two_windings_transformer", row, vl_voltages, None
         )
         == 225.0
     )
@@ -59,15 +59,15 @@ def test_element_nominal_voltage():
     row = MagicMock()
     row.get.side_effect = lambda k: {"voltage_level_id": "VL2"}.get(k)
     assert (
-        SecurityTools._element_nominal_voltage("generators", row, vl_voltages, None)
+        SecurityTools._element_nominal_voltage("generator", row, vl_voltages, None)
         == 225.0
     )
 
     # HVDC lines
     assert SecurityTools._element_nominal_voltage(
-        "hvdc_lines", None, {}, 100.0
+        "hvdc_line", None, {}, 100.0
     ) == float("inf")
-    assert SecurityTools._element_nominal_voltage("hvdc_lines", None, {}, None) == 0
+    assert SecurityTools._element_nominal_voltage("hvdc_line", None, {}, None) == 0
 
     # Unknown type
     assert SecurityTools._element_nominal_voltage("unknown", None, {}, None) == 0
@@ -94,7 +94,7 @@ def test_build_contingencies_from_filter_logic():
     # Test min/max voltage filtering on generators
     # G1: 400, G2: 225, G3: 63
     res = SecurityTools._build_contingencies_from_filter(
-        mock_net, "generators", min_nominal_voltage=100.0, max_nominal_voltage=300.0
+        mock_net, "generator", min_nominal_voltage=100.0, max_nominal_voltage=300.0
     )
     assert res["filtered_count"] == 1
     assert res["contingencies"][0]["element_id"] == "G2"
@@ -112,7 +112,7 @@ def test_build_contingencies_from_filter_transformers():
     )
 
     res = SecurityTools._build_contingencies_from_filter(
-        mock_net, "2_windings_transformers"
+        mock_net, "two_windings_transformer"
     )
     assert res["filtered_count"] == 1
     assert res["contingencies"][0]["element_id"] == "T1"
@@ -152,7 +152,7 @@ def test_resolve_contingencies_defaults():
     mock_net.get_voltage_levels.return_value = pd.DataFrame()
     mock_net.get_lines.return_value = pd.DataFrame(index=["l1"])
 
-    # Test default element_type="lines"
+    # Test default element_type="line"
     contingencies, source = sa._resolve_contingencies(mock_net, auto_contingencies={})
     assert source == "auto"
     assert len(contingencies) == 1
