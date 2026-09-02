@@ -30,8 +30,7 @@ This document lists all MCP tools exposed by the PyPowsybl MCP server, grouped b
 
 | Tool                                 | Description                                                                 |
 |--------------------------------------|-----------------------------------------------------------------------------|
-| `get_network_element_data`           | Return tabular data for a given element type (buses, lines, generators, …). |
-| `get_network_elements_ids`           | Return the list of element IDs for a given element type.                    |
+| `get_network_element_data`           | Return tabular data for a given element type (buses, lines, generators, …); pass `get_only_ids=True` for just the element IDs. |
 | `get_top_active_power_transit_lines` | Return the lines with the highest active power transit.                     |
 | `check_voltage_violations`           | List buses whose voltage is outside acceptable bounds.                      |
 

@@ -1,13 +1,14 @@
 ---
 name: element-types
-description: How to name network element types in PyPowsybl MCP tools (element_type argument of get_network_element_data, get_network_elements_ids, create_contingencies_list, run_security_analysis). Use when you need to translate everyday grid vocabulary ("transformer", "SVC", "busbar") into the canonical name a tool expects, or when a tool answered "Invalid element type".
+description: How to name network element types in PyPowsybl MCP tools (element_type argument of get_network_element_data, create_contingencies_list, run_security_analysis). Use when you need to translate everyday grid vocabulary ("transformer", "SVC", "busbar") into the canonical name a tool expects, or when a tool answered "Invalid element type".
 ---
 
 # Skill: Naming network element types
 
-Several tools take an `element_type` argument: `get_network_element_data`,
-`get_network_elements_ids`, `create_contingencies_list` and the
-`auto_contingencies` filter of `run_security_analysis`.
+Several tools take an `element_type` argument: `get_network_element_data`
+(including its `get_only_ids=True` mode, which returns just the element IDs),
+`create_contingencies_list` and the `auto_contingencies` filter of
+`run_security_analysis`.
 
 ## The one rule
 

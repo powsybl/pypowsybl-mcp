@@ -293,7 +293,7 @@ async def test_get_network_element_data_success(network_tools, mock_ctx):
 
 
 @pytest.mark.asyncio
-async def test_get_network_elements_ids_success(network_tools, mock_ctx):
+async def test_get_only_ids_success(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
     # Ensure InitialState variant exists in mock
@@ -304,8 +304,8 @@ async def test_get_network_elements_ids_success(network_tools, mock_ctx):
     proxy.networks["net1"] = mock_net
     proxy.current_network_id = "net1"
 
-    result = await network_tools.get_network_elements_ids(
-        network_id="net1", element_type="load", ctx=mock_ctx
+    result = await network_tools.get_network_element_data(
+        network_id="net1", element_type="load", get_only_ids=True, ctx=mock_ctx
     )
 
     assert "l1" in result
@@ -334,9 +334,9 @@ async def test_get_voltage_level_data_success(network_tools, mock_ctx):
     assert "400.0" in result
     assert "VL2" in result
 
-    # Test get_network_elements_ids for voltage_levels
-    result_ids = await network_tools.get_network_elements_ids(
-        network_id="net1", element_type="voltage_level", ctx=mock_ctx
+    # Test get_only_ids for voltage_levels (getter-index fallback path)
+    result_ids = await network_tools.get_network_element_data(
+        network_id="net1", element_type="voltage_level", get_only_ids=True, ctx=mock_ctx
     )
     assert "VL1" in result_ids
     assert "VL2" in result_ids
@@ -379,21 +379,23 @@ async def test_get_network_element_data_pagination(network_tools, mock_ctx):
 
 
 @pytest.mark.asyncio
-async def test_get_network_elements_ids_pagination_last_page(network_tools, mock_ctx):
+async def test_get_only_ids_pagination_last_page(network_tools, mock_ctx):
     """Last page: single remaining ID, nextCursor is None."""
 
     LINE_COUNT = 3
     PAGE_LIMIT = 2
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
+    mock_net.get_variant_ids.return_value = ["InitialState"]
     mock_net.get_elements_ids.return_value = [
         f"LINE_{i}" for i in range(1, LINE_COUNT + 1)
     ]
     proxy.networks["net1"] = mock_net
 
-    result = await network_tools.get_network_elements_ids(
+    result = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="line",
+        get_only_ids=True,
         limit=PAGE_LIMIT,
         cursor="2",
         ctx=mock_ctx,
@@ -2202,90 +2204,98 @@ async def test_get_network_element_data_exception(network_tools, mock_ctx):
 
 
 # ---------------------------------------------------------------------------
-# get_network_elements_ids: not-found / validation branches
+# get_network_element_data(get_only_ids=True): not-found / validation branches
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_get_network_elements_ids_uses_current_network(network_tools, mock_ctx):
+async def test_get_only_ids_uses_current_network(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
+    mock_net.get_variant_ids.return_value = ["InitialState"]
     mock_net.get_elements_ids.return_value = ["g1"]
     proxy.networks["net1"] = mock_net
     proxy.current_network_id = "net1"
 
-    result = await network_tools.get_network_elements_ids(
-        element_type="generator", ctx=mock_ctx
+    result = await network_tools.get_network_element_data(
+        element_type="generator", get_only_ids=True, ctx=mock_ctx
     )
 
     assert "g1" in result
 
 
 @pytest.mark.asyncio
-async def test_get_network_elements_ids_no_network_selected(network_tools, mock_ctx):
-    result = await network_tools.get_network_elements_ids(
-        element_type="generator", ctx=mock_ctx
+async def test_get_only_ids_no_network_selected(network_tools, mock_ctx):
+    result = await network_tools.get_network_element_data(
+        element_type="generator", get_only_ids=True, ctx=mock_ctx
     )
 
     assert "No network specified and no current network selected" in result
 
 
 @pytest.mark.asyncio
-async def test_get_network_elements_ids_network_not_found(network_tools, mock_ctx):
-    result = await network_tools.get_network_elements_ids(
-        network_id="missing", element_type="generator", ctx=mock_ctx
+async def test_get_only_ids_network_not_found(network_tools, mock_ctx):
+    result = await network_tools.get_network_element_data(
+        network_id="missing", element_type="generator", get_only_ids=True, ctx=mock_ctx
     )
 
     assert "Network 'missing' not found" in result
 
 
 @pytest.mark.asyncio
-async def test_get_network_elements_ids_element_type_required(network_tools, mock_ctx):
+async def test_get_only_ids_element_type_required(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     proxy.networks["net1"] = MagicMock()
 
-    result = await network_tools.get_network_elements_ids(
-        network_id="net1", ctx=mock_ctx
+    result = await network_tools.get_network_element_data(
+        network_id="net1", get_only_ids=True, ctx=mock_ctx
     )
 
     assert result == "Element type is required"
 
 
 @pytest.mark.asyncio
-async def test_get_network_elements_ids_method_not_available(network_tools, mock_ctx):
-    mock_net = MagicMock(spec=[])
+async def test_get_only_ids_method_not_available(network_tools, mock_ctx):
+    # Has the variant API but not the element getter, so validation passes and
+    # the missing-getter branch is reached.
+    mock_net = MagicMock(spec=["get_variant_ids", "set_working_variant"])
+    mock_net.get_variant_ids.return_value = ["InitialState"]
     proxy = network_tools.get_proxy("test-session")
     proxy.networks["net1"] = mock_net
 
-    result = await network_tools.get_network_elements_ids(
-        network_id="net1", element_type="switch", ctx=mock_ctx
+    result = await network_tools.get_network_element_data(
+        network_id="net1", element_type="switch", get_only_ids=True, ctx=mock_ctx
     )
 
     assert "not available for this network" in result
 
 
 @pytest.mark.asyncio
-async def test_get_network_elements_ids_invalid_element_type(network_tools, mock_ctx):
+async def test_get_only_ids_invalid_element_type(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
-    proxy.networks["net1"] = MagicMock()
+    mock_net = MagicMock()
+    mock_net.get_variant_ids.return_value = ["InitialState"]
+    proxy.networks["net1"] = mock_net
 
-    result = await network_tools.get_network_elements_ids(
-        network_id="net1", element_type="not_a_type", ctx=mock_ctx
+    result = await network_tools.get_network_element_data(
+        network_id="net1", element_type="not_a_type", get_only_ids=True, ctx=mock_ctx
     )
 
     assert "Invalid element type 'not_a_type'" in result
 
 
 @pytest.mark.asyncio
-async def test_get_network_elements_ids_invalid_cursor(network_tools, mock_ctx):
+async def test_get_only_ids_invalid_cursor(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
+    mock_net.get_variant_ids.return_value = ["InitialState"]
     mock_net.get_elements_ids.return_value = ["g1", "g2"]
     proxy.networks["net1"] = mock_net
 
-    result = await network_tools.get_network_elements_ids(
+    result = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="generator",
+        get_only_ids=True,
         limit=1,
         cursor="bogus-cursor",
         ctx=mock_ctx,
@@ -2297,17 +2307,18 @@ async def test_get_network_elements_ids_invalid_cursor(network_tools, mock_ctx):
 
 
 @pytest.mark.asyncio
-async def test_get_network_elements_ids_exception(network_tools, mock_ctx):
+async def test_get_only_ids_exception(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
+    mock_net.get_variant_ids.return_value = ["InitialState"]
     mock_net.get_elements_ids.side_effect = pp.PyPowsyblError("ids boom")
     proxy.networks["net1"] = mock_net
 
-    result = await network_tools.get_network_elements_ids(
-        network_id="net1", element_type="generator", ctx=mock_ctx
+    result = await network_tools.get_network_element_data(
+        network_id="net1", element_type="generator", get_only_ids=True, ctx=mock_ctx
     )
 
-    assert "Failed to get network element IDs: ids boom" in result
+    assert "Failed to get network element data: ids boom" in result
 
 
 # ---------------------------------------------------------------------------

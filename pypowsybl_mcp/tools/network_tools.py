@@ -534,7 +534,8 @@ class NetworkTools(PyPowsyblTool):
 
         Args:
             line_id (str): Unique ID of the transmission line to activate/deactivate.
-                Use get_network_info() or get_network_elements_ids() to find valid line IDs.
+                Use get_network_info() or get_network_element_data(element_type="line",
+                get_only_ids=True) to find valid line IDs.
             active (bool): Status to set for the line:
                 - True: Activate the line (bring into service)
                 - False: Deactivate the line (take out of service/disconnect)
@@ -682,8 +683,8 @@ class NetworkTools(PyPowsyblTool):
 
         Args:
             switch_id (str): ID of the switch to modify. Use
-                get_network_elements_ids(element_type="switch") or
-                get_network_element_data(element_type="switch") to list
+                get_network_element_data(element_type="switch", get_only_ids=True)
+                or get_network_element_data(element_type="switch") to list
                 available switches and check their current open status.
             open (bool): Target state — True to open (isolate), False to close
                 (connect).
@@ -780,8 +781,8 @@ class NetworkTools(PyPowsyblTool):
 
         Args:
             transformer_id (str): ID of the transformer to modify. Use
-                get_network_elements_ids() or get_network_element_data() to find
-                valid transformer IDs.
+                get_network_element_data() (optionally with get_only_ids=True) to
+                find valid transformer IDs.
             tap_position (int): New tap position. Must be within [tap_min,
                 tap_max] of the selected tap changer.
             tap_changer_type (str, optional): Which tap changer to move,
@@ -1390,6 +1391,7 @@ class NetworkTools(PyPowsyblTool):
         filter_value: float | str | None = None,
         sort: str = "desc",
         limit_kind: str = "permanent",
+        get_only_ids: bool = False,
         limit: int | None = None,
         cursor: str | int | None = None,
         ctx: Context[ServerSession, None] = None,
@@ -1461,10 +1463,18 @@ class NetworkTools(PyPowsyblTool):
                 how many elements matched; elements only holds the current page.
                 Ask for a bigger limit, or move on with cursor, to see more.
             cursor (str | int, optional): Page offset. Use pagination.nextCursor for the next page.
+            get_only_ids (bool, optional): When True, return only the element IDs
+                for element_type instead of their full data — faster and cheaper
+                for enumeration, validation or feeding IDs to other tools. The IDs
+                reflect variant_id. The mode/metric/filter and compare_with_variant_id
+                arguments are ignored in this mode. Default: False.
 
         Returns:
-            str: JSON-formatted string containing the complete element data with all attributes. If comparison is requested,
-                return only element which are differents in the two variants.
+            str: JSON-formatted string. With get_only_ids=False (default): the
+                complete element data with all attributes; if comparison is requested,
+                only elements that differ between the two variants. With
+                get_only_ids=True: a JSON array of IDs when limit is None, otherwise
+                an object with element_ids + pagination.
                 Returns error message if network not found or invalid element type.
 
         Example Usage:
@@ -1476,6 +1486,10 @@ class NetworkTools(PyPowsyblTool):
 
             # Get lines from current network
             lines = get_network_element_data(None, "line")
+
+            # Get only the generator IDs (replaces get_network_elements_ids)
+            gen_ids = get_network_element_data("ieee_14", "generator", get_only_ids=True)
+            → ["B1-G", "B2-G", ...]
 
         Use Cases:
             - compare variants from same network
@@ -1491,7 +1505,7 @@ class NetworkTools(PyPowsyblTool):
         Notes:
             - Returns all available attributes for each element type
             - Data structure varies by element type
-            - Use get_network_elements_ids() for just the IDs
+            - Pass get_only_ids=True for just the IDs (no other attributes)
             - Data reflects current state (including loadflow results if run)
             - loading_percent on lines/transformers: max(|i1|, |i2|) in amperes,
               divided by the current limit picked via limit_kind (see above).
@@ -1500,7 +1514,6 @@ class NetworkTools(PyPowsyblTool):
               filtering. Generators use |p| / max_p instead.
 
         Related Tools:
-            - get_network_elements_ids(): Get only element IDs
             - get_network_info(): Get network statistics summary
             - modify_network(): Modify element parameters
             - get_online_resource(class_object='network'): Look up the underlying
@@ -1546,6 +1559,56 @@ class NetworkTools(PyPowsyblTool):
                 return msg
 
             method = getattr(network, method_name)
+
+            # get_only_ids: return just the element IDs (the former
+            # get_network_elements_ids tool), reflecting variant_id set above.
+            # Uses the native get_elements_ids() enum fast path where available,
+            # otherwise the getter's index. Skips enrichment, comparison and
+            # filtering; the output shape matches the standalone tool exactly.
+            if get_only_ids:
+                fast_path_types = {
+                    "generator",
+                    "load",
+                    "line",
+                    "two_windings_transformer",
+                }
+                if element_type in fast_path_types:
+                    element_ids = network.get_elements_ids(
+                        element_type_enum(element_type)
+                    )
+                    logger.debug(
+                        f"Retrieved {len(element_ids)} {element_type} IDs from "
+                        f"network '{network_id}' using get_elements_ids()"
+                    )
+                else:
+                    element_ids = method().index.tolist()
+                    logger.debug(
+                        f"Retrieved {len(element_ids)} {element_type} IDs from "
+                        f"network '{network_id}' using {method_name}()"
+                    )
+
+                try:
+                    ids_page, pagination = paginate(
+                        element_ids, limit=limit, cursor=cursor
+                    )
+                except ValueError as e:
+                    return json.dumps({"success": False, "error": str(e)}, indent=2)
+
+                if pagination is None:
+                    return json.dumps(element_ids, indent=2)
+
+                return json.dumps(
+                    attach_pagination(
+                        {
+                            "network_id": network_id,
+                            "element_type": element_type,
+                            "element_ids": ids_page,
+                        },
+                        pagination,
+                    ),
+                    indent=2,
+                )
+
             elements_df = method()
 
             # get_lines() returns i1/i2 (current in A) but not Imax. Imax is in
@@ -1691,160 +1754,6 @@ class NetworkTools(PyPowsyblTool):
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.error(f"Failed to get network element data: {e}")
             return f"Failed to get network element data: {e!s}"
-
-    async def get_network_elements_ids(
-        self,
-        network_id: str | None = None,
-        element_type: str | None = None,
-        limit: int | None = None,
-        cursor: str | int | None = None,
-        ctx: Context[ServerSession, None] = None,
-    ) -> str:
-        """
-        Retrieve the list of IDs for specific network elements.
-
-        Gets only the identifiers for a specific element type from a power system network.
-        Faster than get_network_element_data() when you only need the IDs without
-        detailed attributes. Useful for enumeration and selection tasks.
-
-        Args:
-            network_id (str, optional): Network to query. If None, uses current network. Default: None.
-            element_type (str): Type of elements to list IDs for. Supported types:
-                - "voltage_level": Voltage level IDs
-                - "substation": Substation IDs
-                - "bus": Bus/node IDs
-                - "generator": Generator IDs
-                - "load": Load IDs
-                - "line": Transmission line IDs
-                - "two_windings_transformer": Two-winding transformer IDs
-                  ("transformer" on its own always means this one)
-                - "three_windings_transformer": Three-winding transformer IDs
-                - "hvdc_line": HVDC line IDs
-                - "shunt_compensator": Shunt compensator IDs
-                - "static_var_compensator": SVC IDs
-                - "vsc_converter_station": VSC converter station IDs
-                - "lcc_converter_station": LCC converter station IDs
-                - "switch": Switch IDs
-                Any other pypowsybl element table is accepted too, named after
-                its pypowsybl ElementType lowercased.
-            limit (int, optional): Max IDs per page. None = full list (legacy format).
-            cursor (str | int, optional): Page offset.
-
-        Returns:
-            str: JSON-formatted list of element IDs, or an object with element_ids + pagination.
-                Returns error message if network not found or invalid element type.
-
-        Example Usage:
-            # Get all substation IDs
-            substation_ids = get_network_elements_ids("ieee_14", "substation")
-            → ["S1", "S2", "S3", ...]
-
-            # Get all generator IDs
-            generator_ids = get_network_elements_ids("ieee_14", "generator")
-            → ["GEN_1", "GEN_2", ...]
-
-            # Get line IDs from current network
-            line_ids = get_network_elements_ids(None, "line")
-
-        Use Cases:
-            - List available elements for selection
-            - Validate element IDs before operations
-            - Iterate through elements programmatically
-            - Quick enumeration without loading full data
-            - Find element IDs for modify_network() or other tools
-
-        Notes:
-            - Much faster than get_network_element_data() for large networks
-            - Returns only IDs, no other attributes
-            - Use get_network_element_data() for detailed information
-            - IDs can be used with other tools like modify_network()
-
-        Related Tools:
-            - get_network_element_data(): Get full element details
-            - get_network_info(): Get network statistics
-            - modify_network(): Modify elements by ID
-            - plot_substation_single_line_diagram(): Diagram substation by ID
-            - get_online_resource(class_object='network'): Look up the underlying
-              pypowsybl network API (methods, signatures, parameters) instead of
-              relying on prior knowledge
-        """
-        try:
-            _, network_id, network = self.resolve_network(ctx, network_id)
-        except NetworkNotFoundError as e:
-            logger.warning(str(e))
-            return str(e)
-
-        logger.debug(f"Getting {element_type} IDs for network '{network_id}'")
-
-        if element_type is None:
-            msg = "Element type is required"
-            logger.warning(msg)
-            return msg
-
-        try:
-            # Types with native get_elements_ids() support: use the ElementType
-            # enum fast path. The enum comes straight from the element-type name
-            # (keys of ELEMENT_TYPE_TO_GETTER are lowercased ElementType names),
-            # so there is no second lookup to keep in sync. Every other supported
-            # type falls back to its canonical getter.
-            fast_path_types = {
-                "generator",
-                "load",
-                "line",
-                "two_windings_transformer",
-            }
-
-            # Try to use get_elements_ids() for supported types
-            if element_type in fast_path_types:
-                element_ids = network.get_elements_ids(element_type_enum(element_type))
-                logger.debug(
-                    f"Retrieved {len(element_ids)} {element_type} IDs from network '{network_id}' using get_elements_ids()"
-                )
-            elif element_type in ELEMENT_TYPE_TO_GETTER:
-                # Fall back to the canonical getter for types without enum support
-                method_name = ELEMENT_TYPE_TO_GETTER[element_type]
-                if not hasattr(network, method_name):
-                    msg = f"Method '{method_name}' not available for this network"
-                    logger.warning(msg)
-                    return msg
-
-                method = getattr(network, method_name)
-                elements_df = method()
-                element_ids = elements_df.index.tolist()
-                logger.debug(
-                    f"Retrieved {len(element_ids)} {element_type} IDs from network '{network_id}' using {method_name}()"
-                )
-            else:
-                msg = (
-                    f"Invalid element type '{element_type}'. "
-                    f"{element_type_hint(element_type)}"
-                )
-                logger.warning(msg)
-                return msg
-
-            try:
-                ids_page, pagination = paginate(element_ids, limit=limit, cursor=cursor)
-            except ValueError as e:
-                return json.dumps({"success": False, "error": str(e)}, indent=2)
-
-            if pagination is None:
-                return json.dumps(element_ids, indent=2)
-
-            return json.dumps(
-                attach_pagination(
-                    {
-                        "network_id": network_id,
-                        "element_type": element_type,
-                        "element_ids": ids_page,
-                    },
-                    pagination,
-                ),
-                indent=2,
-            )
-
-        except (pp.PyPowsyblError, ValueError, KeyError) as e:
-            logger.error(f"Failed to get network element IDs: {e}")
-            return f"Failed to get network element IDs: {e!s}"
 
     async def get_top_active_power_transit_lines(
         self,

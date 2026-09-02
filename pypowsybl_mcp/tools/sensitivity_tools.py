@@ -86,8 +86,8 @@ class SensitivityTools(PyPowsyblTool):
         It is faster than AC analysis and suitable for large networks or screening.
 
         Related Tools:
-        - Use `get_network_elements_ids(element_type='line')` to find branches for `branches_ids`.
-        - Use `get_network_elements_ids(element_type='generator')` or 'load' for `variables_ids`.
+        - Use `get_network_element_data(element_type='line', get_only_ids=True)` to find branches for `branches_ids`.
+        - Use `get_network_element_data(element_type='generator', get_only_ids=True)` or 'load' for `variables_ids`.
         - Use `run_loadflow` with `dc=True` to check the initial state.
         - Use `get_online_resource(class_object='sensitivity')` to look up the underlying
           pypowsybl sensitivity API (zone/factor types, signatures) instead of relying on
@@ -193,7 +193,7 @@ class SensitivityTools(PyPowsyblTool):
         and voltage magnitudes. It is more accurate than DC analysis but computationally more expensive.
 
         Related Tools:
-        - Use `get_network_elements_ids(element_type='bus')` to find buses for `bus_voltage_factors`.
+        - Use `get_network_element_data(element_type='bus', get_only_ids=True)` to find buses for `bus_voltage_factors`.
         - Use `run_loadflow` to check the initial AC state.
         - Use `get_online_resource(class_object='sensitivity')` to look up the underlying
           pypowsybl sensitivity API (factor types, signatures) instead of relying on
@@ -268,7 +268,8 @@ class SensitivityTools(PyPowsyblTool):
 
         Related Tools:
         - To find phase shifter IDs for `phase_shifter_ids`, use
-          `get_network_elements_ids`/`get_network_element_data` with:
+          `get_network_element_data` (add `get_only_ids=True` for just the IDs)
+          with:
           - `element_type='two_windings_transformer'`: lists the transformers
             themselves (their IDs are what this tool expects). Not every
             two-winding transformer is a phase shifter, so filter to those that
@@ -329,7 +330,7 @@ class SensitivityTools(PyPowsyblTool):
         It helps in understanding how HVDC links can be used for congestion management in the AC network.
 
         Related Tools:
-        - Use `get_network_elements_ids(element_type='hvdc_line')` to find HVDC lines.
+        - Use `get_network_element_data(element_type='hvdc_line', get_only_ids=True)` to find HVDC lines.
         - Use `modify_network` to adjust HVDC power set points.
 
         Common Workflows:
