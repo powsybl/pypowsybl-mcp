@@ -27,6 +27,29 @@ class TestPyPowsyblMCPServerProxyInit:
         assert proxy.plugin_results == {}
         assert proxy.lf_params is not None
 
+    def test_init_honors_configured_provider(self, tmp_path, monkeypatch):
+        """A non-default `provider` from the TOML config must survive __init__.
+
+        Regression test: __init__ used to call init_lf_params_from_config()
+        (which reads `provider` from the config) and then immediately
+        overwrite it with the hardcoded default "OpenLoadFlow", silently
+        discarding any custom provider.
+        """
+        config_path = tmp_path / "LF_default_parameters.toml"
+        config_path.write_text(
+            'voltage_init_mode = "UNIFORM_VALUES"\n'
+            'balance_type = "PROPORTIONAL_TO_GENERATION_P_MAX"\n'
+            "distributed_slack = true\n"
+            'provider = "DynaFlow"\n'
+        )
+        monkeypatch.setattr(
+            "pypowsybl_mcp.proxy.LF_DEFAULT_PARAMETERS_PATH", config_path
+        )
+
+        proxy = PyPowsyblMCPServerProxy()
+
+        assert proxy.lf_provider == "DynaFlow"
+
 
 class TestGetNetworkSummary:
     """Test _get_network_summary method."""

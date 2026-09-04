@@ -46,10 +46,9 @@ class PyPowsyblMCPServerProxy:
         )
         self.current_network_id: str | None = None
         self.current_network: Any | None = None
-        # Init default loadflow configuration
+        # Init default loadflow configuration (this also sets self.lf_provider
+        # from the TOML config, e.g. "provider = \"DynaFlow\"")
         self.init_lf_params_from_config()
-        # Empty string means system default provider
-        self.lf_provider: str = "OpenLoadFlow"
         self.loadflow_results: ThreadSafeTTLCache[str, Any] = ThreadSafeTTLCache(
             maxsize=MAX_NUMBER_OF_GRIDS, ttl=GRID_TTL
         )
