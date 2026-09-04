@@ -14,7 +14,6 @@ Uses FastMCP for simplified server implementation.
 import os
 from pathlib import Path
 
-from cachetools import TTLCache
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.prompts import Prompt
 from mcp.server.fastmcp.resources import FileResource
@@ -22,6 +21,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from pypowsybl_mcp import DEFAULT_PORT
+from pypowsybl_mcp.admin import register_admin_routes
 from pypowsybl_mcp.plugins import (
     discover_and_load_plugins,
     discover_and_load_resource_plugins,
@@ -38,9 +38,12 @@ from pypowsybl_mcp.tools.utils.io import register_io_tools
 from pypowsybl_mcp.tools.utils.resources import register_resource_tools
 from pypowsybl_mcp.tools.utils.session import register_session_tools
 from pypowsybl_mcp.tools.utils.visualization import register_visualization_tools
+from pypowsybl_mcp.utils.cachetools import ThreadSafeTTLCache
 from pypowsybl_mcp.utils.download_utils import (
     download_file_endpoint,
 )
+from pypowsybl_mcp.utils.instrumentation import instrument_tool_calls
+from pypowsybl_mcp.utils.session_registry import SESSIONS
 
 # instantiate an MCP server client
 mcp = FastMCP(
@@ -52,8 +55,10 @@ mcp = FastMCP(
 # Create pypowsybl proxy instances
 MAX_NUMBER_OF_CLIENTS = 100
 CLIENT_SESSION_TTL = 3600 * 24  # in secs, 1 day
-pypowsybl_proxies: TTLCache[str, PyPowsyblMCPServerProxy] = TTLCache(
-    maxsize=MAX_NUMBER_OF_CLIENTS, ttl=CLIENT_SESSION_TTL
+# Thread-safe: tool calls run in worker threads while the admin API reads the
+# same cache from the event loop.
+pypowsybl_proxies: ThreadSafeTTLCache[str, PyPowsyblMCPServerProxy] = (
+    ThreadSafeTTLCache(maxsize=MAX_NUMBER_OF_CLIENTS, ttl=CLIENT_SESSION_TTL)
 )
 
 # Resources
@@ -148,6 +153,13 @@ def register_tools(mcp: FastMCP):
 async def download_file_endpoint_handler(request: Request) -> Response:
     """HTTP endpoint to download files using temporary tokens."""
     return await download_file_endpoint(request)
+
+
+# Read-only monitoring API (/admin/health, /admin/sessions) and the per-session
+# call accounting it reports. Registered at import time, like the routes above:
+# both have to exist before `mcp.run()` builds the HTTP app.
+register_admin_routes(mcp, pypowsybl_proxies)
+instrument_tool_calls(mcp, SESSIONS)
 
 
 if __name__ == "__main__":

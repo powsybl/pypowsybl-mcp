@@ -11,7 +11,7 @@ from mcp.server.fastmcp import Context
 
 from pypowsybl_mcp.proxy import PyPowsyblMCPServerProxy
 from pypowsybl_mcp.utils.user_session_management import get_session_id
-
+from pypowsybl_mcp.utils.session_registry import SESSIONS
 
 class NetworkNotFoundError(ValueError):
     """Raised when a network cannot be resolved from the current session state."""
@@ -58,6 +58,10 @@ class PyPowsyblTool:
         """Retrieve the PyPowsyblMCPServerProxy instance for the given session."""
         if session_id not in self.pypowsybl_proxies:
             self.pypowsybl_proxies[session_id] = PyPowsyblMCPServerProxy()
+        # Every tool group inherits this method, so it is the one place that
+        # sees all session traffic - hence where the admin API's view of a
+        # session's activity comes from (see utils/session_registry.py).
+        SESSIONS.touch(session_id)
         return self.pypowsybl_proxies[session_id]
 
     def resolve_network(self, ctx: Context, network_id: str | None = None):

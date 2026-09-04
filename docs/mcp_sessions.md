@@ -67,7 +67,7 @@ There are therefore **two levels of TTL caching**:
 
 | Level                  | Cache                                      | Max size    | TTL   |
 |------------------------|--------------------------------------------|-------------|-------|
-| Session                | `pypowsybl_proxies` (`ThreadSafeTTLCache`) | 50 sessions | 1 day |
+| Session                | `pypowsybl_proxies` (`ThreadSafeTTLCache`) | 100 sessions | 1 day |
 | Network (inside proxy) | `proxy.networks` (`ThreadSafeTTLCache`)    | 10 networks | 1 day |
 
 #### Admin tools: session management
@@ -90,11 +90,17 @@ Two protected admin tools are registered in `pypowsybl_mcp/tools/utils/session.p
 2. **Reuse** — subsequent tool calls in the same MCP session reuse the same proxy instance, so state (loaded
    networks, parameters, results) persists across calls.
 
-3. **Eviction / cleanup** — the `ThreadSafeTTLCache` removes a session proxy automatically after `CLIENT_SESSION_TTL`
-   without
-   access, and enforces the `MAX_NUMBER_OF_CLIENTS` limit. Eviction is an in-memory cleanup mechanism; it is not a
-   transactional "logout" and should be treated as best-effort. Individual networks inside a proxy are also subject
-   to their own TTL (`GRID_TTL`).
+3. **Eviction / cleanup** — the `ThreadSafeTTLCache` removes a session proxy `CLIENT_SESSION_TTL` after it was
+   **created**, and enforces the `MAX_NUMBER_OF_CLIENTS` limit. Note that `cachetools` measures a TTL from insertion,
+   not from last access: reading a proxy does not renew it, so a session in constant use is still dropped one day
+   after it started. Expiry is also lazy — an expired entry is only reaped when the cache is next accessed or
+   `expire()` is called. Eviction is an in-memory cleanup mechanism; it is not a transactional "logout" and should be
+   treated as best-effort. Individual networks inside a proxy are subject to their own TTL (`GRID_TTL`), counted the
+   same way.
+
+4. **Observation** — how many sessions exist, how old each is and what it holds is reported by the admin HTTP API
+   (`/admin/health`, `/admin/sessions`); see [Monitoring](monitoring.md). Reading it is also what advances the
+   eviction counters, since that is when expired entries are reaped.
 
 #### Implications & pitfalls
 

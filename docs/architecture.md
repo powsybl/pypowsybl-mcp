@@ -16,6 +16,8 @@ This document describes the internal architecture of the PyPowsybl MCP server.
 | Plugin discovery          | `pypowsybl_mcp/plugins.py`                       | Entry-point scanning and loading for external plugins |
 | Session utilities         | `pypowsybl_mcp/utils/user_session_management.py` | Session ID lifecycle                                  |
 | Download utilities        | `pypowsybl_mcp/utils/download_utils.py`          | Temporary token-based file download                   |
+| Admin HTTP API            | `pypowsybl_mcp/admin.py`                         | Read-only session/health reporting                    |
+| Session registry          | `pypowsybl_mcp/utils/session_registry.py`        | Per-session bookkeeping behind the admin API          |
 | LLM agents                | `pypowsybl_mcp/llm_utils/agents/`                | Optional code-generation agent                        |
 
 #### Tool groups
