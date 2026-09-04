@@ -20,8 +20,9 @@ persisted - it describes the running process only.
 
 import threading
 import time
+from collections.abc import Hashable
 from dataclasses import dataclass, field
-from typing import Any, Hashable
+from typing import Any
 
 from loguru import logger
 
