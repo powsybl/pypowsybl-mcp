@@ -14,31 +14,20 @@ from mcp import ServerSession
 from mcp.server import FastMCP
 from mcp.server.fastmcp import Context
 
-from pypowsybl_mcp.tools import PyPowsyblTool
+from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.tools.network_tools import NetworkTools
+from pypowsybl_mcp.utils.element_types import (
+    ELEMENT_TYPE_TO_GETTER,
+    element_type_hint,
+)
 from pypowsybl_mcp.utils.pagination import paginate
 from pypowsybl_mcp.utils.user_session_management import get_session_id
 
 
 def register_security_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
     tools = SecurityTools(pypowsybl_proxies)
-    tools.register_tools_with_mcp(
-        mcp,
-        exclude=[
-            "_parse_json_if_needed",
-            "_status_name",
-            "_limit_type_name",
-            "_limit_violation_data",
-            "_loading_and_excess",
-            "_element_nominal_voltage",
-            "_build_contingencies_from_filter",
-            "_resolve_contingencies",
-            "_compute_ranked_contingencies",
-            "_flatten_ranked_violations",
-            "_overloaded_in_normal_operation",
-            "_overloaded_after_contingencies",
-        ],
-    )
+    # Private helpers (underscore-prefixed) are skipped automatically.
+    tools.register_tools_with_mcp(mcp)
 
 
 class SecurityTools(PyPowsyblTool):
@@ -115,18 +104,18 @@ class SecurityTools(PyPowsyblTool):
         are classified by the highest side. This keeps mixed-voltage assets
         visible in high-voltage studies.
         """
-        if element_type in ["lines", "transformers", "2_windings_transformers"]:
+        if element_type in ["line", "two_windings_transformer"]:
             voltage_level1_id = element_row.get("voltage_level1_id")
             voltage_level2_id = element_row.get("voltage_level2_id")
             voltage1 = voltage_by_level.get(voltage_level1_id, 0)
             voltage2 = voltage_by_level.get(voltage_level2_id, 0)
             return max(voltage1, voltage2)
 
-        if element_type == "generators":
+        if element_type == "generator":
             voltage_level_id = element_row.get("voltage_level_id")
             return voltage_by_level.get(voltage_level_id, 0)
 
-        if element_type == "hvdc_lines":
+        if element_type == "hvdc_line":
             return float("inf") if min_nominal_voltage else 0
 
         return 0
@@ -143,18 +132,23 @@ class SecurityTools(PyPowsyblTool):
         This is shared by create_contingencies_list and run_security_analysis
         so both tools apply the same element-type and voltage-filter rules.
         """
-        # This mapping keeps the public filter values stable.
+        # Only these element types make sense as N-1 contingencies. The getter
+        # names come from the canonical map so they cannot drift from the rest
+        # of the code base.
         supported_types = {
-            "lines": "get_lines",
-            "generators": "get_generators",
-            "transformers": "get_2_windings_transformers",
-            "2_windings_transformers": "get_2_windings_transformers",
-            "hvdc_lines": "get_hvdc_lines",
+            key: ELEMENT_TYPE_TO_GETTER[key]
+            for key in (
+                "line",
+                "generator",
+                "two_windings_transformer",
+                "hvdc_line",
+            )
         }
 
         if element_type not in supported_types:
             raise ValueError(
-                f"Unsupported element type '{element_type}'. Supported types: {', '.join(supported_types.keys())}"
+                f"Unsupported element type '{element_type}'. "
+                f"{element_type_hint(element_type, supported_types)}"
             )
 
         method_name = supported_types[element_type]
@@ -236,7 +230,7 @@ class SecurityTools(PyPowsyblTool):
 
         filter_result = self._build_contingencies_from_filter(
             network=network,
-            element_type=auto_contingencies.get("element_type", "lines"),
+            element_type=auto_contingencies.get("element_type", "line"),
             min_nominal_voltage=auto_contingencies.get("min_nominal_voltage"),
             max_nominal_voltage=auto_contingencies.get("max_nominal_voltage"),
         )
@@ -358,7 +352,7 @@ class SecurityTools(PyPowsyblTool):
 
             run_security_analysis(
                 network_id,
-                auto_contingencies={"element_type": "lines", "min_nominal_voltage": 63.0},
+                auto_contingencies={"element_type": "line", "min_nominal_voltage": 63.0},
                 limit_type="CURRENT",
                 top_violations=20,
             )
@@ -384,7 +378,7 @@ class SecurityTools(PyPowsyblTool):
                 Mutually exclusive with auto_contingencies. Default: None.
             auto_contingencies (dict | str, optional): Compact filter to auto-build contingencies.
                 Format:
-                - element_type (str): lines, generators, transformers, 2_windings_transformers, hvdc_lines
+                - element_type (str): lines, generators, 2_windings_transformers, hvdc_lines
                 - min_nominal_voltage (float, optional)
                 - max_nominal_voltage (float, optional)
                 Mutually exclusive with contingencies. Default: None.
@@ -443,26 +437,12 @@ class SecurityTools(PyPowsyblTool):
               "sample_contingencies": [...]
             }
         """
-        session_id = get_session_id(ctx)
+        try:
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
 
-        if network_id is None:
-            network_id = self.get_proxy(session_id).current_network_id
         logger.debug(f"Running security analysis for network '{network_id}'")
-
-        if network_id is None:
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": "No network specified and no current network selected",
-                },
-                indent=2,
-            )
-
-        if network_id not in self.get_proxy(session_id).networks:
-            return json.dumps(
-                {"success": False, "error": f"Network '{network_id}' not found"},
-                indent=2,
-            )
 
         if mode not in {"summary", "detail"}:
             return json.dumps(
@@ -503,7 +483,6 @@ class SecurityTools(PyPowsyblTool):
             } or None
 
         try:
-            network = self.get_proxy(session_id).networks[network_id]
             contingencies, contingency_source = self._resolve_contingencies(
                 network=network,
                 contingencies=contingencies,
@@ -525,10 +504,8 @@ class SecurityTools(PyPowsyblTool):
 
             results = analysis.run_ac(network)
             # Store results
-            self.get_proxy(session_id).security_results = getattr(
-                self.get_proxy(session_id), "security_results", {}
-            )
-            self.get_proxy(session_id).security_results[network_id] = {
+            proxy.security_results = getattr(proxy, "security_results", {})
+            proxy.security_results[network_id] = {
                 "timestamp": datetime.now(UTC).isoformat(),
             }
 
@@ -646,7 +623,7 @@ class SecurityTools(PyPowsyblTool):
     async def create_contingencies_list(
         self,
         network_id: str | None = None,
-        element_type: str = "lines",
+        element_type: str = "line",
         min_nominal_voltage: float | None = None,
         max_nominal_voltage: float | None = None,
         limit: int | None = None,
@@ -663,11 +640,12 @@ class SecurityTools(PyPowsyblTool):
         Args:
             network_id (str, optional): Network to query. If None, uses current network. Default: None.
             element_type (str, optional): Type of elements to create contingencies for. Supported types:
-                - "lines": Transmission lines (default)
-                - "generators": Generators
-                - "transformers" or "2_windings_transformers": Two-winding transformers
-                - "hvdc_lines": HVDC lines
-                Default: "lines".
+                - "line": Transmission lines (default)
+                - "generator": Generators
+                - "two_windings_transformer": Two-winding transformers ("transformer"
+                  on its own always means this one)
+                - "hvdc_line": HVDC lines
+                Default: "line".
             min_nominal_voltage (float, optional): Minimum nominal voltage in kV to filter elements.
                 Only elements connected to voltage levels >= this value are included.
                 For lines/transformers, uses the higher voltage level of the two terminals.
@@ -696,7 +674,7 @@ class SecurityTools(PyPowsyblTool):
             {
               "success": true,
               "network_id": "ieee_14",
-              "element_type": "lines",
+              "element_type": "line",
               "filters_applied": {
                 "min_nominal_voltage": 220.0,
                 "max_nominal_voltage": null
@@ -712,16 +690,16 @@ class SecurityTools(PyPowsyblTool):
 
         Example Usage:
             # Get all lines as contingencies
-            contingencies = create_contingencies_list("ieee_14", "lines")
+            contingencies = create_contingencies_list("ieee_14", "line")
 
             # Get only high-voltage lines (>= 220 kV)
-            contingencies = create_contingencies_list("ieee_14", "lines", min_nominal_voltage=220)
+            contingencies = create_contingencies_list("ieee_14", "line", min_nominal_voltage=220)
 
             # Get all generators as contingencies
-            contingencies = create_contingencies_list("ieee_14", "generators")
+            contingencies = create_contingencies_list("ieee_14", "generator")
 
             # Use with run_security_analysis
-            result = create_contingencies_list("ieee_14", "lines", min_nominal_voltage=220)
+            result = create_contingencies_list("ieee_14", "line", min_nominal_voltage=220)
             contingencies = json.loads(result)["contingencies"]
             security_result = run_security_analysis("ieee_14", contingencies=contingencies)
 
@@ -731,29 +709,14 @@ class SecurityTools(PyPowsyblTool):
               of the two connected voltage levels
             - Generators are filtered by their connected voltage level
         """
-        session_id = get_session_id(ctx)
+        try:
+            _, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
 
-        if network_id is None:
-            network_id = self.get_proxy(session_id).current_network_id
         logger.debug(f"Creating contingencies list for network '{network_id}'")
 
-        if network_id is None:
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": "No network specified and no current network selected",
-                },
-                indent=2,
-            )
-
-        if network_id not in self.get_proxy(session_id).networks:
-            return json.dumps(
-                {"success": False, "error": f"Network '{network_id}' not found"},
-                indent=2,
-            )
-
         try:
-            network = self.get_proxy(session_id).networks[network_id]
             filter_result = self._build_contingencies_from_filter(
                 network=network,
                 element_type=element_type,
@@ -796,7 +759,7 @@ class SecurityTools(PyPowsyblTool):
     async def get_overloaded_elements(
         self,
         network_id: str | None = None,
-        element_type: str = "lines",
+        element_type: str = "line",
         study: str = "n",
         threshold_percent: float = 100.0,
         limit_kind: str | None = None,
@@ -813,7 +776,7 @@ class SecurityTools(PyPowsyblTool):
 
         Args:
             network_id (str, optional): Network to analyze. Uses the current network if omitted.
-            element_type (str, optional): Kind of elements to look at (default: "lines").
+            element_type (str, optional): Kind of elements to look at (default: "line").
                 For study="n", passed to get_network_element_data.
                 For study="n1", used to build the contingency list when contingencies is omitted.
             study (str, optional): Operating case to check:
@@ -855,26 +818,10 @@ class SecurityTools(PyPowsyblTool):
             # N-1 violations above 100 % on all lines
             get_overloaded_elements(study="n1", threshold_percent=100)
         """
-        session_id = get_session_id(ctx)
-        proxy = self.get_proxy(session_id)
-
-        if network_id is None:
-            network_id = proxy.current_network_id
-
-        if network_id is None:
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": "No network specified and no current network selected",
-                },
-                indent=2,
-            )
-
-        if network_id not in proxy.networks:
-            return json.dumps(
-                {"success": False, "error": f"Network '{network_id}' not found"},
-                indent=2,
-            )
+        try:
+            _, network_id, _ = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
 
         study_normalized = (study or "n").strip().lower()
         if study_normalized not in ("n", "n1"):

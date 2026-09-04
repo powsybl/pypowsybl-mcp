@@ -100,7 +100,7 @@ class IOTools(PyPowsyblTool):
             - TimeoutError: Download took too long
         """
         logger.debug(f"Loading network from URL {url} as '{network_id}'")
-        session_id = get_session_id(ctx)
+        proxy = self.get_proxy(get_session_id(ctx))
 
         try:
             # Define temporary directory
@@ -129,12 +129,7 @@ class IOTools(PyPowsyblTool):
                         )
 
             # Register the loaded network
-            self.get_proxy(session_id).networks[network_id] = network
-
-            # Set as current if requested
-            if set_as_current:
-                self.get_proxy(session_id).current_network_id = network_id
-                self.get_proxy(session_id).current_network = network
+            proxy.register_network(network_id, network, set_as_current)
 
             buses = network.get_buses()
             return {
@@ -185,7 +180,7 @@ class IOTools(PyPowsyblTool):
             → "Successfully loaded network 'local_network' from /home/user/grids/ieee14.xiidm with 14 buses"
         """
         logger.debug(f"Loading network from file {path} as '{network_id}'")
-        session_id = get_session_id(ctx)
+        proxy = self.get_proxy(get_session_id(ctx))
 
         try:
             if not os.path.exists(path):
@@ -198,12 +193,7 @@ class IOTools(PyPowsyblTool):
             network = pp.network.load(path)
 
             # Register the loaded network
-            self.get_proxy(session_id).networks[network_id] = network
-
-            # Set as current if requested
-            if set_as_current:
-                self.get_proxy(session_id).current_network_id = network_id
-                self.get_proxy(session_id).current_network = network
+            proxy.register_network(network_id, network, set_as_current)
 
             buses = network.get_buses()
             return {

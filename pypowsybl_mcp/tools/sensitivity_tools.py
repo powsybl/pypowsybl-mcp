@@ -13,14 +13,14 @@ from mcp import ServerSession
 from mcp.server import FastMCP
 from mcp.server.fastmcp import Context
 
-from pypowsybl_mcp.tools import PyPowsyblTool
+from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.utils.pagination import attach_pagination, paginate
-from pypowsybl_mcp.utils.user_session_management import get_session_id
 
 
 def register_sensitivity_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
     tools = SensitivityTools(pypowsybl_proxies)
-    tools.register_tools_with_mcp(mcp, exclude=["_handle_sensitivity_result"])
+    # Private helpers (underscore-prefixed) are skipped automatically.
+    tools.register_tools_with_mcp(mcp)
 
 
 class SensitivityTools(PyPowsyblTool):
@@ -86,8 +86,8 @@ class SensitivityTools(PyPowsyblTool):
         It is faster than AC analysis and suitable for large networks or screening.
 
         Related Tools:
-        - Use `get_network_elements_ids(element_type='Line')` to find branches for `branches_ids`.
-        - Use `get_network_elements_ids(element_type='Generator')` or 'Load' for `variables_ids`.
+        - Use `get_network_element_data(element_type='line', get_only_ids=True)` to find branches for `branches_ids`.
+        - Use `get_network_element_data(element_type='generator', get_only_ids=True)` or 'load' for `variables_ids`.
         - Use `run_loadflow` with `dc=True` to check the initial state.
         - Use `get_online_resource(class_object='sensitivity')` to look up the underlying
           pypowsybl sensitivity API (zone/factor types, signatures) instead of relying on
@@ -118,15 +118,10 @@ class SensitivityTools(PyPowsyblTool):
         Example zones:
             [{"id": "FR", "type": "country", "country": "FR"}]
         """
-        session_id = get_session_id(ctx)
-        proxy = self.get_proxy(session_id)
-        if network_id is None:
-            network_id = proxy.current_network_id
-
-        if network_id not in proxy.networks:
-            return f"Error: Network '{network_id}' not found."
-
-        network = proxy.networks[network_id]
+        try:
+            _, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return f"Error: {e}."
 
         try:
             analysis = pp.sensitivity.create_dc_analysis()
@@ -198,7 +193,7 @@ class SensitivityTools(PyPowsyblTool):
         and voltage magnitudes. It is more accurate than DC analysis but computationally more expensive.
 
         Related Tools:
-        - Use `get_network_elements_ids(element_type='Bus')` to find buses for `bus_voltage_factors`.
+        - Use `get_network_element_data(element_type='bus', get_only_ids=True)` to find buses for `bus_voltage_factors`.
         - Use `run_loadflow` to check the initial AC state.
         - Use `get_online_resource(class_object='sensitivity')` to look up the underlying
           pypowsybl sensitivity API (factor types, signatures) instead of relying on
@@ -223,15 +218,10 @@ class SensitivityTools(PyPowsyblTool):
             cursor (str | int, optional): Page offset.
             ctx (Context, optional): FastMCP context.
         """
-        session_id = get_session_id(ctx)
-        proxy = self.get_proxy(session_id)
-        if network_id is None:
-            network_id = proxy.current_network_id
-
-        if network_id not in proxy.networks:
-            return f"Error: Network '{network_id}' not found."
-
-        network = proxy.networks[network_id]
+        try:
+            _, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return f"Error: {e}."
 
         try:
             analysis = pp.sensitivity.create_ac_analysis()
@@ -277,7 +267,17 @@ class SensitivityTools(PyPowsyblTool):
         on specific branches.
 
         Related Tools:
-        - Use `get_network_elements_ids(element_type='PhaseShifterTransformer')` to find phase shifters.
+        - To find phase shifter IDs for `phase_shifter_ids`, use
+          `get_network_element_data` (add `get_only_ids=True` for just the IDs)
+          with:
+          - `element_type='two_windings_transformer'`: lists the transformers
+            themselves (their IDs are what this tool expects). Not every
+            two-winding transformer is a phase shifter, so filter to those that
+            carry a phase tap changer.
+          - `element_type='phase_tap_changer'`: lists the phase tap changers,
+            indexed by their transformer ID — i.e. exactly the transformers that
+            *are* phase shifters. Use this index to keep only the relevant IDs
+            from the transformer list above.
         - Use `modify_network` to apply the calculated angle changes.
 
         Common Workflows:
@@ -293,15 +293,10 @@ class SensitivityTools(PyPowsyblTool):
             limit (int, optional): Maximum rows per matrix. None = full markdown.
             cursor (str | int, optional): Page offset.
         """
-        session_id = get_session_id(ctx)
-        proxy = self.get_proxy(session_id)
-        if network_id is None:
-            network_id = proxy.current_network_id
-
-        if network_id not in proxy.networks:
-            return f"Error: Network '{network_id}' not found."
-
-        network = proxy.networks[network_id]
+        try:
+            _, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return f"Error: {e}."
 
         try:
             analysis = pp.sensitivity.create_dc_analysis()
@@ -335,7 +330,7 @@ class SensitivityTools(PyPowsyblTool):
         It helps in understanding how HVDC links can be used for congestion management in the AC network.
 
         Related Tools:
-        - Use `get_network_elements_ids(element_type='HvdcLine')` to find HVDC lines.
+        - Use `get_network_element_data(element_type='hvdc_line', get_only_ids=True)` to find HVDC lines.
         - Use `modify_network` to adjust HVDC power set points.
 
         Common Workflows:
@@ -351,15 +346,10 @@ class SensitivityTools(PyPowsyblTool):
             limit (int, optional): Maximum rows per matrix. None = full markdown.
             cursor (str | int, optional): Page offset.
         """
-        session_id = get_session_id(ctx)
-        proxy = self.get_proxy(session_id)
-        if network_id is None:
-            network_id = proxy.current_network_id
-
-        if network_id not in proxy.networks:
-            return f"Error: Network '{network_id}' not found."
-
-        network = proxy.networks[network_id]
+        try:
+            _, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return f"Error: {e}."
 
         try:
             analysis = pp.sensitivity.create_dc_analysis()
@@ -418,15 +408,10 @@ class SensitivityTools(PyPowsyblTool):
             - "country" (str, optional): Country code for 'country' type.
             - "key_type" (str, optional): 'GENERATOR_TARGET_P', 'GENERATOR_MAX_P', 'LOAD_P0'.
         """
-        session_id = get_session_id(ctx)
-        proxy = self.get_proxy(session_id)
-        if network_id is None:
-            network_id = proxy.current_network_id
-
-        if network_id not in proxy.networks:
-            return f"Error: Network '{network_id}' not found."
-
-        network = proxy.networks[network_id]
+        try:
+            _, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return f"Error: {e}."
 
         def resolve_zone(zone_def, network):
             if isinstance(zone_def, str):
@@ -511,15 +496,10 @@ class SensitivityTools(PyPowsyblTool):
             limit (int, optional): Maximum rows per matrix. None = full markdown.
             cursor (str | int, optional): Page offset.
         """
-        session_id = get_session_id(ctx)
-        proxy = self.get_proxy(session_id)
-        if network_id is None:
-            network_id = proxy.current_network_id
-
-        if network_id not in proxy.networks:
-            return f"Error: Network '{network_id}' not found."
-
-        network = proxy.networks[network_id]
+        try:
+            _, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return f"Error: {e}."
 
         try:
             if ac:

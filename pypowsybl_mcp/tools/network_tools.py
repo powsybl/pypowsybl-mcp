@@ -13,13 +13,17 @@ from loguru import logger
 from mcp import ServerSession
 from mcp.server import FastMCP
 from mcp.server.fastmcp import Context
-from pypowsybl import _pypowsybl as _pp
 
-from pypowsybl_mcp.tools import PyPowsyblTool
+from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.utils.element_data_filter import (
     apply_element_filter,
     attach_current_limits,
     attach_tap_changer_data,
+)
+from pypowsybl_mcp.utils.element_types import (
+    ELEMENT_TYPE_TO_GETTER,
+    element_type_enum,
+    element_type_hint,
 )
 from pypowsybl_mcp.utils.pagination import (
     DEFAULT_PAGINATION_LIMIT,
@@ -27,6 +31,41 @@ from pypowsybl_mcp.utils.pagination import (
     paginate,
 )
 from pypowsybl_mcp.utils.user_session_management import get_session_id
+
+# Specification driving modify_network. Each element type maps to the network
+# getter used to check existence, a label used in messages, the update method
+# to call, and the parameters that may be modified. Each parameter maps to
+# (update_kwarg, display_name, unit) where display_name/unit only affect the
+# success message.
+MODIFY_NETWORK_SPEC: dict[str, dict] = {
+    "generator": {
+        "getter": "get_generators",
+        "label": "Generator",
+        "updater": "update_generators",
+        "parameters": {
+            "target_p": ("target_p", "target_p", "MW"),
+            "target_v": ("target_v", "target_v", "p.u."),
+        },
+    },
+    "load": {
+        "getter": "get_loads",
+        "label": "Load",
+        "updater": "update_loads",
+        "parameters": {
+            "p0": ("p0", "p0", "MW"),
+            "q0": ("q0", "q0", "MVAr"),
+        },
+    },
+    "line": {
+        "getter": "get_lines",
+        "label": "Line",
+        "updater": "update_lines",
+        "parameters": {
+            "r": ("r", "resistance", "Ω"),
+            "x": ("x", "reactance", "Ω"),
+        },
+    },
+}
 
 
 def register_network_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
@@ -81,7 +120,7 @@ class NetworkTools(PyPowsyblTool):
             - Larger networks (IEEE118, IEEE300) are better for scalability testing
         """
         logger.debug(f"Creating IEEE {network_type} network '{network_id}'")
-        session_id = get_session_id(ctx)
+        proxy = self.get_proxy(get_session_id(ctx))
 
         try:
             network_creators = {
@@ -97,12 +136,7 @@ class NetworkTools(PyPowsyblTool):
 
             # Create the network
             network = network_creators[network_type]()
-            self.get_proxy(session_id).networks[network_id] = network
-
-            # Set as current if requested
-            if set_as_current:
-                self.get_proxy(session_id).current_network_id = network_id
-                self.get_proxy(session_id).current_network = network
+            proxy.register_network(network_id, network, set_as_current)
 
             buses = network.get_buses()
             return f"Successfully created {network_type} network '{network_id}' with {len(buses)} buses"
@@ -150,21 +184,19 @@ class NetworkTools(PyPowsyblTool):
             - remove_network(): Remove a network from memory
         """
         logger.debug(f"Switching to network '{network_id}'")
-        session_id = get_session_id(ctx)
+        proxy = self.get_proxy(get_session_id(ctx))
 
         try:
-            if network_id not in self.get_proxy(session_id).networks:
-                available = list(self.get_proxy(session_id).networks.keys())
+            if network_id not in proxy.networks:
+                available = list(proxy.networks.keys())
                 return (
                     f"Network '{network_id}' not found. Available networks: {available}"
                 )
 
-            self.get_proxy(session_id).current_network_id = network_id
-            self.get_proxy(session_id).current_network = self.get_proxy(
-                session_id
-            ).networks[network_id]
+            proxy.current_network_id = network_id
+            proxy.current_network = proxy.networks[network_id]
 
-            summary = self.get_proxy(session_id)._get_network_summary(network_id)
+            summary = proxy._get_network_summary(network_id)
             return f"Switched to network '{network_id}' - {summary.get('buses', 0)} buses, {summary.get('generators', 0)} generators, {summary.get('loads', 0)} loads"
 
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
@@ -222,19 +254,17 @@ class NetworkTools(PyPowsyblTool):
             4. list_networks() → Verify [LF✓] marker appears
         """
         logger.debug("Listing loaded networks")
-        session_id = get_session_id(ctx)
+        proxy = self.get_proxy(get_session_id(ctx))
 
         try:
-            if not self.get_proxy(session_id).networks:
+            if not proxy.networks:
                 return "No networks loaded"
 
             result = "Loaded networks:\n"
-            for network_id in self.get_proxy(session_id).networks:
-                summary = self.get_proxy(session_id)._get_network_summary(network_id)
+            for network_id in proxy.networks:
+                summary = proxy._get_network_summary(network_id)
                 current_marker = (
-                    " (CURRENT)"
-                    if network_id == self.get_proxy(session_id).current_network_id
-                    else ""
+                    " (CURRENT)" if network_id == proxy.current_network_id else ""
                 )
                 loadflow_marker = (
                     " [LF✓]" if summary.get("has_loadflow_results", False) else ""
@@ -268,7 +298,7 @@ class NetworkTools(PyPowsyblTool):
                 - generators: Number of generation units
                 - loads: Number of load points
                 - lines: Number of transmission lines
-                - transformers: Number of transformers
+                - 2_windings_transformers: Number of two-winding transformers
                 - has_loadflow_results: Whether loadflow has been run
                 - voltage_levels: Voltage level information
 
@@ -294,24 +324,16 @@ class NetworkTools(PyPowsyblTool):
             - switch_network(): Change the active network
             - visualize_network(): Generate visual representation
         """
-        session_id = get_session_id(ctx)
+        try:
+            proxy, network_id, _ = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
+
+        logger.debug(f"Getting network info for network '{network_id}'")
 
         try:
-            if network_id is None:
-                network_id = self.get_proxy(session_id).current_network_id
-            logger.debug(f"Getting network info for network '{network_id}'")
-
-            if network_id is None:
-                msg = "No network specified and no current network selected"
-                logger.warning(msg)
-                return msg
-
-            if network_id not in self.get_proxy(session_id).networks:
-                msg = f"Network '{network_id}' not found"
-                logger.warning(msg)
-                return msg
-
-            summary = self.get_proxy(session_id)._get_network_summary(network_id)
+            summary = proxy._get_network_summary(network_id)
             return json.dumps(summary, indent=2)
 
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
@@ -444,106 +466,49 @@ class NetworkTools(PyPowsyblTool):
             - Corrective actions (fix violations)
             - Training and education (show cause-and-effect)
         """
-        session_id = get_session_id(ctx)
+        try:
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
 
-        if network_id is None:
-            network_id = self.get_proxy(session_id).current_network_id
         logger.debug(f"Modifying network element parameter for network {network_id}")
 
-        if network_id is None:
-            error = "No network specified and no current network selected"
-            logger.warning(error)
-            return error
-
-        if network_id not in self.get_proxy(session_id).networks:
-            error = f"Network '{network_id}' not found"
-            logger.warning(error)
-            return error
-
         try:
-            network = self.get_proxy(session_id).networks[network_id]
+            proxy.invalidate_loadflow(network_id)
 
-            if network_id in self.get_proxy(session_id).loadflow_results:
-                del self.get_proxy(session_id).loadflow_results[network_id]
-
-            if element_type == "generator":
-                generators = network.get_generators()
-                if element_id not in generators.index:
-                    error = (
-                        f"Generator '{element_id}' not found in network '{network_id}'"
-                    )
-                    logger.warning(error)
-                    return error
-
-                if parameter == "target_p":
-                    network.update_generators(id=element_id, target_p=value)
-                    error = f"Updated generator '{element_id}' target_p to {value} MW in network '{network_id}'"
-                    logger.warning(error)
-                    return error
-
-                elif parameter == "target_v":
-                    network.update_generators(id=[element_id], target_v=[value])
-                    error = f"Updated generator '{element_id}' target_v to {value} p.u. in network '{network_id}'"
-                    logger.warning(error)
-                    return error
-
-                else:
-                    error = f"Unsupported parameter '{parameter}' for generator"
-                    logger.warning(error)
-                    return error
-
-            elif element_type == "load":
-                loads = network.get_loads()
-                if element_id not in loads.index:
-                    error = f"Load '{element_id}' not found in network '{network_id}'"
-                    logger.warning(error)
-                    return error
-
-                if parameter == "p0":
-                    network.update_loads(id=[element_id], p0=[value])
-                    info = f"Updated load '{element_id}' p0 to {value} MW in network '{network_id}'"
-                    logger.success(info)
-                    return info
-
-                elif parameter == "q0":
-                    network.update_loads(id=[element_id], q0=[value])
-                    info = f"Updated load '{element_id}' q0 to {value} MVAr in network '{network_id}'"
-                    logger.success(info)
-                    return info
-
-                else:
-                    error = f"Unsupported parameter '{parameter}' for load"
-                    logger.warning(error)
-                    return error
-
-            elif element_type == "line":
-                lines = network.get_lines()
-                if element_id not in lines.index:
-                    error = f"Line '{element_id}' not found in network '{network_id}'"
-                    logger.warning(error)
-                    return error
-
-                if parameter == "r":
-                    network.update_lines(id=[element_id], r=[value])
-                    info = f"Updated line '{element_id}' resistance to {value} Ω in network '{network_id}'"
-                    logger.success(info)
-                    return info
-
-                elif parameter == "x":
-                    network.update_lines(id=[element_id], x=[value])
-                    info = f"Updated line '{element_id}' reactance to {value} Ω in network '{network_id}'"
-                    logger.success(info)
-                    return info
-
-                else:
-                    error = f"Unsupported parameter '{parameter}' for line"
-                    logger.warning(error)
-                    return error
-
-            else:
+            spec = MODIFY_NETWORK_SPEC.get(element_type)
+            if spec is None:
                 error = f"Unsupported element type '{element_type}'"
                 logger.warning(error)
                 return error
+
+            elements = getattr(network, spec["getter"])()
+            if element_id not in elements.index:
+                error = (
+                    f"{spec['label']} '{element_id}' not found "
+                    f"in network '{network_id}'"
+                )
+                logger.warning(error)
+                return error
+
+            param_spec = spec["parameters"].get(parameter)
+            if param_spec is None:
+                error = f"Unsupported parameter '{parameter}' for {element_type}"
+                logger.warning(error)
+                return error
+
+            update_kwarg, display_name, unit = param_spec
+            getattr(network, spec["updater"])(
+                id=[element_id], **{update_kwarg: [value]}
+            )
+
+            info = (
+                f"Updated {element_type} '{element_id}' {display_name} "
+                f"to {value} {unit} in network '{network_id}'"
+            )
+            logger.success(info)
+            return info
 
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.error(f"Failed to modify network: {e}")
@@ -569,7 +534,8 @@ class NetworkTools(PyPowsyblTool):
 
         Args:
             line_id (str): Unique ID of the transmission line to activate/deactivate.
-                Use get_network_info() or get_network_elements_ids() to find valid line IDs.
+                Use get_network_info() or get_network_element_data(element_type="line",
+                get_only_ids=True) to find valid line IDs.
             active (bool): Status to set for the line:
                 - True: Activate the line (bring into service)
                 - False: Deactivate the line (take out of service/disconnect)
@@ -660,30 +626,19 @@ class NetworkTools(PyPowsyblTool):
             - Grid expansion planning (test with/without new lines)
             - Training and education (demonstrate system response to outages)
         """
-        session_id = get_session_id(ctx)
+        try:
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
 
-        if network_id is None:
-            network_id = self.get_proxy(session_id).current_network_id
         logger.debug(
             f"Setting line '{line_id}' status to {active} in network {network_id}"
         )
 
-        if network_id is None:
-            error = "No network specified and no current network selected"
-            logger.warning(error)
-            return error
-
-        if network_id not in self.get_proxy(session_id).networks:
-            error = f"Network '{network_id}' not found"
-            logger.warning(error)
-            return error
-
         try:
-            network = self.get_proxy(session_id).networks[network_id]
-
             # Clear loadflow results since network topology is changing
-            if network_id in self.get_proxy(session_id).loadflow_results:
-                del self.get_proxy(session_id).loadflow_results[network_id]
+            proxy.invalidate_loadflow(network_id)
 
             # Get the line and check if it exists
             lines = network.get_lines()
@@ -728,8 +683,8 @@ class NetworkTools(PyPowsyblTool):
 
         Args:
             switch_id (str): ID of the switch to modify. Use
-                get_network_elements_ids(element_type="switches") or
-                get_network_element_data(element_type="switches") to list
+                get_network_element_data(element_type="switch", get_only_ids=True)
+                or get_network_element_data(element_type="switch") to list
                 available switches and check their current open status.
             open (bool): Target state — True to open (isolate), False to close
                 (connect).
@@ -769,32 +724,18 @@ class NetworkTools(PyPowsyblTool):
             - get_network_element_data(): inspect switch kind and current status
             - export_network(): save the network with modified switch states
         """
-        session_id = get_session_id(ctx)
-        proxy = self.get_proxy(session_id)
-
-        # If no network is specified, use the current network for this session.
-        if network_id is None:
-            network_id = proxy.current_network_id
+        try:
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
 
         logger.debug(
             f"Setting switch '{switch_id}' open={open} in network {network_id}"
         )
 
-        if network_id is None:
-            error = "No network specified and no current network selected"
-            logger.warning(error)
-            return error
-
-        if network_id not in proxy.networks:
-            error = f"Network '{network_id}' not found"
-            logger.warning(error)
-            return error
-
-        network = proxy.networks[network_id]
-
         # Topology changed: previously computed loadflow results are no longer valid.
-        if network_id in proxy.loadflow_results:
-            del proxy.loadflow_results[network_id]
+        proxy.invalidate_loadflow(network_id)
 
         try:
             # Check that the switch exists before attempting to modify it.
@@ -832,7 +773,7 @@ class NetworkTools(PyPowsyblTool):
         shift, used to control active power flow). This tool moves the selected
         tap changer to a new position. Inspect the current position and the
         allowed range first with get_network_element_data(element_type=
-        "2_windings_transformers" or "3_windings_transformers"), which now
+        "two_windings_transformer" or "three_windings_transformer"), which now
         returns tap_position, tap_min, tap_max and regulated_side.
 
         **Important**: Changing a tap position clears cached loadflow results.
@@ -840,8 +781,8 @@ class NetworkTools(PyPowsyblTool):
 
         Args:
             transformer_id (str): ID of the transformer to modify. Use
-                get_network_elements_ids() or get_network_element_data() to find
-                valid transformer IDs.
+                get_network_element_data() (optionally with get_only_ids=True) to
+                find valid transformer IDs.
             tap_position (int): New tap position. Must be within [tap_min,
                 tap_max] of the selected tap changer.
             tap_changer_type (str, optional): Which tap changer to move,
@@ -877,26 +818,16 @@ class NetworkTools(PyPowsyblTool):
             - run_loadflow(): required after the change to compute new state
             - modify_network(): change generator/load/line parameters
         """
-        session_id = get_session_id(ctx)
-        proxy = self.get_proxy(session_id)
-
-        if network_id is None:
-            network_id = proxy.current_network_id
+        try:
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
 
         logger.debug(
             f"Setting {tap_changer_type} tap position of '{transformer_id}' "
             f"to {tap_position} in network {network_id}"
         )
-
-        if network_id is None:
-            error = "No network specified and no current network selected"
-            logger.warning(error)
-            return error
-
-        if network_id not in proxy.networks:
-            error = f"Network '{network_id}' not found"
-            logger.warning(error)
-            return error
 
         kind = (tap_changer_type or "ratio").strip().lower()
         if kind not in ("ratio", "phase"):
@@ -906,8 +837,6 @@ class NetworkTools(PyPowsyblTool):
             )
             logger.warning(error)
             return error
-
-        network = proxy.networks[network_id]
 
         try:
             if kind == "ratio":
@@ -964,8 +893,7 @@ class NetworkTools(PyPowsyblTool):
                 return error
 
             # Changing the topology/state invalidates any cached loadflow.
-            if network_id in proxy.loadflow_results:
-                del proxy.loadflow_results[network_id]
+            proxy.invalidate_loadflow(network_id)
 
             if is_three_windings:
                 # A three-winding tap changer is addressed by (id, side); pass a
@@ -1069,30 +997,27 @@ class NetworkTools(PyPowsyblTool):
             remove_network("scenario_1")
             create_ieee_network("IEEE30", "scenario_2")
         """
-        session_id = get_session_id(ctx)
+        proxy = self.get_proxy(get_session_id(ctx))
 
         logger.debug(f"Removing network '{network_id}'")
-        if network_id not in self.get_proxy(session_id).networks:
+        if network_id not in proxy.networks:
             return f"Network '{network_id}' not found"
 
         try:
-            del self.get_proxy(session_id).networks[network_id]
+            del proxy.networks[network_id]
 
-            if network_id in self.get_proxy(session_id).loadflow_results:
-                del self.get_proxy(session_id).loadflow_results[network_id]
+            proxy.invalidate_loadflow(network_id)
 
-            if self.get_proxy(session_id).current_network_id == network_id:
-                if self.get_proxy(session_id).networks:
-                    new_current = next(iter(self.get_proxy(session_id).networks.keys()))
-                    self.get_proxy(session_id).current_network_id = new_current
-                    self.get_proxy(session_id).current_network = self.get_proxy(
-                        session_id
-                    ).networks[new_current]
+            if proxy.current_network_id == network_id:
+                if proxy.networks:
+                    new_current = next(iter(proxy.networks.keys()))
+                    proxy.current_network_id = new_current
+                    proxy.current_network = proxy.networks[new_current]
                 else:
-                    self.get_proxy(session_id).current_network_id = None
-                    self.get_proxy(session_id).current_network = None
+                    proxy.current_network_id = None
+                    proxy.current_network = None
 
-            remaining = list(self.get_proxy(session_id).networks.keys())
+            remaining = list(proxy.networks.keys())
             return f"Removed network '{network_id}'. Remaining networks: {remaining}"
 
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
@@ -1176,8 +1101,7 @@ class NetworkTools(PyPowsyblTool):
             network = proxy.networks[network_id]
             network.set_working_variant(variant_id)
             # Clear cached loadflow results when switching variants as they might not apply
-            if network_id in proxy.loadflow_results:
-                del proxy.loadflow_results[network_id]
+            proxy.invalidate_loadflow(network_id)
 
             logger.info(f"Switched to variant '{variant_id}' in network '{network_id}'")
             return f"Switched to variant '{variant_id}' in network '{network_id}'"
@@ -1374,26 +1298,12 @@ class NetworkTools(PyPowsyblTool):
               ]
             }
         """
-        session_id = get_session_id(ctx)
+        try:
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
 
-        if network_id is None:
-            network_id = self.get_proxy(session_id).current_network_id
         logger.debug(f"Checking voltage violations for network '{network_id}'")
-
-        if network_id is None:
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": "No network specified and no current network selected",
-                },
-                indent=2,
-            )
-
-        if network_id not in self.get_proxy(session_id).networks:
-            return json.dumps(
-                {"success": False, "error": f"Network '{network_id}' not found"},
-                indent=2,
-            )
 
         unit = (unit or "pu").strip().lower()
         if unit not in ("pu", "kv"):
@@ -1406,11 +1316,10 @@ class NetworkTools(PyPowsyblTool):
             )
 
         try:
-            network = self.get_proxy(session_id).networks[network_id]
             loadflow_executed = False
 
             # Check if loadflow needs to be run
-            if network_id not in self.get_proxy(session_id).loadflow_results:
+            if network_id not in proxy.loadflow_results:
                 loadflow_executed = True
                 results = pp.loadflow.run_ac(network)
                 all_converged = all(
@@ -1438,7 +1347,7 @@ class NetworkTools(PyPowsyblTool):
                         indent=2,
                     )
 
-                self.get_proxy(session_id).loadflow_results[network_id] = {
+                proxy.loadflow_results[network_id] = {
                     "converged": True,
                     "timestamp": datetime.now(UTC).isoformat(),
                 }
@@ -1581,6 +1490,7 @@ class NetworkTools(PyPowsyblTool):
         filter_value: float | str | None = None,
         sort: str = "desc",
         limit_kind: str = "permanent",
+        get_only_ids: bool = False,
         limit: int | None = None,
         cursor: str | int | None = None,
         ctx: Context[ServerSession, None] = None,
@@ -1596,20 +1506,26 @@ class NetworkTools(PyPowsyblTool):
             network_id (str, optional): Network to query. If None, uses current network. Default: None.
             variant_id (str, optional): Variant to query. If None, uses default variant_id. Default: 'InitialState'.
             element_type (str): Type of elements to retrieve. Supported types:
-                - "voltage_levels": Voltage level information
-                - "substations": Substation information
-                - "buses": Bus/node data with voltages
-                - "generators": Generation units with power output
-                - "loads": Load points with consumption
-                - "lines": Transmission lines with ratings
-                - "transformers" or "2_windings_transformers": Two-winding transformers
-                - "3_windings_transformers": Three-winding transformers
-                - "hvdc_lines": HVDC transmission lines
-                - "shunt_compensators": Shunt compensation devices
-                - "static_var_compensators" or "svc": Static var compensators
-                - "vsc_converter_stations": VSC converter stations
-                - "lcc_converter_stations": LCC converter stations
-                - "switches": Switching devices
+                - "voltage_level": Voltage level information
+                - "substation": Substation information
+                - "bus": Bus/node data with voltages
+                - "generator": Generation units with power output
+                - "load": Load points with consumption
+                - "line": Transmission lines with ratings
+                - "two_windings_transformer": Two-winding transformers
+                  ("transformer" on its own always means this one)
+                - "three_windings_transformer": Three-winding transformers
+                - "hvdc_line": HVDC transmission lines
+                - "shunt_compensator": Shunt compensation devices
+                - "static_var_compensator": Static var compensators
+                - "vsc_converter_station": VSC converter stations
+                - "lcc_converter_station": LCC converter stations
+                - "switch": Switching devices
+                Any other pypowsybl element table is accepted too, named after
+                its pypowsybl ElementType lowercased (e.g. "battery",
+                "tie_line", "busbar_section"). Names are canonical and singular:
+                no abbreviations or plural variants. An invalid name comes back
+                with the full list and a suggestion.
             compare_with_variant_id (str, optional): Variant to compare with. If None, do not do comparison. Default: None.
             mode (str, optional): Use "filter" to keep only the elements that match a
                 condition. Omit it (or use "list") to get the full element list. Default: None.
@@ -1646,21 +1562,33 @@ class NetworkTools(PyPowsyblTool):
                 how many elements matched; elements only holds the current page.
                 Ask for a bigger limit, or move on with cursor, to see more.
             cursor (str | int, optional): Page offset. Use pagination.nextCursor for the next page.
+            get_only_ids (bool, optional): When True, return only the element IDs
+                for element_type instead of their full data — faster and cheaper
+                for enumeration, validation or feeding IDs to other tools. The IDs
+                reflect variant_id. The mode/metric/filter and compare_with_variant_id
+                arguments are ignored in this mode. Default: False.
 
         Returns:
-            str: JSON-formatted string containing the complete element data with all attributes. If comparison is requested,
-                return only element which are differents in the two variants.
+            str: JSON-formatted string. With get_only_ids=False (default): the
+                complete element data with all attributes; if comparison is requested,
+                only elements that differ between the two variants. With
+                get_only_ids=True: a JSON array of IDs when limit is None, otherwise
+                an object with element_ids + pagination.
                 Returns error message if network not found or invalid element type.
 
         Example Usage:
             # Get all substations
-            substations = get_network_element_data("ieee_14", "substations")
+            substations = get_network_element_data("ieee_14", "substation")
 
             # Get all generators
-            generators = get_network_element_data("ieee_14", "generators")
+            generators = get_network_element_data("ieee_14", "generator")
 
             # Get lines from current network
-            lines = get_network_element_data(None, "lines")
+            lines = get_network_element_data(None, "line")
+
+            # Get only the generator IDs (replaces get_network_elements_ids)
+            gen_ids = get_network_element_data("ieee_14", "generator", get_only_ids=True)
+            → ["B1-G", "B2-G", ...]
 
         Use Cases:
             - compare variants from same network
@@ -1676,7 +1604,7 @@ class NetworkTools(PyPowsyblTool):
         Notes:
             - Returns all available attributes for each element type
             - Data structure varies by element type
-            - Use get_network_elements_ids() for just the IDs
+            - Pass get_only_ids=True for just the IDs (no other attributes)
             - Data reflects current state (including loadflow results if run)
             - loading_percent on lines/transformers: max(|i1|, |i2|) in amperes,
               divided by the current limit picked via limit_kind (see above).
@@ -1685,37 +1613,26 @@ class NetworkTools(PyPowsyblTool):
               filtering. Generators use |p| / max_p instead.
 
         Related Tools:
-            - get_network_elements_ids(): Get only element IDs
             - get_network_info(): Get network statistics summary
             - modify_network(): Modify element parameters
             - get_online_resource(class_object='network'): Look up the underlying
               pypowsybl network API (methods, signatures, parameters) instead of
               relying on prior knowledge
         """
-        session_id = get_session_id(ctx)
+        try:
+            _, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
+
+        logger.debug(f"Getting {element_type} data for network '{network_id}'")
+
+        if element_type is None:
+            msg = "Element type is required"
+            logger.warning(msg)
+            return msg
 
         try:
-            if network_id is None:
-                network_id = self.get_proxy(session_id).current_network_id
-            logger.debug(f"Getting {element_type} data for network '{network_id}'")
-
-            if network_id is None:
-                msg = "No network specified and no current network selected"
-                logger.warning(msg)
-                return msg
-
-            if network_id not in self.get_proxy(session_id).networks:
-                msg = f"Network '{network_id}' not found"
-                logger.warning(msg)
-                return msg
-
-            if element_type is None:
-                msg = "Element type is required"
-                logger.warning(msg)
-                return msg
-
-            network = self.get_proxy(session_id).networks[network_id]
-
             if variant_id not in network.get_variant_ids():
                 msg = f"Variant '{variant_id}' not found in network '{network_id}'"
                 logger.warning(msg)
@@ -1724,27 +1641,13 @@ class NetworkTools(PyPowsyblTool):
             network.set_working_variant(variant_id)
 
             # Map element types to network methods
-            element_methods = {
-                "voltage_levels": "get_voltage_levels",
-                "substations": "get_substations",
-                "buses": "get_buses",
-                "generators": "get_generators",
-                "loads": "get_loads",
-                "lines": "get_lines",
-                "transformers": "get_2_windings_transformers",
-                "2_windings_transformers": "get_2_windings_transformers",
-                "3_windings_transformers": "get_3_windings_transformers",
-                "hvdc_lines": "get_hvdc_lines",
-                "shunt_compensators": "get_shunt_compensators",
-                "static_var_compensators": "get_static_var_compensators",
-                "svc": "get_static_var_compensators",
-                "vsc_converter_stations": "get_vsc_converter_stations",
-                "lcc_converter_stations": "get_lcc_converter_stations",
-                "switches": "get_switches",
-            }
+            element_methods = ELEMENT_TYPE_TO_GETTER
 
             if element_type not in element_methods:
-                msg = f"Invalid element type '{element_type}'. Supported types: {', '.join(element_methods.keys())}"
+                msg = (
+                    f"Invalid element type '{element_type}'. "
+                    f"{element_type_hint(element_type, element_methods)}"
+                )
                 logger.warning(msg)
                 return msg
 
@@ -1755,14 +1658,63 @@ class NetworkTools(PyPowsyblTool):
                 return msg
 
             method = getattr(network, method_name)
+
+            # get_only_ids: return just the element IDs (the former
+            # get_network_elements_ids tool), reflecting variant_id set above.
+            # Uses the native get_elements_ids() enum fast path where available,
+            # otherwise the getter's index. Skips enrichment, comparison and
+            # filtering; the output shape matches the standalone tool exactly.
+            if get_only_ids:
+                fast_path_types = {
+                    "generator",
+                    "load",
+                    "line",
+                    "two_windings_transformer",
+                }
+                if element_type in fast_path_types:
+                    element_ids = network.get_elements_ids(
+                        element_type_enum(element_type)
+                    )
+                    logger.debug(
+                        f"Retrieved {len(element_ids)} {element_type} IDs from "
+                        f"network '{network_id}' using get_elements_ids()"
+                    )
+                else:
+                    element_ids = method().index.tolist()
+                    logger.debug(
+                        f"Retrieved {len(element_ids)} {element_type} IDs from "
+                        f"network '{network_id}' using {method_name}()"
+                    )
+
+                try:
+                    ids_page, pagination = paginate(
+                        element_ids, limit=limit, cursor=cursor
+                    )
+                except ValueError as e:
+                    return json.dumps({"success": False, "error": str(e)}, indent=2)
+
+                if pagination is None:
+                    return json.dumps(element_ids, indent=2)
+
+                return json.dumps(
+                    attach_pagination(
+                        {
+                            "network_id": network_id,
+                            "element_type": element_type,
+                            "element_ids": ids_page,
+                        },
+                        pagination,
+                    ),
+                    indent=2,
+                )
+
             elements_df = method()
 
             # get_lines() returns i1/i2 (current in A) but not Imax. Imax is in
             # get_operational_limits(). We join it here so loading_percent works.
             if compare_with_variant_id is None and element_type in (
-                "lines",
-                "transformers",
-                "2_windings_transformers",
+                "line",
+                "two_windings_transformer",
             ):
                 limits_df = None
                 try:
@@ -1776,9 +1728,8 @@ class NetworkTools(PyPowsyblTool):
             # tap position, range and regulated side so the caller sees them in
             # one call (see set_tap_position() to change the position).
             if compare_with_variant_id is None and element_type in (
-                "transformers",
-                "2_windings_transformers",
-                "3_windings_transformers",
+                "two_windings_transformer",
+                "three_windings_transformer",
             ):
                 ratio_df = None
                 phase_df = None
@@ -1903,181 +1854,6 @@ class NetworkTools(PyPowsyblTool):
             logger.error(f"Failed to get network element data: {e}")
             return f"Failed to get network element data: {e!s}"
 
-    async def get_network_elements_ids(
-        self,
-        network_id: str | None = None,
-        element_type: str | None = None,
-        limit: int | None = None,
-        cursor: str | int | None = None,
-        ctx: Context[ServerSession, None] = None,
-    ) -> str:
-        """
-        Retrieve the list of IDs for specific network elements.
-
-        Gets only the identifiers for a specific element type from a power system network.
-        Faster than get_network_element_data() when you only need the IDs without
-        detailed attributes. Useful for enumeration and selection tasks.
-
-        Args:
-            network_id (str, optional): Network to query. If None, uses current network. Default: None.
-            element_type (str): Type of elements to list IDs for. Supported types:
-                - "voltage_levels": Voltage level IDs
-                - "substations": Substation IDs
-                - "buses": Bus/node IDs
-                - "generators": Generator IDs
-                - "loads": Load IDs
-                - "lines": Transmission line IDs
-                - "transformers" or "2_windings_transformers": Transformer IDs
-                - "3_windings_transformers": Three-winding transformer IDs
-                - "hvdc_lines": HVDC line IDs
-                - "shunt_compensators": Shunt compensator IDs
-                - "static_var_compensators" or "svc": SVC IDs
-                - "vsc_converter_stations": VSC converter station IDs
-                - "lcc_converter_stations": LCC converter station IDs
-                - "switches": Switch IDs
-            limit (int, optional): Max IDs per page. None = full list (legacy format).
-            cursor (str | int, optional): Page offset.
-
-        Returns:
-            str: JSON-formatted list of element IDs, or an object with element_ids + pagination.
-                Returns error message if network not found or invalid element type.
-
-        Example Usage:
-            # Get all substation IDs
-            substation_ids = get_network_elements_ids("ieee_14", "substations")
-            → ["S1", "S2", "S3", ...]
-
-            # Get all generator IDs
-            generator_ids = get_network_elements_ids("ieee_14", "generators")
-            → ["GEN_1", "GEN_2", ...]
-
-            # Get line IDs from current network
-            line_ids = get_network_elements_ids(None, "lines")
-
-        Use Cases:
-            - List available elements for selection
-            - Validate element IDs before operations
-            - Iterate through elements programmatically
-            - Quick enumeration without loading full data
-            - Find element IDs for modify_network() or other tools
-
-        Notes:
-            - Much faster than get_network_element_data() for large networks
-            - Returns only IDs, no other attributes
-            - Use get_network_element_data() for detailed information
-            - IDs can be used with other tools like modify_network()
-
-        Related Tools:
-            - get_network_element_data(): Get full element details
-            - get_network_info(): Get network statistics
-            - modify_network(): Modify elements by ID
-            - plot_substation_single_line_diagram(): Diagram substation by ID
-            - get_online_resource(class_object='network'): Look up the underlying
-              pypowsybl network API (methods, signatures, parameters) instead of
-              relying on prior knowledge
-        """
-        session_id = get_session_id(ctx)
-
-        try:
-            if network_id is None:
-                network_id = self.get_proxy(session_id).current_network_id
-            logger.debug(f"Getting {element_type} IDs for network '{network_id}'")
-
-            if network_id is None:
-                msg = "No network specified and no current network selected"
-                logger.warning(msg)
-                return msg
-
-            if network_id not in self.get_proxy(session_id).networks:
-                msg = f"Network '{network_id}' not found"
-                logger.warning(msg)
-                return msg
-
-            if element_type is None:
-                msg = "Element type is required"
-                logger.warning(msg)
-                return msg
-
-            network = self.get_proxy(session_id).networks[network_id]
-
-            # Map element types to ElementType enum for get_elements_ids()
-            # Only use get_elements_ids() for types that support it
-            element_type_map = {
-                "generators": _pp.ElementType.GENERATOR,
-                "loads": _pp.ElementType.LOAD,
-                "lines": _pp.ElementType.LINE,
-                "transformers": _pp.ElementType.TWO_WINDINGS_TRANSFORMER,
-                "2_windings_transformers": _pp.ElementType.TWO_WINDINGS_TRANSFORMER,
-            }
-
-            # For types that don't support get_elements_ids(), use the old method
-            element_methods = {
-                "voltage_levels": "get_voltage_levels",
-                "substations": "get_substations",
-                "buses": "get_buses",
-                "3_windings_transformers": "get_3_windings_transformers",
-                "hvdc_lines": "get_hvdc_lines",
-                "shunt_compensators": "get_shunt_compensators",
-                "static_var_compensators": "get_static_var_compensators",
-                "svc": "get_static_var_compensators",
-                "vsc_converter_stations": "get_vsc_converter_stations",
-                "lcc_converter_stations": "get_lcc_converter_stations",
-                "switches": "get_switches",
-            }
-
-            # Try to use get_elements_ids() for supported types
-            if element_type in element_type_map:
-                element_ids = network.get_elements_ids(element_type_map[element_type])
-                logger.debug(
-                    f"Retrieved {len(element_ids)} {element_type} IDs from network '{network_id}' using get_elements_ids()"
-                )
-            elif element_type in element_methods:
-                # Fall back to old method for unsupported types
-                method_name = element_methods[element_type]
-                if not hasattr(network, method_name):
-                    msg = f"Method '{method_name}' not available for this network"
-                    logger.warning(msg)
-                    return msg
-
-                method = getattr(network, method_name)
-                elements_df = method()
-                element_ids = elements_df.index.tolist()
-                logger.debug(
-                    f"Retrieved {len(element_ids)} {element_type} IDs from network '{network_id}' using {method_name}()"
-                )
-            else:
-                # Combine both maps for error message
-                all_supported = list(element_type_map.keys()) + list(
-                    element_methods.keys()
-                )
-                msg = f"Invalid element type '{element_type}'. Supported types: {', '.join(all_supported)}"
-                logger.warning(msg)
-                return msg
-
-            try:
-                ids_page, pagination = paginate(element_ids, limit=limit, cursor=cursor)
-            except ValueError as e:
-                return json.dumps({"success": False, "error": str(e)}, indent=2)
-
-            if pagination is None:
-                return json.dumps(element_ids, indent=2)
-
-            return json.dumps(
-                attach_pagination(
-                    {
-                        "network_id": network_id,
-                        "element_type": element_type,
-                        "element_ids": ids_page,
-                    },
-                    pagination,
-                ),
-                indent=2,
-            )
-
-        except (pp.PyPowsyblError, ValueError, KeyError) as e:
-            logger.error(f"Failed to get network element IDs: {e}")
-            return f"Failed to get network element IDs: {e!s}"
-
     async def get_top_active_power_transit_lines(
         self,
         network_id: str | None = None,
@@ -2110,23 +1886,13 @@ class NetworkTools(PyPowsyblTool):
                  - unit = "MW"
                  - flow_side (explicit description, e.g., "from (p1)")
         """
-        session_id = get_session_id(ctx)
+        try:
+            _, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return str(e)
 
         try:
-            # Retrieve the network
-            if network_id is None:
-                network_id = self.get_proxy(session_id).current_network_id
-            if network_id is None:
-                msg = "No network specified and no current network selected"
-                logger.warning(msg)
-                return msg
-            if network_id not in self.get_proxy(session_id).networks:
-                msg = f"Network '{network_id}' not found"
-                logger.warning(msg)
-                return msg
-
-            network = self.get_proxy(session_id).networks[network_id]
-
             # Normalize and cap K
             if k is None:
                 k = 10

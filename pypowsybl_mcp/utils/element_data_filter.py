@@ -35,7 +35,7 @@ COMPARISONS = {
 DERIVED_METRICS = ("loading_percent", "p_abs", "q_abs")
 
 # Lines and transformers have two terminals (side 1 and side 2).
-TWO_SIDED_TYPES = ("lines", "hvdc_lines", "transformers", "2_windings_transformers")
+TWO_SIDED_TYPES = ("line", "hvdc_line", "two_windings_transformer")
 
 
 def _max_abs(df, columns):
@@ -132,7 +132,7 @@ def attach_tap_changer_data(elements_df, ratio_df, phase_df, element_type):
     rated_u1/ratio_tap_position1 convention.
     """
     out = elements_df.copy()
-    is_three_windings = element_type == "3_windings_transformers"
+    is_three_windings = element_type == "three_windings_transformer"
 
     for kind, tc_df in (("ratio", ratio_df), ("phase", phase_df)):
         if tc_df is None or tc_df.empty:

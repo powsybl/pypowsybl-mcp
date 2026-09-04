@@ -143,7 +143,7 @@ async def test_create_contingencies_list_success(sa_tools, mock_ctx):
     proxy.current_network_id = "net1"
 
     result = await sa_tools.create_contingencies_list(
-        network_id="net1", element_type="lines", ctx=mock_ctx
+        network_id="net1", element_type="line", ctx=mock_ctx
     )
 
     assert "l1" in result
@@ -161,7 +161,7 @@ async def test_create_contingencies_list_pagination(sa_tools, mock_ctx):
     proxy.networks["net1"] = mock_net
     result = await sa_tools.create_contingencies_list(
         network_id="net1",
-        element_type="lines",
+        element_type="line",
         limit=2,
         cursor="1",
         ctx=mock_ctx,
@@ -338,7 +338,7 @@ async def test_run_security_analysis_auto_contingencies(sa_tools, mock_ctx):
 
         result = await sa_tools.run_security_analysis(
             network_id="net1",
-            auto_contingencies={"element_type": "lines", "min_nominal_voltage": 200.0},
+            auto_contingencies={"element_type": "line", "min_nominal_voltage": 200.0},
             ctx=mock_ctx,
         )
 
@@ -361,7 +361,7 @@ async def test_run_security_analysis_mutual_exclusion(sa_tools, mock_ctx):
     result = await sa_tools.run_security_analysis(
         network_id="net1",
         contingencies=[{"element_id": "l1", "contingency_id": "C1"}],
-        auto_contingencies={"element_type": "lines"},
+        auto_contingencies={"element_type": "line"},
         ctx=mock_ctx,
     )
     data = json.loads(result)
@@ -514,7 +514,7 @@ async def test_get_overloaded_elements_n1_returns_violations(sa_tools, mock_ctx)
 
         result = await sa_tools.get_overloaded_elements(
             network_id="net1",
-            element_type="lines",
+            element_type="line",
             study="n1",
             threshold_percent=100.0,
             contingencies=[{"element_id": "l1", "contingency_id": "C1"}],
@@ -746,7 +746,7 @@ async def test_create_contingencies_list_generic_exception(sa_tools, mock_ctx):
     proxy.current_network_id = "net1"
 
     result = await sa_tools.create_contingencies_list(
-        network_id="net1", element_type="lines", ctx=mock_ctx
+        network_id="net1", element_type="line", ctx=mock_ctx
     )
     data = json.loads(result)
     assert data["success"] is False
@@ -765,7 +765,7 @@ async def test_create_contingencies_list_pagination_invalid_cursor(sa_tools, moc
 
     result = await sa_tools.create_contingencies_list(
         network_id="net1",
-        element_type="lines",
+        element_type="line",
         limit=1,
         cursor="not-a-number",
         ctx=mock_ctx,

@@ -188,7 +188,7 @@ def test_paginate_dict_field_missing_contingencies():
     payload = {
         "success": True,
         "network_id": "ieee_14",
-        "element_type": "lines",
+        "element_type": "line",
         "filtered_count": 0,
     }
 
