@@ -1632,6 +1632,12 @@ class NetworkTools(PyPowsyblTool):
             logger.warning(msg)
             return msg
 
+        # This is a read tool, but reading a specific variant requires switching
+        # the working variant (and again for the comparison path). The network is
+        # shared/cached in the session, so we capture the caller's active variant
+        # and restore it in the finally block to avoid leaking state.
+        original_variant_id = network.get_working_variant_id()
+
         try:
             if variant_id not in network.get_variant_ids():
                 msg = f"Variant '{variant_id}' not found in network '{network_id}'"
@@ -1853,6 +1859,16 @@ class NetworkTools(PyPowsyblTool):
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.error(f"Failed to get network element data: {e}")
             return f"Failed to get network element data: {e!s}"
+        finally:
+            # Restore the caller's working variant so a read never leaks the
+            # variant switches done above into the shared/cached network.
+            try:
+                network.set_working_variant(original_variant_id)
+            except (pp.PyPowsyblError, ValueError, KeyError) as e:
+                logger.warning(
+                    f"Could not restore working variant "
+                    f"'{original_variant_id}': {e}"
+                )
 
     async def get_top_active_power_transit_lines(
         self,
