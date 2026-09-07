@@ -357,34 +357,57 @@ class TestCopy:
         return PyPowsyblMCPServerProxy()
 
     def test_copy_duplicates_networks_and_state(self, proxy):
-        network = Mock()
-        network_id = "net1"
-        proxy.set_network(network_id, network)
-        proxy.current_network_id = network_id
-        proxy.loadflow_results[network_id] = {"status": "converged"}
-        proxy.set_plugin_result("rte_security:net1", {"violations": []})
+        """Completeness guard for copy(): every stateful attribute must be
+        reproduced as an equal-but-independent value. Each is populated with a
+        non-default sentinel, so this fails if a new attribute is added to
+        __init__ but not to copy(), or if an attribute is copied by reference."""
+        net = Mock()
+        proxy.set_network("net1", net)
+        proxy.current_network_id = "net1"
+        proxy.current_network = net
+        proxy.lf_provider = "DynaFlow"  # non-default provider
+        # Mutate lf_params away from the config default so a shallow copy shows.
+        proxy.lf_params.distributed_slack = False
+        proxy.lf_params.balance_type = pp.loadflow.BalanceType.PROPORTIONAL_TO_LOAD
+        proxy.loadflow_results["net1"] = {"status": "converged"}
+        proxy.set_plugin_result("rte:net1", {"violations": []})
+        proxy.resources["resources://temp/doc"] = "# markdown"
+        proxy.security_results = {"net1": {"timestamp": "t0"}}  # dynamic attribute
+        proxy.visualization_config = {"tweaked": True}
 
-        new_proxy = proxy.copy()
+        new = proxy.copy()
 
-        # Independent proxy instance
-        assert new_proxy is not proxy
-        assert new_proxy.has_network(network_id)
-        # Network was deep-copied, not the same object
-        assert new_proxy.get_network(network_id) is not network
-        assert new_proxy.current_network_id == network_id
-        assert new_proxy.current_network is new_proxy.get_network(network_id)
-        assert new_proxy.loadflow_results[network_id] == {"status": "converged"}
-        assert (
-            new_proxy.loadflow_results[network_id]
-            is not proxy.loadflow_results[network_id]
-        )
-        assert new_proxy.visualization_config == proxy.visualization_config
-        assert new_proxy.visualization_config is not proxy.visualization_config
-        assert new_proxy.lf_params is not proxy.lf_params
-        assert new_proxy.get_plugin_result("rte_security:net1") == {"violations": []}
-        assert new_proxy.get_plugin_result(
-            "rte_security:net1"
-        ) is not proxy.get_plugin_result("rte_security:net1")
+        # 1. Independent instance, no attribute silently dropped
+        #    (catches a missing dynamic attribute such as security_results).
+        assert new is not proxy
+        assert vars(new).keys() == vars(proxy).keys()
+
+        # 2. Scalars carried verbatim (catches lf_provider reverting to default).
+        assert new.lf_provider == "DynaFlow"
+        assert new.current_network_id == "net1"
+
+        # 3. lf_params: independent object AND contents preserved.
+        assert new.lf_params is not proxy.lf_params
+        assert new.lf_params.distributed_slack is False
+        assert new.lf_params.balance_type == pp.loadflow.BalanceType.PROPORTIONAL_TO_LOAD
+        assert new.lf_params.voltage_init_mode == proxy.lf_params.voltage_init_mode
+
+        # 4. Network deep-copied, current selection points at the fork's copy.
+        assert new.has_network("net1")
+        assert new.get_network("net1") is not net
+        assert new.current_network is new.get_network("net1")
+
+        # 5. Caches/dicts: equal contents, independent container and values.
+        items = lambda c: dict(c.items())  # noqa: E731
+        for name in ("loadflow_results", "plugin_results", "resources"):
+            assert items(getattr(new, name)) == items(getattr(proxy, name))
+            assert getattr(new, name) is not getattr(proxy, name)
+        for name in ("security_results", "visualization_config"):
+            assert getattr(new, name) == getattr(proxy, name)
+            assert getattr(new, name) is not getattr(proxy, name)
+        # Nested values deep-copied, not shared by reference.
+        assert new.loadflow_results["net1"] is not proxy.loadflow_results["net1"]
+        assert new.security_results["net1"] is not proxy.security_results["net1"]
 
     def test_copy_without_current_network_selected(self, proxy):
         # current_network_id is None by default -> copy should not attempt to
