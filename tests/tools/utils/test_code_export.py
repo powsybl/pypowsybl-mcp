@@ -72,6 +72,23 @@ async def test_generate_python_script_error(code_tools, mock_ctx):
         assert "Something went wrong" in str(excinfo.value)
 
 
+@pytest.mark.asyncio
+async def test_generate_python_script_invalid_script_name(code_tools, mock_ctx):
+    """An unsafe script_name (rejected by _sanitize_filename) must surface as a
+    clear RuntimeError, not a bare ValueError escaping from generate_download_link
+    (regression: this call had no exception handling at all before).
+    """
+    with patch(
+        "pypowsybl_mcp.tools.utils.code_export.generate_code_from_macro"
+    ) as mock_gen_code:
+        mock_gen_code.return_value = "import pypowsybl as pp\n# some code"
+
+        with pytest.raises(RuntimeError, match="Failed to generate download link"):
+            await code_tools.generate_python_script(
+                actions="Do something", script_name="my script.py", ctx=mock_ctx
+            )
+
+
 def test_register_code_tools():
     mcp = MagicMock()
     proxies = TTLCache(maxsize=10, ttl=3600)

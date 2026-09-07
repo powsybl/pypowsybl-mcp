@@ -339,7 +339,7 @@ class IOTools(PyPowsyblTool):
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
 
-        except (pp.PyPowsyblError, OSError) as e:
+        except (pp.PyPowsyblError, OSError, ValueError) as e:
             logger.error(f"Failed to export network: {e}")
             return {
                 "status": Status.ERROR,

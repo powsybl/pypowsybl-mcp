@@ -290,3 +290,29 @@ async def test_export_network_exception_handling(io_tools, mock_ctx):
 
     assert result["status"] == "error"
     assert "Failed to export network: disk full" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_export_network_invalid_filename(io_tools, mock_ctx):
+    """A network_id that sanitizes to an unsafe default filename (e.g. containing
+    a space) must be reported as a normal error dict, not raise ValueError out of
+    the tool (regression: only (PyPowsyblError, OSError) were caught here before).
+    """
+    proxy = io_tools.get_proxy("test-session")
+    mock_network = MagicMock()
+    proxy.networks["ieee 14"] = mock_network
+
+    with (
+        patch("tempfile.NamedTemporaryFile") as mock_tmp,
+        patch("builtins.open", mock_open(read_data=b"exported-data")),
+        patch("os.unlink"),
+        patch("os.path.exists", return_value=True),
+    ):
+        mock_tmp.return_value.__enter__.return_value.name = "/tmp/fake-tmp"
+
+        result = await io_tools.export_network(
+            network_id="ieee 14", format_type="XIIDM", ctx=mock_ctx
+        )
+
+    assert result["status"] == "error"
+    assert "Failed to export network: Invalid or unsafe filename" in result["message"]

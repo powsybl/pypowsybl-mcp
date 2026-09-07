@@ -118,10 +118,13 @@ class CodeTools(PyPowsyblTool):
             raise RuntimeError(output)
 
         # Generate download link
-        link_info = generate_download_link(
-            filename=script_name,
-            file_data=output.encode("utf-8"),
-            download_base_url=DOWNLOAD_BASE_URL,
-            expiry_seconds=DOWNLOAD_LINK_EXPIRY_SECONDS,
-        )
+        try:
+            link_info = generate_download_link(
+                filename=script_name,
+                file_data=output.encode("utf-8"),
+                download_base_url=DOWNLOAD_BASE_URL,
+                expiry_seconds=DOWNLOAD_LINK_EXPIRY_SECONDS,
+            )
+        except (OSError, ValueError) as e:
+            raise RuntimeError(f"Failed to generate download link: {e}") from e
         return link_info["download_url"]
