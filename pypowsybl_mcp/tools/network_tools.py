@@ -1203,12 +1203,20 @@ class NetworkTools(PyPowsyblTool):
 
         try:
             network = proxy.networks[network_id]
+            # Only fall back if we are removing the active variant; removing an
+            # inactive variant must leave the working variant untouched.
+            was_working = network.get_working_variant_id() == variant_id
             network.remove_variant(variant_id)
-            network.set_working_variant(fallback_variant_id)
+            if was_working:
+                network.set_working_variant(fallback_variant_id)
+                logger.info(
+                    f"Removed variant '{variant_id}' from network '{network_id}'. Setting working variant to '{fallback_variant_id}'."
+                )
+                return f"Variant '{variant_id}' removed from network '{network_id}'. Setting working variant to '{fallback_variant_id}'."
             logger.info(
-                f"Removed variant '{variant_id}' from network '{network_id}'. Setting working variant to '{fallback_variant_id}'."
+                f"Removed variant '{variant_id}' from network '{network_id}'. Working variant unchanged."
             )
-            return f"Variant '{variant_id}' removed from network '{network_id}'. Setting working variant to '{fallback_variant_id}'."
+            return f"Variant '{variant_id}' removed from network '{network_id}'."
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.error(f"Failed to remove variant: {e}")
             return f"Failed to remove variant: {e!s}"
