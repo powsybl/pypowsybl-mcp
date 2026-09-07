@@ -398,7 +398,7 @@ class TestCopy:
         assert new.current_network is new.get_network("net1")
 
         # 5. Caches/dicts: equal contents, independent container and values.
-        items = lambda c: dict(c.items())  # noqa: E731
+        items = lambda c: dict(c.items())
         for name in ("loadflow_results", "plugin_results", "resources"):
             assert items(getattr(new, name)) == items(getattr(proxy, name))
             assert getattr(new, name) is not getattr(proxy, name)
