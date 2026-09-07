@@ -470,6 +470,7 @@ async def test_get_network_element_data_pagination(network_tools, mock_ctx):
         index=[f"GEN_{i}" for i in range(GENERATOR_COUNT)],
     )
     mock_net.get_variant_ids.return_value = ["InitialState"]
+    mock_net.get_working_variant_id.return_value = "InitialState"
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.get_network_element_data(
@@ -2128,8 +2129,11 @@ async def test_get_network_element_data_invalid_element_type(network_tools, mock
 
 @pytest.mark.asyncio
 async def test_get_network_element_data_method_not_available(network_tools, mock_ctx):
-    mock_net = MagicMock(spec=["get_variant_ids", "set_working_variant"])
+    mock_net = MagicMock(
+        spec=["get_variant_ids", "set_working_variant", "get_working_variant_id"]
+    )
     mock_net.get_variant_ids.return_value = ["InitialState"]
+    mock_net.get_working_variant_id.return_value = "InitialState"
     proxy = network_tools.get_proxy("test-session")
     proxy.networks["net1"] = mock_net
 
@@ -2383,8 +2387,11 @@ async def test_get_only_ids_element_type_required(network_tools, mock_ctx):
 async def test_get_only_ids_method_not_available(network_tools, mock_ctx):
     # Has the variant API but not the element getter, so validation passes and
     # the missing-getter branch is reached.
-    mock_net = MagicMock(spec=["get_variant_ids", "set_working_variant"])
+    mock_net = MagicMock(
+        spec=["get_variant_ids", "set_working_variant", "get_working_variant_id"]
+    )
     mock_net.get_variant_ids.return_value = ["InitialState"]
+    mock_net.get_working_variant_id.return_value = "InitialState"
     proxy = network_tools.get_proxy("test-session")
     proxy.networks["net1"] = mock_net
 
