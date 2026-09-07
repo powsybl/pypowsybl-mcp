@@ -103,29 +103,39 @@ class IOTools(PyPowsyblTool):
         proxy = self.get_proxy(get_session_id(ctx))
 
         try:
-            # Define temporary directory
-            tmp_dir = tempfile.gettempdir()
+            # Create a unique temporary directory so concurrent downloads never
+            # collide on the same file name inside a shared temp dir
+            tmp_dir = tempfile.mkdtemp()
 
-            # Extract file name from URL (the URL is expected to be correctly formatted)
-            file_name = os.path.basename(urlparse(url).path)
+            # Extract file name from URL (the URL is expected to be correctly
+            # formatted); fall back to a generic name if the URL path has none
+            # (e.g. it ends in "/")
+            file_name = os.path.basename(urlparse(url).path) or "downloaded_network"
 
-            # Create the fill path of the temporary file inside the temporary directory
+            # Create the full path of the temporary file inside the temporary directory
             tmp_path = os.path.join(tmp_dir, file_name)
 
-            # Download and save the remote file (blocking I/O off the event loop)
-            await asyncio.to_thread(_download_to_file, url, tmp_path)
-
             try:
+                # Download and save the remote file (blocking I/O off the event loop)
+                await asyncio.to_thread(_download_to_file, url, tmp_path)
+
                 # Load the network from the temporary file
                 network = pp.network.load(tmp_path)
             finally:
-                # Clean up the temp file
+                # Clean up the temp file and its containing directory
                 if tmp_path and os.path.exists(tmp_path):
                     try:
                         os.unlink(tmp_path)
                     except OSError as cleanup_err:
                         logger.warning(
                             f"Could not remove temp file {tmp_path}: {cleanup_err}"
+                        )
+                if os.path.isdir(tmp_dir):
+                    try:
+                        os.rmdir(tmp_dir)
+                    except OSError as cleanup_err:
+                        logger.warning(
+                            f"Could not remove temp directory {tmp_dir}: {cleanup_err}"
                         )
 
             # Register the loaded network
