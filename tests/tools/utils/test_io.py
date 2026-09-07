@@ -4,6 +4,7 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
+import os
 from unittest.mock import MagicMock, mock_open, patch
 
 import pypowsybl as pp
@@ -251,11 +252,13 @@ async def test_load_network_from_url_uses_unique_temp_dir(io_tools, mock_ctx):
     mock_response = MagicMock()
     mock_response.__enter__.return_value.read.return_value = b"fake-data"
 
+    fake_dir = os.path.join("tmp", "unique-abc123")
+
     with (
         patch("urllib.request.urlopen", return_value=mock_response),
         patch("builtins.open", mock_open()),
         patch("pypowsybl.network.load") as mock_load,
-        patch("tempfile.mkdtemp", return_value="/tmp/unique-abc123") as mock_mkdtemp,
+        patch("tempfile.mkdtemp", return_value=fake_dir) as mock_mkdtemp,
         patch("tempfile.gettempdir") as mock_gettempdir,
         patch("os.unlink"),
         patch("os.path.exists", return_value=True),
@@ -272,8 +275,11 @@ async def test_load_network_from_url_uses_unique_temp_dir(io_tools, mock_ctx):
 
         mock_mkdtemp.assert_called_once()
         mock_gettempdir.assert_not_called()
-        mock_load.assert_called_once_with("/tmp/unique-abc123/network.xiidm")
-        mock_rmdir.assert_called_once_with("/tmp/unique-abc123")
+        # Build the expected path with os.path.join too, rather than a hardcoded
+        # "/"-joined string: os.path.join uses "\" on Windows, so a literal
+        # "fake_dir/network.xiidm" would mismatch the real call there.
+        mock_load.assert_called_once_with(os.path.join(fake_dir, "network.xiidm"))
+        mock_rmdir.assert_called_once_with(fake_dir)
 
 
 @pytest.mark.asyncio
@@ -285,11 +291,13 @@ async def test_load_network_from_url_empty_basename_fallback(io_tools, mock_ctx)
     mock_response = MagicMock()
     mock_response.__enter__.return_value.read.return_value = b"fake-data"
 
+    fake_dir = os.path.join("tmp", "fake-dir")
+
     with (
         patch("urllib.request.urlopen", return_value=mock_response),
         patch("builtins.open", mock_open()),
         patch("pypowsybl.network.load") as mock_load,
-        patch("tempfile.mkdtemp", return_value="/tmp/fake-dir"),
+        patch("tempfile.mkdtemp", return_value=fake_dir),
         patch("os.unlink"),
         patch("os.path.exists", return_value=True),
         patch("os.path.isdir", return_value=True),
@@ -304,7 +312,7 @@ async def test_load_network_from_url_empty_basename_fallback(io_tools, mock_ctx)
         )
 
         assert result["status"] == "success"
-        mock_load.assert_called_once_with("/tmp/fake-dir/downloaded_network")
+        mock_load.assert_called_once_with(os.path.join(fake_dir, "downloaded_network"))
 
 
 @pytest.mark.asyncio
