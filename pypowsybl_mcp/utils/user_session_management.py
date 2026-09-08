@@ -17,13 +17,13 @@ def check_session_id(ctx: Context) -> Context:
             ctx.session.session_id if hasattr(ctx.session, "session_id") else None
         )
         if session_id is None:
-            session_id = uuid.uuid4()
+            session_id = str(uuid.uuid4())
             ctx.session.session_id = session_id
             logger.debug(f"Generated new session ID: {session_id}")
     return ctx
 
 
-def get_session_id(ctx: Context) -> str | uuid.UUID:
+def get_session_id(ctx: Context) -> str:
     """Retrieve the session ID from the context"""
     ctx = check_session_id(ctx)
     logger.debug(ctx.session.session_id)

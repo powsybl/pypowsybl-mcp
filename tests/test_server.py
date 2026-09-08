@@ -105,3 +105,38 @@ async def test_read_temp_resource():
     # Test not found
     with pytest.raises(ValueError, match="not found"):
         read_temp_resource("non-existent", mock_ctx)
+
+
+def test_read_temp_resource_session_reattached_by_string_id():
+    """Regression (issue #7, bug #5): a session reattached by its id as text
+    must resolve to the same proxy.
+
+    An orchestrator re-pins a generated session id (as it appears in the server
+    log) onto a connection via set_session_id, which takes a str. If the cache
+    is keyed by a UUID object instead, the lookup misses and the stored
+    resources are unreachable.
+    """
+    from pypowsybl_mcp.proxy import PyPowsyblMCPServerProxy
+    from pypowsybl_mcp.server import pypowsybl_proxies, read_temp_resource
+    from pypowsybl_mcp.utils.user_session_management import get_session_id
+
+    resource_id = "pypowsybl-network-load"
+    content = "# How to load a network"
+
+    ctx = MagicMock()
+    del ctx.session.session_id
+    generated_id = get_session_id(ctx)
+
+    proxy = PyPowsyblMCPServerProxy()
+    proxy.resources[resource_id] = content
+    pypowsybl_proxies[generated_id] = proxy
+
+    # A later connection pins that same id, read back as text.
+    reattached_ctx = MagicMock()
+    reattached_ctx.session.session_id = str(generated_id)
+
+    try:
+        assert read_temp_resource(resource_id, reattached_ctx) == content
+    finally:
+        pypowsybl_proxies.pop(generated_id, None)
+        pypowsybl_proxies.pop(str(generated_id), None)

@@ -11,6 +11,7 @@ import pytest
 from cachetools import TTLCache
 
 from pypowsybl_mcp.tools.utils.session import register_session_tools
+from pypowsybl_mcp.utils.user_session_management import get_session_id
 
 
 class MockContext:
@@ -172,3 +173,34 @@ async def test_get_pypowsybl_version(mcp, pypowsybl_proxies):
     with patch("pypowsybl.__version__", "1.2.3"):
         result = await get_version_func()
         assert "pypowsybl version: 1.2.3" in result
+
+
+@pytest.mark.asyncio
+async def test_duplicate_session_finds_auto_generated_source(mcp, pypowsybl_proxies):
+    """Regression (issue #7, bug #5): forking a session whose id was generated
+    by check_session_id must work.
+
+    duplicate_session receives the source id as text, so a proxy cached under a
+    generated id has to be reachable by that text.
+    """
+    register_session_tools(mcp, pypowsybl_proxies)
+    duplicate_session_func = mcp.tools["duplicate_session"]
+
+    ctx = MagicMock()
+    del ctx.session.session_id
+    generated_id = get_session_id(ctx)
+
+    mock_proxy = MagicMock()
+    pypowsybl_proxies[generated_id] = mock_proxy
+
+    with patch.dict(os.environ, {"MCP_AUTH_TOKEN": "secret-token"}):
+        result = await duplicate_session_func(
+            authorization_token="secret-token",
+            source_session_id=str(generated_id),
+            target_session_id="forked-conversation",
+            ctx=ctx,
+        )
+
+    assert "not found" not in result
+    assert "forked-conversation" in pypowsybl_proxies
+    mock_proxy.copy.assert_called_once()
