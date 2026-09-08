@@ -43,6 +43,51 @@ This document lists all MCP tools exposed by the PyPowsybl MCP server, grouped b
 | `set_switch_status`  | Open or close a switch in the network (breaker, disconnector, load-break switch). |
 | `set_tap_position`   | Move a transformer's ratio or phase tap changer to a new position.                |
 
+##### Network extension (element creation)
+
+| Tool                   | Description                                                                                              |
+|------------------------|----------------------------------------------------------------------------------------------------------|
+| `create_substation`    | Create a new substation (site container).                                                                |
+| `create_voltage_level` | Create a voltage level in a substation, with its buses or busbar sections, and return their ids.         |
+| `create_load`          | Create a load (new consumer, e.g. a datacenter) and connect it to a bus or busbar section, bay included.  |
+| `create_generator`     | Create a generator (new production unit) and connect it to a bus or busbar section, bay included.        |
+| `create_line`          | Create an AC line between two connection points, with the bays at both ends.                             |
+| `create_transformer`   | Create a two-windings transformer between two voltage levels of one substation, with the bays at both ends. |
+| `create_battery`       | Create a battery (storage unit) and connect it, bay included.                                            |
+| `create_shunt_compensator` | Create a capacitor bank or a reactor (linear model) and connect it, bay included.                    |
+| `create_static_var_compensator` | Create an SVC (continuous reactive control) and connect it, bay included.                       |
+| `create_ground`        | Create an earthing connection on a bus (bus/breaker voltage levels only).                                |
+
+These tools work on both `BUS_BREAKER` and `NODE_BREAKER` voltage levels: the switching equipment required by the
+hosting topology is created automatically, so the caller only provides a bus or busbar section id. See the
+`grid-extension` skill for the connection-study workflow.
+
+##### Ratings and regulation of created equipment
+
+| Tool                        | Description                                                                                       |
+|-----------------------------|---------------------------------------------------------------------------------------------------|
+| `create_operational_limits` | Set the permanent (and optional temporary) current, active- or apparent-power limits of a branch. |
+| `create_reactive_limits`    | Set the reactive capability of a generator, battery or converter station (min/max or Q(P) curve). |
+| `create_ratio_tap_changer`  | Add an on-load tap changer (voltage regulation) to a two-windings transformer.                     |
+| `create_phase_tap_changer`  | Add a phase shifter (active-power control) to a two-windings transformer.                          |
+
+A branch created by `create_line` or `create_transformer` starts **without limits**, and an element without limits can
+never be reported as overloaded - it is invisible to `get_overloaded_elements`, to the `loading_percent` metric and to
+the current-limit violations of `run_security_analysis`. Likewise, a created transformer has no tap changer, so
+`set_tap_position` has nothing to move until one is added. These four tools close that gap. Tap changer steps are
+generated from a range (e.g. ±10% in 17 steps) unless explicit `rho_values` / `alpha_values` are given.
+
+##### Network reduction (element removal)
+
+| Tool                      | Description                                                                                            |
+|---------------------------|--------------------------------------------------------------------------------------------------------|
+| `remove_network_elements` | Remove any elements by id: feeders go with their bays, voltage levels and substations cascade (opt-in). |
+
+One generic tool covers every element type here, because an id is all that is needed - the type is read from the
+network and the matching pypowsybl removal is applied. Removing a voltage level or a substation requires
+`cascade=True`, since it also deletes everything they contain; without it, the tool reports what *would* be removed.
+Unlike `set_line_status`, a removed element no longer exists in the network at all.
+
 ##### Variants
 
 | Tool                  | Description                                         |
@@ -145,6 +190,59 @@ LLM**.
 | `read_resource`       | Read back a documentation page already fetched this session with `get_online_resource`, from the cache.   |
 
 ---
+
+---
+
+#### Coverage of the pypowsybl creation API
+
+The tools above are built on `pypowsybl` **1.15.0** (pinned in `pyproject.toml`). That version exposes 33 usable
+`Network.create_*` methods plus 14 module-level helpers; the table below states exactly which of them are reachable
+through an MCP tool and which are not.
+
+**Reachable through a tool**
+
+| pypowsybl 1.15 call                                                            | MCP tool                          |
+|--------------------------------------------------------------------------------|-----------------------------------|
+| `create_substations`                                                           | `create_substation`               |
+| `create_voltage_levels` + `create_voltage_level_topology`                       | `create_voltage_level`            |
+| `create_load_bay` (`create_loads`)                                             | `create_load`                     |
+| `create_generator_bay` (`create_generators`)                                   | `create_generator`                |
+| `create_line_bays` (`create_lines`)                                            | `create_line`                     |
+| `create_2_windings_transformer_bays` (`create_2_windings_transformers`)         | `create_transformer`              |
+| `create_battery_bay` (`create_batteries`)                                      | `create_battery`                  |
+| `create_shunt_compensator_bay` (`create_shunt_compensators`, linear model only) | `create_shunt_compensator`        |
+| `create_static_var_compensator_bay` (`create_static_var_compensators`)          | `create_static_var_compensator`   |
+| `create_grounds`                                                               | `create_ground` (bus/breaker only)|
+| `create_operational_limits`                                                    | `create_operational_limits`       |
+| `create_minmax_reactive_limits`, `create_curve_reactive_limits`                 | `create_reactive_limits`          |
+| `create_ratio_tap_changers`                                                    | `create_ratio_tap_changer`        |
+| `create_phase_tap_changers`                                                    | `create_phase_tap_changer`        |
+
+**Not available through any tool** (use `generate_python_script` to produce pypowsybl code instead, and
+`get_online_resource(class_object='network')` for the exact signatures):
+
+| pypowsybl 1.15 call                                                                                     | Why / what to do instead                                                                 |
+|----------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------|
+| `create_empty`                                                                                           | A network cannot be built from scratch; start from a file or `create_ieee_network`.       |
+| `create_buses`, `create_busbar_sections`, `create_switches`, `create_internal_connections`, `create_coupling_device` | Connection points come from `create_voltage_level`; individual topology primitives and busbar coupling are not exposed. |
+| `create_3_windings_transformers`                                                                          | No bay helper upstream, and no tap changer support for three windings.                    |
+| `create_boundary_lines` (`create_boundary_line_bay`), `create_tie_lines`, `create_dangling_lines` (deprecated) | Boundary/tie-line modelling (CGMES boundaries) is not exposed.                       |
+| `create_hvdc_lines`, `create_lcc_converter_stations`, `create_vsc_converter_stations` (and their bays)     | HVDC links cannot be created; existing ones can be inspected and removed.                |
+| `create_dc_nodes`, `create_dc_lines`, `create_dc_grounds`, `create_voltage_source_converters`             | The detailed DC grid model is not exposed.                                               |
+| `create_areas`, `create_areas_boundaries`, `create_areas_voltage_levels`                                  | Area bookkeeping is not exposed.                                                         |
+| `create_extensions`                                                                                       | Extensions (position, active power control, ...) are not exposed; positions are filled automatically by the bay tools. |
+| `create_line_on_line`, `connect_voltage_level_on_line` (and their `revert_*`)                              | Tapping an existing line to insert a substation is not exposed; run a new line with `create_line` instead. |
+| `create_shunt_compensators` non-linear model                                                              | Only the linear (identical sections) model is exposed.                                   |
+
+Version drift to keep in mind: this coverage is stated against 1.15.0. In 1.16 `create_operational_limits` is replaced
+by `create_loading_limits` and `create_voltage_angle_limits` appears; `create_dc_switches` does not exist in 1.15
+either. Two behaviours also come from the pinned version and are validated by the tools: a static var compensator has
+no `OFF` regulation mode (use `regulating=False`), and a phase tap changer has no `FIXED_TAP` mode (same).
+
+On the removal side there is no such gap: `remove_network_elements` routes to `remove_feeder_bays`,
+`remove_voltage_levels`, `remove_hvdc_lines` and `Network.remove_elements`, which together cover every element type.
+Only metadata removals (`remove_extensions`, `remove_aliases`, `remove_elements_properties`,
+`remove_internal_connections`) and the `revert_*` helpers are out of scope.
 
 #### Notes
 
