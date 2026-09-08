@@ -1945,7 +1945,33 @@ class NetworkTools(PyPowsyblTool):
             if need_lf:
                 try:
                     logger.debug("Running AC loadflow to populate p1/p2 columns")
-                    pp.loadflow.run_ac(network)
+                    results = pp.loadflow.run_ac(network)
+                    # A run that does not converge still returns, leaving p1/p2
+                    # as NaN, so the ranking below would be built on meaningless
+                    # scores. Report it instead of pretending to have a result.
+                    failed_components = [
+                        {
+                            "component_num": result.connected_component_num,
+                            "status": result.status.name,
+                        }
+                        for result in results
+                        if result.status.name != "CONVERGED"
+                    ]
+                    if failed_components:
+                        logger.warning(
+                            f"Load flow failed to converge for network '{network_id}'"
+                        )
+                        return json.dumps(
+                            {
+                                "success": False,
+                                "network_id": network_id,
+                                "loadflow_executed": True,
+                                "loadflow_converged": False,
+                                "failed_components": failed_components,
+                                "error": "Load flow failed to converge",
+                            },
+                            indent=2,
+                        )
                     lines = network.get_lines()  # refresh
                 except (pp.PyPowsyblError, ValueError, KeyError) as e:
                     logger.warning(f"Loadflow run failed or not available: {e}")
@@ -1957,6 +1983,23 @@ class NetworkTools(PyPowsyblTool):
                 )
                 logger.warning(msg)
                 return msg
+
+            # The column can exist and still hold nothing usable, for instance
+            # when the loadflow above raised. Ranking on NaN would emit a bare
+            # NaN literal, which is not valid JSON for a strict client.
+            if not lines.empty and lines[p_col].isna().all():
+                logger.warning(f"No usable '{p_col}' values for network '{network_id}'")
+                return json.dumps(
+                    {
+                        "success": False,
+                        "network_id": network_id,
+                        "error": (
+                            f"Active power column '{p_col}' contains no usable "
+                            "values; ensure a converged loadflow has been run."
+                        ),
+                    },
+                    indent=2,
+                )
 
             # Calculate absolute value score for sorting, keep signed value
             lines = lines.copy()
