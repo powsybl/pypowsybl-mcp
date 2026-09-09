@@ -161,6 +161,9 @@ class SecurityTools(PyPowsyblTool):
 
         This is shared by create_contingencies_list and run_security_analysis
         so both tools apply the same element-type and voltage-filter rules.
+        An element is kept when its nominal voltage lies within the requested
+        band: min_nominal_voltage <= nominal_v <= max_nominal_voltage, each
+        bound applied only when provided (both inclusive).
         """
         # Only these element types make sense as N-1 contingencies. The getter
         # names come from the canonical map so they cannot drift from the rest
@@ -414,9 +417,12 @@ class SecurityTools(PyPowsyblTool):
                 Mutually exclusive with auto_contingencies. Default: None.
             auto_contingencies (dict | str, optional): Compact filter to auto-build contingencies.
                 Format:
-                - element_type (str): lines, generators, 2_windings_transformers, hvdc_lines
-                - min_nominal_voltage (float, optional)
-                - max_nominal_voltage (float, optional)
+                - element_type (str): line, generator, two_windings_transformer, hvdc_line
+                - min_nominal_voltage (float, optional): keep elements with nominal_v >= this (kV)
+                - max_nominal_voltage (float, optional): keep elements with nominal_v <= this (kV)
+                When both bounds are given, only elements with
+                min <= nominal_v <= max are kept (bounds inclusive). See
+                create_contingencies_list for the per-element-type voltage rules.
                 Mutually exclusive with contingencies. Default: None.
             mode (str, optional): "summary" (default) or "detail". Summary is lightweight.
             top_k (int, optional): Number of top violating contingencies returned in summary. Default: 10.
@@ -694,6 +700,9 @@ class SecurityTools(PyPowsyblTool):
                 For HVDC lines, uses the higher of the two converter stations'
                 voltage levels (the AC side, not the DC pole voltage).
                 Default: None (no maximum filter).
+                When both bounds are given, only elements with
+                min_nominal_voltage <= nominal_v <= max_nominal_voltage are kept
+                (both bounds inclusive); omit either for a one-sided filter.
             limit (int, optional): Max contingencies per page in the contingencies field.
             cursor (str | int, optional): Page offset.
 
@@ -734,6 +743,11 @@ class SecurityTools(PyPowsyblTool):
 
             # Get only high-voltage lines (>= 220 kV)
             contingencies = create_contingencies_list("ieee_14", "line", min_nominal_voltage=220)
+
+            # Get only lines within a voltage band (63 kV <= V <= 225 kV)
+            contingencies = create_contingencies_list(
+                "ieee_14", "line", min_nominal_voltage=63, max_nominal_voltage=225
+            )
 
             # Get all generators as contingencies
             contingencies = create_contingencies_list("ieee_14", "generator")
