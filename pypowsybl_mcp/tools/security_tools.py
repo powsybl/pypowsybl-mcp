@@ -1020,6 +1020,7 @@ class SecurityTools(PyPowsyblTool):
         raw_sa = await self.run_security_analysis(
             network_id=network_id,
             contingencies=contingencies,
+            limit_type="CURRENT",
             mode="detail",
             detail_limit=1_000_000,
             ctx=ctx,
