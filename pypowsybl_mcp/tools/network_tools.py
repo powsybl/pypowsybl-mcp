@@ -1203,12 +1203,20 @@ class NetworkTools(PyPowsyblTool):
 
         try:
             network = proxy.networks[network_id]
+            # Only fall back if we are removing the active variant; removing an
+            # inactive variant must leave the working variant untouched.
+            was_working = network.get_working_variant_id() == variant_id
             network.remove_variant(variant_id)
-            network.set_working_variant(fallback_variant_id)
+            if was_working:
+                network.set_working_variant(fallback_variant_id)
+                logger.info(
+                    f"Removed variant '{variant_id}' from network '{network_id}'. Setting working variant to '{fallback_variant_id}'."
+                )
+                return f"Variant '{variant_id}' removed from network '{network_id}'. Setting working variant to '{fallback_variant_id}'."
             logger.info(
-                f"Removed variant '{variant_id}' from network '{network_id}'. Setting working variant to '{fallback_variant_id}'."
+                f"Removed variant '{variant_id}' from network '{network_id}'. Working variant unchanged."
             )
-            return f"Variant '{variant_id}' removed from network '{network_id}'. Setting working variant to '{fallback_variant_id}'."
+            return f"Variant '{variant_id}' removed from network '{network_id}'."
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.error(f"Failed to remove variant: {e}")
             return f"Failed to remove variant: {e!s}"
@@ -1632,6 +1640,12 @@ class NetworkTools(PyPowsyblTool):
             logger.warning(msg)
             return msg
 
+        # This is a read tool, but reading a specific variant requires switching
+        # the working variant (and again for the comparison path). The network is
+        # shared/cached in the session, so we capture the caller's active variant
+        # and restore it in the finally block to avoid leaking state.
+        original_variant_id = network.get_working_variant_id()
+
         try:
             if variant_id not in network.get_variant_ids():
                 msg = f"Variant '{variant_id}' not found in network '{network_id}'"
@@ -1853,6 +1867,16 @@ class NetworkTools(PyPowsyblTool):
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.error(f"Failed to get network element data: {e}")
             return f"Failed to get network element data: {e!s}"
+        finally:
+            # Restore the caller's working variant so a read never leaks the
+            # variant switches done above into the shared/cached network.
+            try:
+                network.set_working_variant(original_variant_id)
+            except (pp.PyPowsyblError, ValueError, KeyError) as e:
+                logger.warning(
+                    f"Could not restore working variant "
+                    f"'{original_variant_id}': {e}"
+                )
 
     async def get_top_active_power_transit_lines(
         self,
@@ -1921,7 +1945,33 @@ class NetworkTools(PyPowsyblTool):
             if need_lf:
                 try:
                     logger.debug("Running AC loadflow to populate p1/p2 columns")
-                    pp.loadflow.run_ac(network)
+                    results = pp.loadflow.run_ac(network)
+                    # A run that does not converge still returns, leaving p1/p2
+                    # as NaN, so the ranking below would be built on meaningless
+                    # scores. Report it instead of pretending to have a result.
+                    failed_components = [
+                        {
+                            "component_num": result.connected_component_num,
+                            "status": result.status.name,
+                        }
+                        for result in results
+                        if result.status.name != "CONVERGED"
+                    ]
+                    if failed_components:
+                        logger.warning(
+                            f"Load flow failed to converge for network '{network_id}'"
+                        )
+                        return json.dumps(
+                            {
+                                "success": False,
+                                "network_id": network_id,
+                                "loadflow_executed": True,
+                                "loadflow_converged": False,
+                                "failed_components": failed_components,
+                                "error": "Load flow failed to converge",
+                            },
+                            indent=2,
+                        )
                     lines = network.get_lines()  # refresh
                 except (pp.PyPowsyblError, ValueError, KeyError) as e:
                     logger.warning(f"Loadflow run failed or not available: {e}")
@@ -1933,6 +1983,23 @@ class NetworkTools(PyPowsyblTool):
                 )
                 logger.warning(msg)
                 return msg
+
+            # The column can exist and still hold nothing usable, for instance
+            # when the loadflow above raised. Ranking on NaN would emit a bare
+            # NaN literal, which is not valid JSON for a strict client.
+            if not lines.empty and lines[p_col].isna().all():
+                logger.warning(f"No usable '{p_col}' values for network '{network_id}'")
+                return json.dumps(
+                    {
+                        "success": False,
+                        "network_id": network_id,
+                        "error": (
+                            f"Active power column '{p_col}' contains no usable "
+                            "values; ensure a converged loadflow has been run."
+                        ),
+                    },
+                    indent=2,
+                )
 
             # Calculate absolute value score for sorting, keep signed value
             lines = lines.copy()

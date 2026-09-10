@@ -54,6 +54,7 @@ def test_register_security_tools_excludes_private_helpers():
         "_limit_type_name",
         "_limit_violation_data",
         "_loading_and_excess",
+        "_converter_station_voltages",
         "_element_nominal_voltage",
         "_build_contingencies_from_filter",
         "_resolve_contingencies",

@@ -46,10 +46,9 @@ class PyPowsyblMCPServerProxy:
         )
         self.current_network_id: str | None = None
         self.current_network: Any | None = None
-        # Init default loadflow configuration
+        # Init default loadflow configuration (this also sets self.lf_provider
+        # from the TOML config, e.g. "provider = \"DynaFlow\"")
         self.init_lf_params_from_config()
-        # Empty string means system default provider
-        self.lf_provider: str = "OpenLoadFlow"
         self.loadflow_results: ThreadSafeTTLCache[str, Any] = ThreadSafeTTLCache(
             maxsize=MAX_NUMBER_OF_GRIDS, ttl=GRID_TTL
         )
@@ -197,6 +196,21 @@ class PyPowsyblMCPServerProxy:
         # Copy plugin-owned results
         for key, value in self.plugin_results.items():
             new_proxy.plugin_results[key] = copy.deepcopy(value)
+
+        # Copy the loadflow provider. init_lf_params_from_config() (run in
+        # __init__) resets it to the TOML default, so a runtime change such as
+        # switching to "DynaFlow" would otherwise be lost in the fork.
+        new_proxy.lf_provider = self.lf_provider
+
+        # Copy the temporary markdown/documentation resources cache, otherwise
+        # resources://temp/... URIs return "resource not found" in the fork.
+        for key, value in self.resources.items():
+            new_proxy.resources[key] = copy.deepcopy(value)
+
+        # Copy security-analysis results. This is a dynamic attribute set by
+        # security_tools only after an analysis runs, so guard with hasattr.
+        if hasattr(self, "security_results"):
+            new_proxy.security_results = copy.deepcopy(self.security_results)
 
         # Copy visualization configuration
         new_proxy.visualization_config = copy.deepcopy(self.visualization_config)

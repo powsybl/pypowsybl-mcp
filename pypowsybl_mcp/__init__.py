@@ -14,6 +14,35 @@ from loguru import logger
 # Global flag to track initialization
 _initialized = False
 
+# Accepted spellings for MCP_VERIFY_SSL. Anything outside both sets is treated
+# as disabled, but warned about explicitly (see _parse_verify_ssl).
+_TRUTHY_VALUES = {"true", "yes", "1", "on", "enabled", "y", "t"}
+_FALSY_VALUES = {"false", "no", "0", "off", "disabled", "n", "f"}
+
+
+def _parse_verify_ssl(raw: str | None) -> bool:
+    """Parse the MCP_VERIFY_SSL environment variable.
+
+    Unset means disabled (the documented default). An unrecognized value also
+    means disabled, but is warned about explicitly: it most likely means the
+    operator meant to *enable* verification, and silently disabling TLS checks
+    is the one direction this must never fail in quietly.
+    """
+    if raw is None:
+        return False
+
+    value = raw.strip().lower()
+    if value in _TRUTHY_VALUES:
+        return True
+    if value not in _FALSY_VALUES:
+        logger.warning(
+            f"MCP_VERIFY_SSL={raw!r} is not a recognized boolean value; "
+            f"falling back to DISABLED TLS certificate verification. "
+            f"Use one of {sorted(_TRUTHY_VALUES)} to enable it."
+        )
+    return False
+
+
 # Auto-load .env if python-dotenv is available
 if not _initialized:
     if load_dotenv(override=True):
@@ -22,15 +51,7 @@ if not _initialized:
         logger.warning("Failed to load .env file")
 
     # Global SSL certificate verification configuration
-    verify_ssl_env = os.getenv("MCP_VERIFY_SSL")
-    if verify_ssl_env is None:
-        # Default to false if not set in .env or environment
-        verify_ssl = False
-    else:
-        verify_ssl = verify_ssl_env.strip().lower() in {
-            "true",
-            "yes",
-        }
+    verify_ssl = _parse_verify_ssl(os.getenv("MCP_VERIFY_SSL"))
 
     if not verify_ssl:
         logger.warning(

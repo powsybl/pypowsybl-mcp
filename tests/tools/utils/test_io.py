@@ -4,6 +4,7 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
+import os
 from unittest.mock import MagicMock, mock_open, patch
 
 import pypowsybl as pp
@@ -91,8 +92,11 @@ async def test_load_network_from_url_success(io_tools, mock_ctx):
         patch("urllib.request.urlopen", return_value=mock_response) as mock_urlopen,
         patch("builtins.open", mock_open()),
         patch("pypowsybl.network.load") as mock_load,
+        patch("tempfile.mkdtemp", return_value="/tmp/fake-dir"),
         patch("os.unlink") as mock_unlink,
         patch("os.path.exists", return_value=True),
+        patch("os.path.isdir", return_value=True),
+        patch("os.rmdir") as mock_rmdir,
     ):
         mock_network = MagicMock()
         mock_network.get_buses.return_value = ["bus1"]
@@ -107,6 +111,7 @@ async def test_load_network_from_url_success(io_tools, mock_ctx):
         mock_load.assert_called_once()
         mock_urlopen.assert_called_once_with("http://example.com/test.xiidm")
         mock_unlink.assert_called_once()
+        mock_rmdir.assert_called_once_with("/tmp/fake-dir")
 
         proxy = io_tools.get_proxy("test-session")
         assert proxy.networks["net_url"] == mock_network
@@ -114,12 +119,20 @@ async def test_load_network_from_url_success(io_tools, mock_ctx):
 
 @pytest.mark.asyncio
 async def test_load_network_from_url_failure(io_tools, mock_ctx):
-    with patch("urllib.request.urlopen", side_effect=OSError("Download failed")):
+    with (
+        patch("urllib.request.urlopen", side_effect=OSError("Download failed")),
+        patch("tempfile.mkdtemp", return_value="/tmp/fake-dir"),
+        patch("os.path.isdir", return_value=True),
+        patch("os.rmdir") as mock_rmdir,
+    ):
         result = await io_tools.load_network_from_url(
             url="http://example.com/test.xiidm", network_id="net_url", ctx=mock_ctx
         )
         assert result["status"] == "error"
         assert "Failed to load network from URL: Download failed" in result["message"]
+        # The temp directory must still be cleaned up even though the download
+        # itself failed (before, cleanup only ran on the success/load path).
+        mock_rmdir.assert_called_once_with("/tmp/fake-dir")
 
 
 @pytest.mark.asyncio
@@ -131,8 +144,11 @@ async def test_load_network_from_url_https(io_tools, mock_ctx):
         patch("urllib.request.urlopen", return_value=mock_response) as mock_urlopen,
         patch("builtins.open", mock_open()),
         patch("pypowsybl.network.load") as mock_load,
+        patch("tempfile.mkdtemp", return_value="/tmp/fake-dir"),
         patch("os.unlink"),
         patch("os.path.exists", return_value=True),
+        patch("os.path.isdir", return_value=True),
+        patch("os.rmdir"),
     ):
         mock_network = MagicMock()
         mock_network.get_buses.return_value = ["bus1"]
@@ -209,8 +225,11 @@ async def test_load_network_from_url_cleanup_error_is_logged(io_tools, mock_ctx)
         patch("urllib.request.urlopen", return_value=mock_response),
         patch("builtins.open", mock_open()),
         patch("pypowsybl.network.load") as mock_load,
+        patch("tempfile.mkdtemp", return_value="/tmp/fake-dir"),
         patch("os.unlink", side_effect=OSError("permission denied")),
         patch("os.path.exists", return_value=True),
+        patch("os.path.isdir", return_value=True),
+        patch("os.rmdir", side_effect=OSError("directory not empty")),
     ):
         mock_network = MagicMock()
         mock_network.get_buses.return_value = ["bus1"]
@@ -222,6 +241,78 @@ async def test_load_network_from_url_cleanup_error_is_logged(io_tools, mock_ctx)
 
     # Cleanup failure is swallowed; the overall load still succeeds.
     assert result["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_load_network_from_url_uses_unique_temp_dir(io_tools, mock_ctx):
+    """Regression for bug #8: the download must land in a fresh directory from
+    tempfile.mkdtemp(), not the shared system temp dir (tempfile.gettempdir()),
+    so two concurrent downloads with the same URL basename can never collide.
+    """
+    mock_response = MagicMock()
+    mock_response.__enter__.return_value.read.return_value = b"fake-data"
+
+    fake_dir = os.path.join("tmp", "unique-abc123")
+
+    with (
+        patch("urllib.request.urlopen", return_value=mock_response),
+        patch("builtins.open", mock_open()),
+        patch("pypowsybl.network.load") as mock_load,
+        patch("tempfile.mkdtemp", return_value=fake_dir) as mock_mkdtemp,
+        patch("tempfile.gettempdir") as mock_gettempdir,
+        patch("os.unlink"),
+        patch("os.path.exists", return_value=True),
+        patch("os.path.isdir", return_value=True),
+        patch("os.rmdir") as mock_rmdir,
+    ):
+        mock_network = MagicMock()
+        mock_network.get_buses.return_value = ["bus1"]
+        mock_load.return_value = mock_network
+
+        await io_tools.load_network_from_url(
+            url="http://example.com/network.xiidm", network_id="net_url", ctx=mock_ctx
+        )
+
+        mock_mkdtemp.assert_called_once()
+        mock_gettempdir.assert_not_called()
+        # Build the expected path with os.path.join too, rather than a hardcoded
+        # "/"-joined string: os.path.join uses "\" on Windows, so a literal
+        # "fake_dir/network.xiidm" would mismatch the real call there.
+        mock_load.assert_called_once_with(os.path.join(fake_dir, "network.xiidm"))
+        mock_rmdir.assert_called_once_with(fake_dir)
+
+
+@pytest.mark.asyncio
+async def test_load_network_from_url_empty_basename_fallback(io_tools, mock_ctx):
+    """Regression for bug #8: a URL whose path ends in "/" has an empty
+    os.path.basename(), which used to be joined onto the temp dir as-is and
+    crash with IsADirectoryError. It must now fall back to a generic filename.
+    """
+    mock_response = MagicMock()
+    mock_response.__enter__.return_value.read.return_value = b"fake-data"
+
+    fake_dir = os.path.join("tmp", "fake-dir")
+
+    with (
+        patch("urllib.request.urlopen", return_value=mock_response),
+        patch("builtins.open", mock_open()),
+        patch("pypowsybl.network.load") as mock_load,
+        patch("tempfile.mkdtemp", return_value=fake_dir),
+        patch("os.unlink"),
+        patch("os.path.exists", return_value=True),
+        patch("os.path.isdir", return_value=True),
+        patch("os.rmdir"),
+    ):
+        mock_network = MagicMock()
+        mock_network.get_buses.return_value = ["bus1"]
+        mock_load.return_value = mock_network
+
+        result = await io_tools.load_network_from_url(
+            url="http://example.com/networks/", network_id="net_url", ctx=mock_ctx
+        )
+
+        assert result["status"] == "success"
+        mock_load.assert_called_once_with(os.path.join(fake_dir, "downloaded_network"))
 
 
 @pytest.mark.asyncio
@@ -290,3 +381,29 @@ async def test_export_network_exception_handling(io_tools, mock_ctx):
 
     assert result["status"] == "error"
     assert "Failed to export network: disk full" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_export_network_invalid_filename(io_tools, mock_ctx):
+    """A network_id that sanitizes to an unsafe default filename (e.g. containing
+    a space) must be reported as a normal error dict, not raise ValueError out of
+    the tool (regression: only (PyPowsyblError, OSError) were caught here before).
+    """
+    proxy = io_tools.get_proxy("test-session")
+    mock_network = MagicMock()
+    proxy.networks["ieee 14"] = mock_network
+
+    with (
+        patch("tempfile.NamedTemporaryFile") as mock_tmp,
+        patch("builtins.open", mock_open(read_data=b"exported-data")),
+        patch("os.unlink"),
+        patch("os.path.exists", return_value=True),
+    ):
+        mock_tmp.return_value.__enter__.return_value.name = "/tmp/fake-tmp"
+
+        result = await io_tools.export_network(
+            network_id="ieee 14", format_type="XIIDM", ctx=mock_ctx
+        )
+
+    assert result["status"] == "error"
+    assert "Failed to export network: Invalid or unsafe filename" in result["message"]

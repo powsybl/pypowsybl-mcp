@@ -93,16 +93,39 @@ class SecurityTools(PyPowsyblTool):
         return round(loading, 2), round(loading - 100.0, 2)
 
     @staticmethod
+    def _converter_station_voltages(network, voltage_by_level: dict) -> dict:
+        """Map every converter station id to its voltage level's nominal voltage.
+
+        HVDC lines do not name their voltage levels directly: they reference two
+        converter stations, which are the elements actually attached to a
+        voltage level. Both station kinds (VSC and LCC) are collected, since an
+        HVDC line may use either.
+        """
+        voltage_by_station = {}
+        for getter in ("get_vsc_converter_stations", "get_lcc_converter_stations"):
+            stations_df = getattr(network, getter)()
+            if "voltage_level_id" not in stations_df.columns:
+                continue
+            for station_id, station_row in stations_df.iterrows():
+                voltage_by_station[station_id] = voltage_by_level.get(
+                    station_row["voltage_level_id"], 0
+                )
+        return voltage_by_station
+
+    @staticmethod
     def _element_nominal_voltage(
         element_type: str,
         element_row,
         voltage_by_level: dict,
-        min_nominal_voltage: float | None,
+        voltage_by_converter_station: dict | None = None,
     ) -> float:
         """Return the voltage used to decide if an element matches voltage filters.
         Lines and two-winding transformers connect two voltage levels, so they
         are classified by the highest side. This keeps mixed-voltage assets
-        visible in high-voltage studies.
+        visible in high-voltage studies. HVDC lines follow the same rule, via
+        the voltage levels of their two converter stations: the filters are
+        documented in terms of the voltage levels an element is connected to,
+        which is the AC side, not the DC pole voltage carried by the line row.
         """
         if element_type in ["line", "two_windings_transformer"]:
             voltage_level1_id = element_row.get("voltage_level1_id")
@@ -116,7 +139,14 @@ class SecurityTools(PyPowsyblTool):
             return voltage_by_level.get(voltage_level_id, 0)
 
         if element_type == "hvdc_line":
-            return float("inf") if min_nominal_voltage else 0
+            voltage_by_station = voltage_by_converter_station or {}
+            voltage1 = voltage_by_station.get(
+                element_row.get("converter_station1_id"), 0
+            )
+            voltage2 = voltage_by_station.get(
+                element_row.get("converter_station2_id"), 0
+            )
+            return max(voltage1, voltage2)
 
         return 0
 
@@ -131,6 +161,9 @@ class SecurityTools(PyPowsyblTool):
 
         This is shared by create_contingencies_list and run_security_analysis
         so both tools apply the same element-type and voltage-filter rules.
+        An element is kept when its nominal voltage lies within the requested
+        band: min_nominal_voltage <= nominal_v <= max_nominal_voltage, each
+        bound applied only when provided (both inclusive).
         """
         # Only these element types make sense as N-1 contingencies. The getter
         # names come from the canonical map so they cannot drift from the rest
@@ -161,13 +194,19 @@ class SecurityTools(PyPowsyblTool):
             for vl_id, row in voltage_levels_df.iterrows():
                 vl_nominal_v[vl_id] = row["nominal_v"]
 
+        voltage_by_converter_station = (
+            SecurityTools._converter_station_voltages(network, vl_nominal_v)
+            if element_type == "hvdc_line"
+            else {}
+        )
+
         filtered_element_ids = []
         for element_id, row in elements_df.iterrows():
             nominal_v = SecurityTools._element_nominal_voltage(
                 element_type=element_type,
                 element_row=row,
                 voltage_by_level=vl_nominal_v,
-                min_nominal_voltage=min_nominal_voltage,
+                voltage_by_converter_station=voltage_by_converter_station,
             )
 
             if min_nominal_voltage is not None and nominal_v < min_nominal_voltage:
@@ -378,9 +417,12 @@ class SecurityTools(PyPowsyblTool):
                 Mutually exclusive with auto_contingencies. Default: None.
             auto_contingencies (dict | str, optional): Compact filter to auto-build contingencies.
                 Format:
-                - element_type (str): lines, generators, 2_windings_transformers, hvdc_lines
-                - min_nominal_voltage (float, optional)
-                - max_nominal_voltage (float, optional)
+                - element_type (str): line, generator, two_windings_transformer, hvdc_line
+                - min_nominal_voltage (float, optional): keep elements with nominal_v >= this (kV)
+                - max_nominal_voltage (float, optional): keep elements with nominal_v <= this (kV)
+                When both bounds are given, only elements with
+                min <= nominal_v <= max are kept (bounds inclusive). See
+                create_contingencies_list for the per-element-type voltage rules.
                 Mutually exclusive with contingencies. Default: None.
             mode (str, optional): "summary" (default) or "detail". Summary is lightweight.
             top_k (int, optional): Number of top violating contingencies returned in summary. Default: 10.
@@ -649,11 +691,18 @@ class SecurityTools(PyPowsyblTool):
             min_nominal_voltage (float, optional): Minimum nominal voltage in kV to filter elements.
                 Only elements connected to voltage levels >= this value are included.
                 For lines/transformers, uses the higher voltage level of the two terminals.
+                For HVDC lines, uses the higher of the two converter stations'
+                voltage levels (the AC side, not the DC pole voltage).
                 Default: None (no minimum filter).
             max_nominal_voltage (float, optional): Maximum nominal voltage in kV to filter elements.
                 Only elements connected to voltage levels <= this value are included.
                 For lines/transformers, uses the higher voltage level of the two terminals.
+                For HVDC lines, uses the higher of the two converter stations'
+                voltage levels (the AC side, not the DC pole voltage).
                 Default: None (no maximum filter).
+                When both bounds are given, only elements with
+                min_nominal_voltage <= nominal_v <= max_nominal_voltage are kept
+                (both bounds inclusive); omit either for a one-sided filter.
             limit (int, optional): Max contingencies per page in the contingencies field.
             cursor (str | int, optional): Page offset.
 
@@ -694,6 +743,11 @@ class SecurityTools(PyPowsyblTool):
 
             # Get only high-voltage lines (>= 220 kV)
             contingencies = create_contingencies_list("ieee_14", "line", min_nominal_voltage=220)
+
+            # Get only lines within a voltage band (63 kV <= V <= 225 kV)
+            contingencies = create_contingencies_list(
+                "ieee_14", "line", min_nominal_voltage=63, max_nominal_voltage=225
+            )
 
             # Get all generators as contingencies
             contingencies = create_contingencies_list("ieee_14", "generator")
@@ -966,6 +1020,7 @@ class SecurityTools(PyPowsyblTool):
         raw_sa = await self.run_security_analysis(
             network_id=network_id,
             contingencies=contingencies,
+            limit_type="CURRENT",
             mode="detail",
             detail_limit=1_000_000,
             ctx=ctx,

@@ -470,6 +470,7 @@ async def test_get_network_element_data_pagination(network_tools, mock_ctx):
         index=[f"GEN_{i}" for i in range(GENERATOR_COUNT)],
     )
     mock_net.get_variant_ids.return_value = ["InitialState"]
+    mock_net.get_working_variant_id.return_value = "InitialState"
     proxy.networks["net1"] = mock_net
 
     result = await network_tools.get_network_element_data(
@@ -2128,8 +2129,11 @@ async def test_get_network_element_data_invalid_element_type(network_tools, mock
 
 @pytest.mark.asyncio
 async def test_get_network_element_data_method_not_available(network_tools, mock_ctx):
-    mock_net = MagicMock(spec=["get_variant_ids", "set_working_variant"])
+    mock_net = MagicMock(
+        spec=["get_variant_ids", "set_working_variant", "get_working_variant_id"]
+    )
     mock_net.get_variant_ids.return_value = ["InitialState"]
+    mock_net.get_working_variant_id.return_value = "InitialState"
     proxy = network_tools.get_proxy("test-session")
     proxy.networks["net1"] = mock_net
 
@@ -2383,8 +2387,11 @@ async def test_get_only_ids_element_type_required(network_tools, mock_ctx):
 async def test_get_only_ids_method_not_available(network_tools, mock_ctx):
     # Has the variant API but not the element getter, so validation passes and
     # the missing-getter branch is reached.
-    mock_net = MagicMock(spec=["get_variant_ids", "set_working_variant"])
+    mock_net = MagicMock(
+        spec=["get_variant_ids", "set_working_variant", "get_working_variant_id"]
+    )
     mock_net.get_variant_ids.return_value = ["InitialState"]
+    mock_net.get_working_variant_id.return_value = "InitialState"
     proxy = network_tools.get_proxy("test-session")
     proxy.networks["net1"] = mock_net
 
@@ -2629,6 +2636,137 @@ async def test_get_top_active_power_transit_lines_loadflow_failure_tolerated(
         )
 
     assert "not available" in result
+
+
+@pytest.mark.asyncio
+async def test_get_top_active_power_transit_lines_loadflow_not_converged(
+    network_tools, mock_ctx
+):
+    """Regression (issue #7, bug #12): a non-converged loadflow must be reported.
+
+    run_ac returns normally when it fails to converge, leaving p1/p2 as NaN, so
+    the ranking was previously computed and returned on meaningless scores.
+    """
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_lines.return_value = pd.DataFrame({"other": [1.0]}, index=["l1"])
+    proxy.networks["net1"] = mock_net
+
+    mock_res = MagicMock()
+    mock_res.status.name = "MAX_ITERATION_REACHED"
+    mock_res.connected_component_num = 0
+    with patch(
+        "pypowsybl_mcp.tools.network_tools.pp.loadflow.run_ac", return_value=[mock_res]
+    ):
+        result = await network_tools.get_top_active_power_transit_lines(
+            network_id="net1", ctx=mock_ctx
+        )
+
+    data = json.loads(result)
+    assert data["success"] is False
+    assert data["loadflow_converged"] is False
+    assert data["failed_components"] == [
+        {"component_num": 0, "status": "MAX_ITERATION_REACHED"}
+    ]
+    assert "elements" not in data
+
+
+@pytest.mark.asyncio
+async def test_get_top_active_power_transit_lines_partial_convergence_is_failure(
+    network_tools, mock_ctx
+):
+    """Regression (issue #7, bug #12): one non-converged component is enough.
+
+    A network split across several connected components can converge on some
+    and not others; only the failing ones are named.
+    """
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_lines.return_value = pd.DataFrame({"other": [1.0]}, index=["l1"])
+    proxy.networks["net1"] = mock_net
+
+    converged = MagicMock()
+    converged.status.name = "CONVERGED"
+    converged.connected_component_num = 0
+    diverged = MagicMock()
+    diverged.status.name = "SOLVER_FAILED"
+    diverged.connected_component_num = 1
+
+    with patch(
+        "pypowsybl_mcp.tools.network_tools.pp.loadflow.run_ac",
+        return_value=[converged, diverged],
+    ):
+        result = await network_tools.get_top_active_power_transit_lines(
+            network_id="net1", ctx=mock_ctx
+        )
+
+    data = json.loads(result)
+    assert data["success"] is False
+    assert data["failed_components"] == [
+        {"component_num": 1, "status": "SOLVER_FAILED"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_top_active_power_transit_lines_converged_produces_ranking(
+    network_tools, mock_ctx
+):
+    """A genuinely converged loadflow must still produce the ranking.
+
+    The existing "runs loadflow when missing" test mocks run_ac with a bare
+    MagicMock, which iterates empty and so passes the convergence check
+    vacuously; this pins the happy path with a real CONVERGED status.
+    """
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    lines_before = pd.DataFrame({"other": [1.0]}, index=["l1"])
+    lines_after = pd.DataFrame({"p1": [42.0], "p2": [-42.0]}, index=["l1"])
+    mock_net.get_lines.side_effect = [lines_before, lines_after]
+    proxy.networks["net1"] = mock_net
+
+    mock_res = MagicMock()
+    mock_res.status.name = "CONVERGED"
+    with patch(
+        "pypowsybl_mcp.tools.network_tools.pp.loadflow.run_ac", return_value=[mock_res]
+    ):
+        result = await network_tools.get_top_active_power_transit_lines(
+            network_id="net1", ctx=mock_ctx
+        )
+
+    data = json.loads(result)
+    assert data["elements"][0]["active_power_mw"] == 42.0
+
+
+@pytest.mark.asyncio
+async def test_get_top_active_power_transit_lines_all_nan_scores_rejected(
+    network_tools, mock_ctx
+):
+    """Regression (issue #7, bug #12): an all-NaN column is not a ranking.
+
+    The column can be present and still hold nothing usable, for instance when
+    run_ac raised. Ranking on NaN emitted a bare NaN literal, which a strict
+    JSON client cannot parse.
+    """
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_lines.return_value = pd.DataFrame(
+        {"p1": [float("nan"), float("nan")], "p2": [float("nan"), float("nan")]},
+        index=["l1", "l2"],
+    )
+    proxy.networks["net1"] = mock_net
+
+    with patch(
+        "pypowsybl_mcp.tools.network_tools.pp.loadflow.run_ac",
+        side_effect=pp.PyPowsyblError("lf boom"),
+    ):
+        result = await network_tools.get_top_active_power_transit_lines(
+            network_id="net1", ctx=mock_ctx
+        )
+
+    assert "NaN" not in result
+    data = json.loads(result)
+    assert data["success"] is False
+    assert "no usable" in data["error"]
 
 
 @pytest.mark.asyncio
