@@ -136,7 +136,11 @@ class SessionRegistry:
         """A copy of what is known about every tracked session."""
         with self._lock:
             return {
-                session_id: SessionStats(**vars(stats))
+                # `tools_used` is mutable and shared with the live entry
+                # otherwise: a caller iterating a snapshot would see it grow.
+                session_id: SessionStats(
+                    **{**vars(stats), "tools_used": dict(stats.tools_used)}
+                )
                 for session_id, stats in self._sessions.items()
             }
 
