@@ -37,6 +37,12 @@ class SessionStats:
     errors: int = 0
     last_tool: str | None = None
     last_tool_at: float | None = None
+    # Time spent inside tool calls, accumulated rather than kept per call: a
+    # running total, the last one and the worst one answer "is this session
+    # slow, and was it always?" in O(1) and in constant memory.
+    total_duration_ms: float = 0.0
+    last_duration_ms: float | None = None
+    max_duration_ms: float = 0.0
     # True when the session was first seen already present in the cache, so its
     # creation time is the moment the registry noticed it, not the real one
     # (happens for a session created by `duplicate_session`, or if the registry
@@ -74,13 +80,23 @@ class SessionRegistry:
             return stats
 
     def record_call(
-        self, session_id: Hashable | None, tool_name: str, *, error: bool = False
+        self,
+        session_id: Hashable | None,
+        tool_name: str,
+        *,
+        error: bool = False,
+        duration_ms: float | None = None,
     ) -> None:
         """Record one tool call against `session_id` (ignored when unknown).
 
         A `None` session id means the call never touched session state (the tool
         does not take a context, or failed before reading it), so there is
         nothing to attribute it to.
+
+        `duration_ms` is how long the call took, failures included: a tool that
+        gives up after a timeout is exactly the one whose duration is worth
+        seeing. It is optional so a caller that has no clock still records the
+        counts.
         """
         if session_id is None:
             return
@@ -92,6 +108,10 @@ class SessionRegistry:
             stats.tools_used[tool_name] = stats.tools_used.get(tool_name, 0) + 1
             if error:
                 stats.errors += 1
+            if duration_ms is not None:
+                stats.total_duration_ms += duration_ms
+                stats.last_duration_ms = duration_ms
+                stats.max_duration_ms = max(stats.max_duration_ms, duration_ms)
 
     def forget(self, session_id: Hashable) -> None:
         """Drop what is known about `session_id` (an explicit removal, not an

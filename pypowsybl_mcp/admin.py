@@ -129,6 +129,19 @@ def _session_payload(
         "errors": stats.errors,
         "last_tool": stats.last_tool,
         "last_tool_at": _iso(stats.last_tool_at),
+        # Time spent in tool calls. `avg` is over the calls that were timed,
+        # which is all of them here; it is reported rather than left to the
+        # client so a client cannot divide by a zero call count.
+        "total_duration_ms": round(stats.total_duration_ms, 1),
+        "avg_duration_ms": (
+            round(stats.total_duration_ms / stats.tool_calls, 1)
+            if stats.tool_calls
+            else None
+        ),
+        "max_duration_ms": round(stats.max_duration_ms, 1),
+        "last_duration_ms": (
+            None if stats.last_duration_ms is None else round(stats.last_duration_ms, 1)
+        ),
         "tools_used": dict(
             sorted(stats.tools_used.items(), key=lambda kv: kv[1], reverse=True)
         ),

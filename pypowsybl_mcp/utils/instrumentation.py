@@ -63,7 +63,12 @@ def instrument_tool_calls(mcp: FastMCP, registry: SessionRegistry) -> None:
         finally:
             try:
                 elapsed_ms = (time.monotonic() - started) * 1000
-                registry.record_call(_session_id_of(context), name, error=error)
+                registry.record_call(
+                    _session_id_of(context),
+                    name,
+                    error=error,
+                    duration_ms=elapsed_ms,
+                )
                 logger.debug(
                     f"Tool {name} finished in {elapsed_ms:.0f} ms (error={error})"
                 )

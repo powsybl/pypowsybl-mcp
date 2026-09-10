@@ -40,6 +40,27 @@ def test_record_call_counts_tools_and_errors(registry):
     assert stats.tools_used == {"run_loadflow": 2, "get_network_info": 1}
 
 
+def test_record_call_accumulates_durations(registry):
+    registry.record_call("s1", "run_loadflow", duration_ms=100.0)
+    registry.record_call("s1", "run_loadflow", duration_ms=300.0, error=True)
+    registry.record_call("s1", "get_network_info", duration_ms=50.0)
+
+    stats = registry.snapshot()["s1"]
+    assert stats.total_duration_ms == 450.0
+    # The failing call was the slowest one: a failure is still timed.
+    assert stats.max_duration_ms == 300.0
+    assert stats.last_duration_ms == 50.0
+
+
+def test_record_call_without_a_duration_still_counts(registry):
+    registry.record_call("s1", "run_loadflow")
+
+    stats = registry.snapshot()["s1"]
+    assert stats.tool_calls == 1
+    assert stats.total_duration_ms == 0.0
+    assert stats.last_duration_ms is None
+
+
 def test_record_call_without_session_is_ignored(registry):
     registry.record_call(None, "run_loadflow")
     assert registry.snapshot() == {}

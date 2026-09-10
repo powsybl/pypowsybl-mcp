@@ -71,6 +71,8 @@ Same `server` block, plus one entry per session, most recently used first:
       "last_seen": "…", "age_s": 3612.0, "idle_s": 42.0, "expires_in_s": 82788.0,
       "tool_calls": 37, "errors": 1,
       "last_tool": "run_loadflow", "last_tool_at": "…",
+      "total_duration_ms": 48210.4, "avg_duration_ms": 1303.0,
+      "max_duration_ms": 9840.2, "last_duration_ms": 412.7,
       "tools_used": {"run_loadflow": 12, "get_network_info": 9},
       "current_network_id": "ieee14",
       "networks": [{"id": "ieee14", "current": true}],
@@ -95,6 +97,7 @@ was last used, nor what it lost. `pypowsybl_mcp/utils/session_registry.py` keeps
 |--------------------------------------|--------------------------------------------------------------------------------|
 | `created_at`, `last_seen`            | `SessionRegistry.touch()`, called from `PyPowsyblTool.get_proxy()`              |
 | `tool_calls`, `errors`, `tools_used` | a wrapper around FastMCP's tool manager (`utils/instrumentation.py`)            |
+| `*_duration_ms`                      | the same wrapper, timing each call and accumulating a total, a max and the last |
 | `evictions`                          | reconciliation: whatever the cache no longer holds is counted and dropped       |
 | `rss_mb`                             | `/proc/self/statm` (Linux); `null` elsewhere — no new dependency                |
 
@@ -107,6 +110,10 @@ Two behaviors worth knowing when reading the output:
 - **`expires_in_s` is a countdown from creation, not an idle timeout.** `cachetools` sets a TTL at insertion and
   reading an entry does not renew it, so a session is dropped `CLIENT_SESSION_TTL` after it was created however busy
   it has been since. `idle_s` is the one that tells you whether anyone is still there.
+- **Durations are accumulated, not sampled.** The registry keeps a running total, the worst call and the last one, so
+  `avg_duration_ms` is the mean over the session's whole life — a session that was slow this morning and fast since
+  still reads as slow. There is no percentile and no per-tool timing: that would mean keeping every call, which this
+  registry deliberately does not do. `max_duration_ms` is the one to watch for a stuck tool.
 - **Expiry is lazy.** `cachetools` only reaps on access, so a session whose TTL elapsed hours ago still counts in
   `len(cache)`. Both routes call `expire()` before reporting, which means *reading the API is also what keeps the
   eviction counters moving.*

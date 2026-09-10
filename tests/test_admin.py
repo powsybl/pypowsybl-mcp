@@ -95,8 +95,8 @@ def test_sessions_is_disabled_without_a_configured_token(
 def test_sessions_reports_what_a_session_holds(client, proxies, registry, headers):
     proxies["s1"] = _proxy(network_ids=("ieee14", "ieee30"), current="ieee14")
     registry.touch("s1")
-    registry.record_call("s1", "run_loadflow")
-    registry.record_call("s1", "run_loadflow", error=True)
+    registry.record_call("s1", "run_loadflow", duration_ms=100.0)
+    registry.record_call("s1", "run_loadflow", duration_ms=300.0, error=True)
 
     response = client.get("/admin/sessions", headers=headers)
 
@@ -109,6 +109,10 @@ def test_sessions_reports_what_a_session_holds(client, proxies, registry, header
     assert session["tool_calls"] == 2
     assert session["errors"] == 1
     assert session["last_tool"] == "run_loadflow"
+    assert session["total_duration_ms"] == 400.0
+    assert session["avg_duration_ms"] == 200.0
+    assert session["max_duration_ms"] == 300.0
+    assert session["last_duration_ms"] == 300.0
     assert session["loadflow_results"] == 1
     # TTL is counted from creation, not from last use.
     assert 0 < session["expires_in_s"] <= 1000
@@ -167,6 +171,9 @@ async def test_tool_calls_are_attributed_to_the_calling_session(registry):
     assert stats.tool_calls == 2
     assert stats.errors == 1
     assert stats.tools_used == {"working_tool": 1, "failing_tool": 1}
+    # Both calls were timed, the one that raised included.
+    assert stats.total_duration_ms > 0
+    assert stats.last_duration_ms is not None
 
 
 @pytest.mark.asyncio
