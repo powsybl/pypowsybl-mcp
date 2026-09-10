@@ -10,8 +10,9 @@ from mcp.server import FastMCP
 from mcp.server.fastmcp import Context
 
 from pypowsybl_mcp.proxy import PyPowsyblMCPServerProxy
-from pypowsybl_mcp.utils.user_session_management import get_session_id
 from pypowsybl_mcp.utils.session_registry import SESSIONS
+from pypowsybl_mcp.utils.user_session_management import get_session_id
+
 
 class NetworkNotFoundError(ValueError):
     """Raised when a network cannot be resolved from the current session state."""
