@@ -141,9 +141,16 @@ class SessionRegistry:
                 if session_id in live:
                     continue
                 stats = self._sessions.pop(session_id)
-                # A session idle for at least its TTL went out on expiry; one
-                # dropped while still recently used was pushed out by `maxsize`.
-                if ttl is not None and now - stats.last_seen >= ttl:
+                # A `TTLCache` times an entry from its insertion, not from its
+                # last access, so age is what says why it is gone: one that
+                # lived at least its TTL reached the end of it, one dropped
+                # sooner was pushed out by `maxsize`. Reading `last_seen` here
+                # would file a busy session - kept alive right up to its TTL -
+                # as a capacity eviction, which is the alarming one.
+                # The exception is an estimated `created_at` (a session the
+                # registry adopted rather than saw created): its real insertion
+                # was earlier, so its expiry can still be read as capacity.
+                if ttl is not None and now - stats.created_at >= ttl:
                     self.expired_total += 1
                 else:
                     self.evicted_total += 1

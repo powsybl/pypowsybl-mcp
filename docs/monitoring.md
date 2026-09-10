@@ -98,7 +98,7 @@ was last used, nor what it lost. `pypowsybl_mcp/utils/session_registry.py` keeps
 | `created_at`, `last_seen`            | `SessionRegistry.touch()`, called from `PyPowsyblTool.get_proxy()`              |
 | `tool_calls`, `errors`, `tools_used` | a wrapper around FastMCP's tool manager (`utils/instrumentation.py`)            |
 | `*_duration_ms`                      | the same wrapper, timing each call and accumulating a total, a max and the last |
-| `evictions`                          | reconciliation: whatever the cache no longer holds is counted and dropped       |
+| `evictions`                          | reconciliation: whatever the cache no longer holds is counted and dropped, expiry or capacity told apart by age |
 | `rss_mb`                             | `/proc/self/statm` (Linux); `null` elsewhere — no new dependency                |
 
 `get_proxy()` is the single choke point every tool group inherits, which is why a per-session view costs nothing more
@@ -119,8 +119,14 @@ Two behaviors worth knowing when reading the output:
   eviction counters moving.*
 
 `evictions.expired` counts sessions dropped after their TTL; `evictions.capacity` counts sessions pushed out by
-`MAX_NUMBER_OF_CLIENTS` while still in use — the second is the one to alert on, since it means someone's study
-disappeared mid-conversation.
+`MAX_NUMBER_OF_CLIENTS` before reaching it — the second is the one to alert on, since it means someone's study
+disappeared mid-conversation while the server still had room in time but not in slots.
+
+The two are told apart by the session's **age**, not by how long it went unused: a `TTLCache` times an entry from its
+insertion, so a session dropped after living at least `CLIENT_SESSION_TTL` expired however busy it was in its last
+seconds, and only one dropped sooner can have been evicted for capacity. The one case this cannot resolve is a session
+with `created_at_estimated` (adopted by the registry rather than seen created, e.g. through `duplicate_session`): its
+real insertion was earlier than the registry believes, so its expiry may be counted as a capacity eviction.
 
 ---
 

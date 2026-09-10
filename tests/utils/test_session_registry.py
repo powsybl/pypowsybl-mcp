@@ -84,15 +84,35 @@ def test_reconcile_counts_an_expiry(registry):
     cache["s1"] = object()
     registry.touch("s1")
     clock[0] = 11
-    # The registry's own clock has to move too: expiry is inferred from how long
-    # the session went unused, which is measured in wall-clock seconds.
-    registry.snapshot()["s1"]
-    registry._sessions["s1"].last_seen = time.time() - 11
+    # The registry's own clock has to move too: age is inferred from when the
+    # session was created, which is measured in wall-clock seconds.
     registry._sessions["s1"].created_at = time.time() - 11
+    registry._sessions["s1"].last_seen = time.time() - 11
 
     registry.reconcile(cache)
 
     assert registry.snapshot() == {}
+    assert (registry.expired_total, registry.evicted_total) == (1, 0)
+
+
+def test_reconcile_counts_a_busy_session_as_an_expiry(registry):
+    """A session used right up to its TTL still went out on expiry.
+
+    `cachetools` times an entry from its insertion, so traffic does not renew
+    it: such a session is dropped with a very recent `last_seen`, and must not
+    be reported as a capacity eviction - the one that says a study was pushed
+    out from under a live conversation.
+    """
+    clock = [0.0]
+    cache = TTLCache(maxsize=10, ttl=10, timer=lambda: clock[0])
+    cache["s1"] = object()
+    registry.touch("s1")
+    clock[0] = 11
+    registry._sessions["s1"].created_at = time.time() - 11
+    registry.touch("s1")  # busy: last_seen is now
+
+    registry.reconcile(cache)
+
     assert (registry.expired_total, registry.evicted_total) == (1, 0)
 
 
