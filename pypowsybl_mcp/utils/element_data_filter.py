@@ -77,6 +77,97 @@ def _select_current_limit(limits, limit_kind):
     return temporary_by_id.combine_first(permanent_by_id)
 
 
+# 0 is the index pypowsybl gives the main (largest) connected and synchronous
+# component, so "in the main area" means the component label equals 0.
+MAIN_COMPONENT_INDEX = 0
+
+# Element tables address their terminals through these bus-id columns: an
+# injection has one (bus_id), a branch two or three (bus1_id..bus3_id).
+_BUS_ID_COLUMNS = ("bus_id", "bus1_id", "bus2_id", "bus3_id")
+
+
+def main_area_bus_ids(
+    network, *, main_connected_component, main_synchronous_component
+):
+    """Ids of the buses in the requested "main" area, or None for no filter.
+
+    Returns None when no restriction is asked for (both flags False) so callers
+    skip the work. When both flags are True the conditions are intersected: a
+    bus must be in the main connected AND the main synchronous component
+    (component index 0 in each case). Degrades to None (no filter) when the
+    component labels are unavailable, rather than returning an empty set that
+    would drop every element.
+    """
+    if not main_connected_component and not main_synchronous_component:
+        return None
+    buses = network.get_buses(
+        attributes=["connected_component", "synchronous_component"]
+    )
+    if not isinstance(buses, pd.DataFrame):
+        return None
+    if main_connected_component and "connected_component" not in buses.columns:
+        return None
+    if main_synchronous_component and "synchronous_component" not in buses.columns:
+        return None
+    mask = pd.Series(True, index=buses.index)
+    if main_connected_component:
+        mask &= buses["connected_component"] == MAIN_COMPONENT_INDEX
+    if main_synchronous_component:
+        mask &= buses["synchronous_component"] == MAIN_COMPONENT_INDEX
+    return set(buses.index[mask])
+
+
+def _hvdc_bus_columns(network, elements_df):
+    """Resolve each HVDC line's two ends to a bus via its converter stations.
+
+    HVDC lines carry no bus id; they reference two converter stations, which
+    are the elements actually attached to a bus. Both station kinds (VSC and
+    LCC) are collected. Returns a frame with bus1_id/bus2_id aligned to
+    elements_df, unresolved ends left as NaN.
+    """
+    bus_by_station = {}
+    for getter in ("get_vsc_converter_stations", "get_lcc_converter_stations"):
+        stations = getattr(network, getter)()
+        if isinstance(stations, pd.DataFrame) and "bus_id" in stations.columns:
+            bus_by_station.update(stations["bus_id"].to_dict())
+    out = pd.DataFrame(index=elements_df.index)
+    for end, col in (("1", "converter_station1_id"), ("2", "converter_station2_id")):
+        if col in elements_df.columns:
+            out[f"bus{end}_id"] = elements_df[col].map(bus_by_station)
+    return out
+
+
+def filter_elements_to_main_area(elements_df, network, element_type, main_bus_ids):
+    """Keep only elements with at least one terminal in the main area.
+
+    `main_bus_ids` comes from main_area_bus_ids(); None means "no filter". An
+    element is kept when ANY of its terminal buses is in that set - one-sided
+    connection is enough, since a branch energised from a single end still
+    belongs to the area. The bus table filters on its own component columns;
+    HVDC lines resolve their buses through converter stations; element types
+    with no resolvable bus column are returned unchanged.
+    """
+    if main_bus_ids is None or elements_df.empty:
+        return elements_df
+
+    # The bus table carries its own component labels and is indexed by bus id.
+    if {"connected_component", "synchronous_component"} <= set(elements_df.columns):
+        return elements_df[elements_df.index.isin(main_bus_ids)]
+
+    if element_type == "hvdc_line":
+        bus_cols_df = _hvdc_bus_columns(network, elements_df)
+    else:
+        present = [c for c in _BUS_ID_COLUMNS if c in elements_df.columns]
+        if not present:
+            return elements_df  # nothing addressable by bus; leave as-is
+        bus_cols_df = elements_df[present]
+
+    keep = pd.Series(False, index=elements_df.index)
+    for col in bus_cols_df.columns:
+        keep |= bus_cols_df[col].isin(main_bus_ids)
+    return elements_df[keep]
+
+
 def attach_current_limits(df, limits_df, limit_kind="permanent"):
     """Copy the chosen ampacity from operational limits onto each line row.
 
