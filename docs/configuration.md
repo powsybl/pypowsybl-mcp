@@ -16,7 +16,7 @@ marked **required**.
 | `MCP_PORT`           | `9992`      | TCP port the MCP server listens on.                                                                                               |
 | `MCP_PUBLIC_ADDRESS` | `localhost` | Hostname or IP embedded in download URLs returned by tools. Must be reachable from the LLM's environment.                         |
 | `MCP_VERIFY_SSL`     | `false`     | Enable (`true`/`yes`/`1`/`on`/`enabled`) or disable (`false`/`no`/`0`/`off`/`disabled`) TLS certificate verification globally for HTTPS downloads (e.g. in `load_network_from_url`). Any other value is treated as disabled and logged as a warning. |
-| `MCP_AUTH_TOKEN`     | *(unset)*   | Secret token protecting admin tools (`set_session_id`, `duplicate_session`). If unset, those tools are disabled.                  |
+| `MCP_AUTH_TOKEN`     | *(unset)*   | Secret token protecting the admin tools (`set_session_id`, `duplicate_session`) and the admin HTTP API (`/admin/sessions`, see [Monitoring](monitoring.md)). If unset, both are disabled. |
 | `LOG_DIR`            | `logs`      | Directory where log files are written.                                                                                            |
 
 ##### LLM / OpenAI

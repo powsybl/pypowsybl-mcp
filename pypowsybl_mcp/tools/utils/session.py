@@ -12,6 +12,8 @@ from mcp import ServerSession
 from mcp.server import FastMCP
 from mcp.server.fastmcp import Context
 
+from pypowsybl_mcp.utils.session_registry import SESSIONS
+
 
 def register_session_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
     # ----------------------------------- ADMIN FUNCTIONS
@@ -94,6 +96,9 @@ def register_session_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
         target_proxy = source_proxy.copy()
 
         pypowsybl_proxies[target_session_id] = target_proxy
+        # Record the fork now, so the admin API reports the target's real
+        # creation time instead of guessing it the first time a tool runs.
+        SESSIONS.touch(target_session_id)
         logger.info(
             f"Duplicated session '{source_session_id}' to '{target_session_id}'"
         )

@@ -24,6 +24,8 @@ turn.
 - Generate single-line diagrams and network-area diagrams, with downloadable artifacts served by the MCP server.
 - Export the current network and generate standalone Python scripts that reproduce the session workflow.
 - Keep per-session state with TTL-based caches so a client can work iteratively on the same study.
+- Report what the server is holding through a read-only admin HTTP API (`/admin/health`, `/admin/sessions`):
+  active sessions, their contents, their activity, and process memory.
 
 ## Documentation
 
@@ -33,6 +35,7 @@ turn.
 - [Configuration Reference](docs/configuration.md): environment variables and TOML defaults.
 - [MCP Client Integration](docs/mcp_client_integration.md): connect Codex, Claude Desktop, Cursor, or a custom agent.
 - [Sessions & State](docs/mcp_sessions.md): session lifecycle, cache TTL, and session pinning.
+- [Monitoring](docs/monitoring.md): the admin HTTP API for active sessions and server health.
 - [Plugins](docs/plugins.md): extend the server with your own tools, resources, and prompts.
 
 ## Prerequisites
