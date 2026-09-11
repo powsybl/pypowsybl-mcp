@@ -21,6 +21,8 @@ def test_register_tools(mcp):
     with (
         patch("pypowsybl_mcp.server.register_io_tools") as mock_io,
         patch("pypowsybl_mcp.server.register_network_tools") as mock_network,
+        patch("pypowsybl_mcp.server.register_creation_tools") as mock_creation,
+        patch("pypowsybl_mcp.server.register_removal_tools") as mock_removal,
         patch("pypowsybl_mcp.server.register_visualization_tools") as mock_viz,
         patch("pypowsybl_mcp.server.register_loadflow_tools") as mock_lf,
         patch("pypowsybl_mcp.server.register_security_tools") as mock_sa,
@@ -33,6 +35,8 @@ def test_register_tools(mcp):
 
         mock_io.assert_called_once()
         mock_network.assert_called_once()
+        mock_creation.assert_called_once()
+        mock_removal.assert_called_once()
         mock_viz.assert_called_once()
         mock_lf.assert_called_once()
         mock_sa.assert_called_once()
