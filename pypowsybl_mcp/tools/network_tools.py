@@ -1902,8 +1902,7 @@ class NetworkTools(PyPowsyblTool):
                 network.set_working_variant(original_variant_id)
             except (pp.PyPowsyblError, ValueError, KeyError) as e:
                 logger.warning(
-                    f"Could not restore working variant "
-                    f"'{original_variant_id}': {e}"
+                    f"Could not restore working variant '{original_variant_id}': {e}"
                 )
 
     async def get_top_active_power_transit_lines(

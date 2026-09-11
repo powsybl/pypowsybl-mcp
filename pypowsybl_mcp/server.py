@@ -27,8 +27,10 @@ from pypowsybl_mcp.plugins import (
     discover_and_load_resource_plugins,
 )
 from pypowsybl_mcp.proxy import PyPowsyblMCPServerProxy
+from pypowsybl_mcp.tools.creation_tools import register_creation_tools
 from pypowsybl_mcp.tools.loadflow_tools import register_loadflow_tools
 from pypowsybl_mcp.tools.network_tools import register_network_tools
+from pypowsybl_mcp.tools.removal_tools import register_removal_tools
 from pypowsybl_mcp.tools.security_tools import register_security_tools
 from pypowsybl_mcp.tools.sensitivity_tools import (
     register_sensitivity_tools,
@@ -138,6 +140,8 @@ def register_tools(mcp: FastMCP):
     """Register all available tools with the MCP server."""
     register_io_tools(mcp, pypowsybl_proxies)
     register_network_tools(mcp, pypowsybl_proxies)
+    register_creation_tools(mcp, pypowsybl_proxies)
+    register_removal_tools(mcp, pypowsybl_proxies)
     register_visualization_tools(mcp, pypowsybl_proxies)
     register_loadflow_tools(mcp, pypowsybl_proxies)
     register_security_tools(mcp, pypowsybl_proxies)

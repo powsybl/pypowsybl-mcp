@@ -43,6 +43,36 @@ This document lists all MCP tools exposed by the PyPowsybl MCP server, grouped b
 | `set_switch_status`  | Open or close a switch in the network (breaker, disconnector, load-break switch). |
 | `set_tap_position`   | Move a transformer's ratio or phase tap changer to a new position.                |
 
+##### Network extension (element creation)
+
+| Tool                        | Description                                                                                            |
+|-----------------------------|----------------------------------------------------------------------------------------------------------|
+| `describe_element_creation` | List the element types that can be created, or describe the attributes, rules and units of one of them. |
+| `create_network_element`    | Create one element of any type from `element_type` and an `attributes` object.                          |
+| `create_network_elements`   | Create several elements in one call, ordered so that containers come before what they contain.          |
+
+One generic tool creates every element type. The attributes a type takes are read from the
+installed `pypowsybl` (its own creation metadata), and a small declarative profile per type adds what that metadata does
+not say: which attributes are required, their units and accepted values, the conditional rules, and which pypowsybl call
+is legal for that type. Injections and branches go through the *bay* helpers, so the switching equipment the hosting
+topology requires is built automatically and the caller only ever names a bus or busbar section.
+
+Since the arguments are an open object rather than a typed signature, three things replace the per-tool JSON schema: a
+cheat sheet of the most-used types inlined in the tool description, `describe_element_creation` for everything else, and
+**errors that carry the descriptor** — a rejected call comes back with the required attributes, units and accepted
+values of that element type, so it can be corrected without a further lookup.
+
+##### Network reduction (element removal)
+
+| Tool                      | Description                                                                                            |
+|---------------------------|----------------------------------------------------------------------------------------------------------|
+| `remove_network_elements` | Remove any elements by id: feeders go with their bays, voltage levels and substations cascade (opt-in). |
+
+Removal is generic for the same reason creation is: an id is all it takes, the type is read from the network and the
+matching pypowsybl removal is applied. Removing a voltage level or a substation requires `cascade=True`, since it also
+deletes everything they contain; without it the tool reports what *would* be removed. Unlike `set_line_status`, a
+removed element no longer exists in the network at all.
+
 ##### Variants
 
 | Tool                  | Description                                         |
@@ -145,6 +175,47 @@ LLM**.
 | `read_resource`       | Read back a documentation page already fetched this session with `get_online_resource`, from the cache.   |
 
 ---
+
+---
+
+#### Coverage of the pypowsybl creation API
+
+<!-- begin generated creation coverage -->
+
+Generated from the profiles and from pypowsybl `1.15.0` by `scripts/creation_coverage.py`.
+
+**18 element types can be created**
+
+| `element_type` | pypowsybl call behind it | What it is |
+|----------------|--------------------------|------------|
+| `battery` | `pp.network.create_battery_bay` | A storage unit: produces when target_p is positive, absorbs when negative. |
+| `generator` | `pp.network.create_generator_bay` | A production unit: a plant, a wind or solar farm. |
+| `ground` | `Network.create_grounds` | An earthing connection on a bus. |
+| `hvdc_line` | `Network.create_hvdc_lines` | A DC link between two converter stations that already exist. |
+| `lcc_converter_station` | `pp.network.create_lcc_converter_station_bay` | The AC end of a line-commutated HVDC link. |
+| `line` | `pp.network.create_line_bays` | An AC line between two connection points, with a bay at each end. |
+| `load` | `pp.network.create_load_bay` | A consumption point: a datacenter, a factory, an extra demand. |
+| `minmax_reactive_limits` | `Network.create_minmax_reactive_limits` | A constant reactive capability range for a generator, battery or converter. |
+| `operational_limits` | `Network.create_operational_limits` | The current (or power) ratings of a branch, without which it can never be overloaded. |
+| `phase_tap_changer` | `Network.create_phase_tap_changers` | Active-power control on a two-windings transformer (phase shifter). |
+| `ratio_tap_changer` | `Network.create_ratio_tap_changers` | Voltage regulation on a two-windings transformer (on-load tap changer). |
+| `reactive_capability_curve_point` | `Network.create_curve_reactive_limits` | A reactive capability curve Q(P), as a list of points. |
+| `shunt_compensator` | `pp.network.create_shunt_compensator_bay` | A capacitor bank (positive susceptance) or a reactor (negative). |
+| `static_var_compensator` | `pp.network.create_static_var_compensator_bay` | Continuous reactive control between b_min and b_max. |
+| `substation` | `Network.create_substations` | A geographical site holding voltage levels; no equipment of its own. |
+| `two_windings_transformer` | `pp.network.create_2_windings_transformer_bays` | A transformer between two voltage levels of one substation. |
+| `voltage_level` | `Network.create_voltage_levels`, `pp.network.create_voltage_level_topology` | The busbar system of a site at one nominal voltage, created with the connection points equipment attaches to. |
+| `vsc_converter_station` | `pp.network.create_vsc_converter_station_bay` | The AC end of a voltage-source HVDC link. |
+
+**15 element types expose creation metadata but have no profile yet**, so `create_network_element` refuses them:
+
+```
+alias, area, area_boundaries, area_voltage_levels, boundary_line, bus, busbar_section, dc_ground, dc_line, dc_node, internal_connection, switch, three_windings_transformer, tie_line, voltage_source_converter
+```
+
+Adding one is a profile entry in `pypowsybl_mcp/creation/profiles.py`, not a new tool. The ones left out are either topology primitives that the connection-point model covers already (`bus`, `busbar_section`, `switch`, `internal_connection`), boundary and area bookkeeping (`boundary_line`, `tie_line`, `area*`, `alias`), the detailed DC grid (`dc_*`, `voltage_source_converter`), or `three_windings_transformer`, which has no bay creation upstream.
+
+<!-- end generated creation coverage -->
 
 #### Notes
 

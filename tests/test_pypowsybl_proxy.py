@@ -389,7 +389,9 @@ class TestCopy:
         # 3. lf_params: independent object AND contents preserved.
         assert new.lf_params is not proxy.lf_params
         assert new.lf_params.distributed_slack is False
-        assert new.lf_params.balance_type == pp.loadflow.BalanceType.PROPORTIONAL_TO_LOAD
+        assert (
+            new.lf_params.balance_type == pp.loadflow.BalanceType.PROPORTIONAL_TO_LOAD
+        )
         assert new.lf_params.voltage_init_mode == proxy.lf_params.voltage_init_mode
 
         # 4. Network deep-copied, current selection points at the fork's copy.
