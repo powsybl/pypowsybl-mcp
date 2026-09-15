@@ -4,6 +4,7 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -13,6 +14,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from starlette.testclient import TestClient
 
 from pypowsybl_mcp.admin import build_snapshot, register_admin_routes
+from pypowsybl_mcp.utils import instrumentation
 from pypowsybl_mcp.utils.cachetools import ThreadSafeTTLCache
 from pypowsybl_mcp.utils.instrumentation import instrument_tool_calls
 from pypowsybl_mcp.utils.session_registry import SessionRegistry
@@ -174,6 +176,40 @@ async def test_tool_calls_are_attributed_to_the_calling_session(registry):
     # Both calls were timed, the one that raised included.
     assert stats.total_duration_ms > 0
     assert stats.last_duration_ms is not None
+
+
+@pytest.mark.asyncio
+async def test_short_calls_are_timed_on_a_coarse_monotonic_clock(registry, monkeypatch):
+    """A sub-millisecond call must not be recorded as 0 ms on Windows.
+
+    There, before Python 3.13, `time.monotonic()` is GetTickCount64() and
+    only advances every ~15.6 ms, so it reads 0 for anything faster;
+    `time.perf_counter()` is QueryPerformanceCounter() and keeps
+    sub-microsecond resolution. This simulates that pair of clocks, which on
+    Linux are the same clock, so the test is meaningful on any OS.
+    """
+    tick = 15.625 / 1000
+    real_monotonic = time.monotonic
+    coarse = SimpleNamespace(
+        monotonic=lambda: (real_monotonic() // tick) * tick,
+        perf_counter=time.perf_counter,
+    )
+    monkeypatch.setattr(instrumentation, "time", coarse)
+
+    mcp = FastMCP("TestServer")
+
+    @mcp.tool()
+    def working_tool() -> str:
+        return "fine"
+
+    instrument_tool_calls(mcp, registry)
+    context = SimpleNamespace(session=SimpleNamespace(session_id="s1"))
+
+    await mcp._tool_manager.call_tool("working_tool", {}, context=context)
+
+    stats = registry.snapshot()["s1"]
+    assert stats.total_duration_ms > 0
+    assert stats.max_duration_ms > 0
 
 
 @pytest.mark.asyncio

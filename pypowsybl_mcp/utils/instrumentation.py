@@ -53,7 +53,12 @@ def instrument_tool_calls(mcp: FastMCP, registry: SessionRegistry) -> None:
 
     async def call_tool(name: str, arguments: dict[str, Any], *args, **kwargs) -> Any:
         context = kwargs.get("context") or (args[0] if args else None)
-        started = time.monotonic()
+        # perf_counter(), not monotonic(): on Windows before Python 3.13,
+        # monotonic() is GetTickCount64(), whose resolution is the ~15.6 ms
+        # scheduler tick, so every call shorter than that would be recorded
+        # as 0 ms. Python 3.13 moved monotonic() to QueryPerformanceCounter();
+        # perf_counter() has always been that clock, on every version and OS.
+        started = time.perf_counter()
         error = False
         try:
             return await original_call_tool(name, arguments, *args, **kwargs)
@@ -62,7 +67,7 @@ def instrument_tool_calls(mcp: FastMCP, registry: SessionRegistry) -> None:
             raise
         finally:
             try:
-                elapsed_ms = (time.monotonic() - started) * 1000
+                elapsed_ms = (time.perf_counter() - started) * 1000
                 registry.record_call(
                     _session_id_of(context),
                     name,
