@@ -6,7 +6,16 @@ on:
       - main
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    # The two OSes differ in ways this suite can catch: clock resolution,
+    # temporary-file locking and path separators. Code touching any of them
+    # can only be trusted once it has run on both.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Never cancel one OS because the other failed: the difference between
+      # them is the whole point of the matrix.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - name: Checkout sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -22,6 +31,10 @@ jobs:
         run: |
           uv pip install --system -e ".[dev]"
       - name: Run pytests
+        # bash on both legs: the Windows default shell is pwsh, which does not
+        # abort on a failing native command, so a red pytest could be masked by
+        # the coverage report that follows it and the job would pass.
+        shell: bash
         run: |
           coverage run -m pytest
           coverage report

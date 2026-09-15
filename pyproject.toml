@@ -68,3 +68,9 @@ exclude = ["data*", "logs*", "tests*", "docs*"]
 
 [tool.setuptools.package-data]
 pypowsybl_mcp = ["config/*.toml", "skills/*.md"]
+
+[tool.pytest.ini_options]
+# Pinned so every leg of the CI matrix collects and runs the suite the same way,
+# instead of inheriting whatever each runner's defaults happen to be.
+testpaths = ["tests"]
+asyncio_mode = "strict"

@@ -54,6 +54,12 @@ To run a single test file:
 uv run pytest tests/tools/test_loadflow_tools.py -v
 ```
 
+CI runs the suite on both `ubuntu-latest` and `windows-latest`. The two operating systems do
+not behave identically — clock resolution, temporary-file locking and path separators all
+differ — so code that touches any of those must pass on both legs, not just on the one you
+develop on. If you cannot test on Windows locally, push your branch and read the Windows job
+before asking for review.
+
 ## Code style
 
 This project uses [Ruff](https://docs.astral.sh/ruff/) for linting and formatting. Run both checks before submitting:
@@ -63,7 +69,7 @@ uv run ruff check .
 uv run ruff format .
 ```
 
-CI will reject PRs that fail either check.
+CI will reject PRs that fail either check, on either operating system.
 
 ## Submitting a pull request
 
