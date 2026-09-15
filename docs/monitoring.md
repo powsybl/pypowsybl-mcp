@@ -105,7 +105,7 @@ was last used, nor what it lost. `pypowsybl_mcp/utils/session_registry.py` keeps
 than a dict lookup on the hot path. Nothing is persisted: the whole registry describes the running process and dies
 with it.
 
-Two behaviors worth knowing when reading the output:
+A few behaviors worth knowing when reading the output:
 
 - **`expires_in_s` is a countdown from creation, not an idle timeout.** `cachetools` sets a TTL at insertion and
   reading an entry does not renew it, so a session is dropped `CLIENT_SESSION_TTL` after it was created however busy
@@ -114,6 +114,12 @@ Two behaviors worth knowing when reading the output:
   `avg_duration_ms` is the mean over the session's whole life — a session that was slow this morning and fast since
   still reads as slow. There is no percentile and no per-tool timing: that would mean keeping every call, which this
   registry deliberately does not do. `max_duration_ms` is the one to watch for a stuck tool.
+- **Sub-millisecond calls are still timed on Windows.** The wrapper times with `time.perf_counter()`, not
+  `time.monotonic()`. Before Python 3.13, `monotonic()` on Windows is `GetTickCount64()`, whose resolution is the
+  ~15.6 ms scheduler tick: every call faster than that reads as `0.0 ms` and vanishes from `total_duration_ms`,
+  `max_duration_ms` and the average, so a busy session of quick tools looks idle. `perf_counter()` is
+  `QueryPerformanceCounter()` on every Python version, so the figures mean the same thing on Windows, Linux and
+  macOS. On Linux the two are the same clock and nothing changes.
 - **Expiry is lazy.** `cachetools` only reaps on access, so a session whose TTL elapsed hours ago still counts in
   `len(cache)`. Both routes call `expire()` before reporting, which means *reading the API is also what keeps the
   eviction counters moving.*
