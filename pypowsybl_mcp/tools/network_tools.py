@@ -15,6 +15,12 @@ from mcp.server import FastMCP
 from mcp.server.fastmcp import Context
 
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
+from pypowsybl_mcp.utils.artifact_utils import (
+    artifact_response,
+    dataframe_to_rows,
+    normalize_artifact_format,
+    normalize_return_as,
+)
 from pypowsybl_mcp.utils.element_data_filter import (
     apply_element_filter,
     attach_current_limits,
@@ -1230,6 +1236,8 @@ class NetworkTools(PyPowsyblTool):
         max_voltage: float = 1.05,
         unit: str = "pu",
         use_network_limits: bool = True,
+        return_as: str = "inline",
+        artifact_format: str = "json",
         limit: int | None = None,
         cursor: str | int | None = None,
         ctx: Context[ServerSession, None] = None,  # FastMCP injects this
@@ -1264,7 +1272,17 @@ class NetworkTools(PyPowsyblTool):
                 voltage; kV values are applied as given to every bus.
             use_network_limits (bool, optional): Use the low/high voltage limits carried
                 by the voltage levels when available. Default: True.
+            return_as (str, optional): "inline" (default) puts the violations in the
+                answer, paginated. "artifact" writes every violation to a temporary
+                file instead and returns a link to it, with the counts and a short
+                preview. Use it on a real network, where the violations run into the
+                hundreds: the file is fetched over plain HTTP by whoever needs the
+                data, so nothing is truncated and no number is retyped.
+            artifact_format (str, optional): "json" (default) or "csv", when
+                return_as="artifact". Default: "json".
             limit (int, optional): Max violations per page. None = all violations.
+                Ignored when return_as="artifact": an artifact always holds
+                every violation.
             cursor (str | int, optional): Page offset (default 0). See pagination.nextCursor.
 
         Returns:
@@ -1281,6 +1299,9 @@ class NetworkTools(PyPowsyblTool):
                 - violations (list): Detailed violation information (paginated if limit set)
                 - pagination (dict, optional): limit, cursor, total, nextCursor
                 - error (str): Error message (if failed)
+                With return_as="artifact", violations and pagination are replaced by:
+                - artifact (dict): url, format, row_count, columns, size_bytes, expires_at
+                - preview (list): the first few violations, to check the columns
 
         Example Output:
             {
@@ -1324,6 +1345,12 @@ class NetworkTools(PyPowsyblTool):
                 },
                 indent=2,
             )
+
+        try:
+            return_mode = normalize_return_as(return_as)
+            artifact_format = normalize_artifact_format(artifact_format)
+        except ValueError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
 
         try:
             loadflow_executed = False
@@ -1451,31 +1478,39 @@ class NetworkTools(PyPowsyblTool):
                     }
                 )
 
-            try:
-                violations_out, pagination = paginate(
-                    violations, limit=limit, cursor=cursor
-                )
-            except ValueError as e:
-                return json.dumps({"success": False, "error": str(e)}, indent=2)
-
-            result = attach_pagination(
-                {
-                    "success": True,
-                    "network_id": network_id,
-                    "loadflow_executed": loadflow_executed,
-                    "parameter_limits": {
-                        "min": min_voltage,
-                        "max": max_voltage,
-                        "unit": unit,
-                    },
-                    "limit_sources": limit_sources,
-                    "total_buses": len(buses),
-                    "evaluated_buses": evaluated,
-                    "violation_count": len(violations),
-                    "violations": violations_out,
+            summary = {
+                "success": True,
+                "network_id": network_id,
+                "loadflow_executed": loadflow_executed,
+                "parameter_limits": {
+                    "min": min_voltage,
+                    "max": max_voltage,
+                    "unit": unit,
                 },
-                pagination,
-            )
+                "limit_sources": limit_sources,
+                "total_buses": len(buses),
+                "evaluated_buses": evaluated,
+                "violation_count": len(violations),
+            }
+
+            if return_mode == "artifact":
+                result = artifact_response(
+                    summary,
+                    violations,
+                    f"{network_id}_voltage_violations",
+                    artifact_format,
+                )
+            else:
+                try:
+                    violations_out, pagination = paginate(
+                        violations, limit=limit, cursor=cursor
+                    )
+                except ValueError as e:
+                    return json.dumps({"success": False, "error": str(e)}, indent=2)
+
+                result = attach_pagination(
+                    {**summary, "violations": violations_out}, pagination
+                )
 
             logger.info(
                 f"Voltage check completed for network '{network_id}': {len(violations)} violations found"
@@ -1503,6 +1538,8 @@ class NetworkTools(PyPowsyblTool):
         main_connected_component: bool = True,
         main_synchronous_component: bool = True,
         get_only_ids: bool = False,
+        return_as: str = "inline",
+        artifact_format: str = "json",
         limit: int | None = None,
         cursor: str | int | None = None,
         ctx: Context[ServerSession, None] = None,
@@ -1587,6 +1624,14 @@ class NetworkTools(PyPowsyblTool):
                 for enumeration, validation or feeding IDs to other tools. The IDs
                 reflect variant_id. The mode/metric/filter and compare_with_variant_id
                 arguments are ignored in this mode. Default: False.
+            return_as (str, optional): "inline" (default) puts the elements in the
+                answer, paginated. "artifact" writes every matching element to a
+                temporary file instead and returns a link to it, with the counts and
+                a short preview. Use it whenever the whole table is wanted rather
+                than a glance - a bus table on a real network is hundreds of rows,
+                and the file is fetched over plain HTTP by whoever needs the data.
+            artifact_format (str, optional): "json" (default) or "csv", when
+                return_as="artifact". Default: "json".
 
         Returns:
             str: JSON-formatted string. With get_only_ids=False (default): the
@@ -1651,6 +1696,12 @@ class NetworkTools(PyPowsyblTool):
             msg = "Element type is required"
             logger.warning(msg)
             return msg
+
+        try:
+            return_mode = normalize_return_as(return_as)
+            artifact_format = normalize_artifact_format(artifact_format)
+        except ValueError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
 
         # This is a read tool, but reading a specific variant requires switching
         # the working variant (and again for the comparison path). The network is
@@ -1840,14 +1891,7 @@ class NetworkTools(PyPowsyblTool):
                     limit if limit is not None else DEFAULT_PAGINATION_LIMIT
                 )
 
-                try:
-                    page_df, pagination = paginate(
-                        filtered_df, limit=effective_limit, cursor=cursor
-                    )
-                except (ValueError, TypeError) as e:
-                    return json.dumps({"success": False, "error": str(e)}, indent=2)
-
-                payload = {
+                summary = {
                     "success": True,
                     "network_id": network_id,
                     "variant_id": variant_id,
@@ -1859,6 +1903,31 @@ class NetworkTools(PyPowsyblTool):
                     "limit_kind": (limit_kind or "permanent"),
                     "total_elements": total_elements,
                     "matched_count": matched_count,
+                }
+
+                if return_mode == "artifact":
+                    # Every match, not just the page: an artifact is asked for
+                    # precisely when the whole table is wanted.
+                    return json.dumps(
+                        artifact_response(
+                            summary,
+                            dataframe_to_rows(filtered_df),
+                            f"{network_id}_{element_type}_{metric or 'filtered'}",
+                            artifact_format,
+                        ),
+                        indent=2,
+                        default=str,
+                    )
+
+                try:
+                    page_df, pagination = paginate(
+                        filtered_df, limit=effective_limit, cursor=cursor
+                    )
+                except (ValueError, TypeError) as e:
+                    return json.dumps({"success": False, "error": str(e)}, indent=2)
+
+                payload = {
+                    **summary,
                     "elements": json.loads(page_df.to_json(orient="index")),
                 }
                 payload = attach_pagination(payload, pagination)
@@ -1871,6 +1940,25 @@ class NetworkTools(PyPowsyblTool):
                         "error": f"Unsupported mode '{mode}'. Use 'filter' or omit mode.",
                     },
                     indent=2,
+                )
+
+            if return_mode == "artifact":
+                return json.dumps(
+                    artifact_response(
+                        {
+                            "success": True,
+                            "network_id": network_id,
+                            "variant_id": variant_id,
+                            "element_type": element_type,
+                            "compare_with_variant_id": compare_with_variant_id,
+                            "total_elements": total_elements,
+                        },
+                        dataframe_to_rows(elements_df),
+                        f"{network_id}_{element_type}",
+                        artifact_format,
+                    ),
+                    indent=2,
+                    default=str,
                 )
 
             try:
@@ -1902,8 +1990,7 @@ class NetworkTools(PyPowsyblTool):
                 network.set_working_variant(original_variant_id)
             except (pp.PyPowsyblError, ValueError, KeyError) as e:
                 logger.warning(
-                    f"Could not restore working variant "
-                    f"'{original_variant_id}': {e}"
+                    f"Could not restore working variant '{original_variant_id}': {e}"
                 )
 
     async def get_top_active_power_transit_lines(
