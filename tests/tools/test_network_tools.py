@@ -972,8 +972,15 @@ async def test_get_network_element_data_2wt_tap_changer(network_tools, mock_ctx)
     proxy.networks["net1"] = pp.network.create_four_substations_node_breaker_network()
     proxy.current_network_id = "net1"
 
+    # TWT sits in this network's S1 area, which is a separate synchronous
+    # component (reached only through HVDC), so the default
+    # main_synchronous_component filter would exclude it. This test is about
+    # tap-changer enrichment, not area filtering, so opt out of that filter.
     result = await network_tools.get_network_element_data(
-        network_id="net1", element_type="two_windings_transformer", ctx=mock_ctx
+        network_id="net1",
+        element_type="two_windings_transformer",
+        main_synchronous_component=False,
+        ctx=mock_ctx,
     )
     data = json.loads(result)
 
@@ -1005,6 +1012,60 @@ async def test_get_network_element_data_3wt_tap_changer(network_tools, mock_ctx)
     assert twt["ratio_tap_position2"] == 17
     assert twt["ratio_tap_min2"] == 1
     assert twt["ratio_tap_max2"] == 33
+
+
+@pytest.mark.asyncio
+async def test_get_network_element_data_main_area_filter(network_tools, mock_ctx):
+    """The main_*_component flags restrict elements to the main area.
+
+    four_substations has an S1 area on a separate synchronous component (index 1),
+    joined to the main synchronous component (0) only through HVDC. Its 3 generators
+    live there: GH1/GH2/GH3 in S1, GTH1/GTH2 in the main synchronous area.
+    """
+    import pypowsybl as pp
+
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = pp.network.create_four_substations_node_breaker_network()
+    proxy.current_network_id = "net1"
+
+    async def gen_ids(**kwargs):
+        result = await network_tools.get_network_element_data(
+            network_id="net1", element_type="generator", get_only_ids=True, ctx=mock_ctx,
+            **kwargs,
+        )
+        return set(json.loads(result))
+
+    # Default (both True): only generators in the main synchronous component.
+    main_only = await gen_ids()
+    # Both False: every generator, islanded areas included.
+    everything = await gen_ids(
+        main_connected_component=False, main_synchronous_component=False
+    )
+
+    assert everything == {"GH1", "GH2", "GH3", "GTH1", "GTH2"}
+    assert main_only == {"GTH1", "GTH2"}
+    assert main_only < everything
+
+
+@pytest.mark.asyncio
+async def test_get_network_element_data_main_area_filter_hvdc(network_tools, mock_ctx):
+    """HVDC lines are area-filtered via their converter stations (two-hop)."""
+    import pypowsybl as pp
+
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = pp.network.create_four_substations_node_breaker_network()
+    proxy.current_network_id = "net1"
+
+    result = await network_tools.get_network_element_data(
+        network_id="net1",
+        element_type="hvdc_line",
+        main_connected_component=True,
+        main_synchronous_component=False,
+        ctx=mock_ctx,
+    )
+    data = json.loads(result)
+    # Both HVDC links have a converter station on the main connected component.
+    assert set(data.keys()) == {"HVDC1", "HVDC2"}
 
 
 @pytest.mark.asyncio

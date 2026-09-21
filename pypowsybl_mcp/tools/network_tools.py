@@ -19,6 +19,8 @@ from pypowsybl_mcp.utils.element_data_filter import (
     apply_element_filter,
     attach_current_limits,
     attach_tap_changer_data,
+    filter_elements_to_main_area,
+    main_area_bus_ids,
 )
 from pypowsybl_mcp.utils.element_types import (
     ELEMENT_TYPE_TO_GETTER,
@@ -1498,6 +1500,8 @@ class NetworkTools(PyPowsyblTool):
         filter_value: float | str | None = None,
         sort: str = "desc",
         limit_kind: str = "permanent",
+        main_connected_component: bool = True,
+        main_synchronous_component: bool = True,
         get_only_ids: bool = False,
         limit: int | None = None,
         cursor: str | int | None = None,
@@ -1563,6 +1567,14 @@ class NetworkTools(PyPowsyblTool):
                 run a contingency study and does not change i1/i2 — currents always
                 come from the network state you already loaded. Ignored for generators,
                 loads, and other element types.
+            main_connected_component (bool, optional): Keep only elements with at
+                least one terminal in the network's main connected component
+                (component index 0). Default: True.
+            main_synchronous_component (bool, optional): Keep only elements with at
+                least one terminal in the main synchronous component (index 0).
+                When both flags are True a terminal must be in both. HVDC lines
+                are resolved through their converter stations. Set both False to
+                return every element, including islanded ones. Default: True.
             limit (int, optional): How many elements per page. In list mode, None
                 returns everything. In filter mode there is always a page: if you
                 leave limit out, we fall back to the default page size so a wide
@@ -1673,6 +1685,16 @@ class NetworkTools(PyPowsyblTool):
 
             method = getattr(network, method_name)
 
+            # Optional restriction to the network's "main" area. Computed after
+            # the working variant is set (component labels are variant-specific)
+            # and after type validation (so invalid input returns before the
+            # extra get_buses()). None when no restriction is requested.
+            main_bus_ids = main_area_bus_ids(
+                network,
+                main_connected_component=main_connected_component,
+                main_synchronous_component=main_synchronous_component,
+            )
+
             # get_only_ids: return just the element IDs (the former
             # get_network_elements_ids tool), reflecting variant_id set above.
             # Uses the native get_elements_ids() enum fast path where available,
@@ -1687,14 +1709,18 @@ class NetworkTools(PyPowsyblTool):
                 }
                 if element_type in fast_path_types:
                     element_ids = network.get_elements_ids(
-                        element_type_enum(element_type)
+                        element_type_enum(element_type),
+                        main_connected_component=main_connected_component,
+                        main_synchronous_component=main_synchronous_component,
                     )
                     logger.debug(
                         f"Retrieved {len(element_ids)} {element_type} IDs from "
                         f"network '{network_id}' using get_elements_ids()"
                     )
                 else:
-                    element_ids = method().index.tolist()
+                    element_ids = filter_elements_to_main_area(
+                        method(), network, element_type, main_bus_ids
+                    ).index.tolist()
                     logger.debug(
                         f"Retrieved {len(element_ids)} {element_type} IDs from "
                         f"network '{network_id}' using {method_name}()"
@@ -1722,7 +1748,9 @@ class NetworkTools(PyPowsyblTool):
                     indent=2,
                 )
 
-            elements_df = method()
+            elements_df = filter_elements_to_main_area(
+                method(), network, element_type, main_bus_ids
+            )
 
             # get_lines() returns i1/i2 (current in A) but not Imax. Imax is in
             # get_operational_limits(). We join it here so loading_percent works.
