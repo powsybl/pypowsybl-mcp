@@ -18,6 +18,10 @@ turn.
   sensitivity analysis, session management, and code export.
 - Load networks from local files or remote URLs, or create standard IEEE test networks directly from the MCP client.
 - Inspect and modify network elements, open/close switches, manage variants, and compare alternative operating states.
+- Extend a grid from the MCP client with one generic, introspection-driven tool: substations, voltage levels,
+  loads, generators, batteries, shunts, SVCs, lines, transformers, HVDC links, limits and tap changers — the
+  attributes of each type are read from the installed `pypowsybl`, so a whole connection study (a new datacenter,
+  say) is one call. Elements can be removed again, with their switching equipment.
 - Run AC/DC load flows, adjust session-specific load-flow parameters, and switch load-flow providers when available.
 - Run contingency and sensitivity studies, including N-1 security analysis, PTDF, DCDF, PSDF, and custom sensitivity
   workflows.
