@@ -23,6 +23,11 @@ turn.
   workflows.
 - Generate single-line diagrams and network-area diagrams, with downloadable artifacts served by the MCP server.
 - Export the current network and generate standalone Python scripts that reproduce the session workflow.
+- Hand a large result over as a file rather than inlining it: the read tools that can return a big table
+  (`check_voltage_violations`, `get_network_element_data`, `run_security_analysis`, `get_overloaded_elements`) take
+  `return_as="artifact"` and answer with the counts, the columns, a preview and a download link, in JSON or CSV.
+  Nothing is truncated, and the rows are fetched over plain HTTP by whoever needs them instead of travelling through
+  the client's context.
 - Keep per-session state with TTL-based caches so a client can work iteratively on the same study.
 - Report what the server is holding through a read-only admin HTTP API (`/admin/health`, `/admin/sessions`):
   active sessions, their contents, their activity, and process memory.

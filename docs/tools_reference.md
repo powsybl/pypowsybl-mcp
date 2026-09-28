@@ -34,6 +34,9 @@ This document lists all MCP tools exposed by the PyPowsybl MCP server, grouped b
 | `get_top_active_power_transit_lines` | Return the lines with the highest active power transit.                     |
 | `check_voltage_violations`           | List buses whose voltage is outside acceptable bounds.                      |
 
+`get_network_element_data` and `check_voltage_violations` also take `return_as="artifact"` to hand a large table over
+as a file instead of inlining it — see [Returning a big result as a file](#returning-a-big-result-as-a-file-return_asartifact).
+
 ##### Network modification
 
 | Tool                 | Description                                                                       |

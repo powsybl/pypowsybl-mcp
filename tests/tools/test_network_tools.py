@@ -1030,7 +1030,10 @@ async def test_get_network_element_data_main_area_filter(network_tools, mock_ctx
 
     async def gen_ids(**kwargs):
         result = await network_tools.get_network_element_data(
-            network_id="net1", element_type="generator", get_only_ids=True, ctx=mock_ctx,
+            network_id="net1",
+            element_type="generator",
+            get_only_ids=True,
+            ctx=mock_ctx,
             **kwargs,
         )
         return set(json.loads(result))

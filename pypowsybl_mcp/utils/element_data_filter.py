@@ -86,9 +86,7 @@ MAIN_COMPONENT_INDEX = 0
 _BUS_ID_COLUMNS = ("bus_id", "bus1_id", "bus2_id", "bus3_id")
 
 
-def main_area_bus_ids(
-    network, *, main_connected_component, main_synchronous_component
-):
+def main_area_bus_ids(network, *, main_connected_component, main_synchronous_component):
     """Ids of the buses in the requested "main" area, or None for no filter.
 
     Returns None when no restriction is asked for (both flags False) so callers

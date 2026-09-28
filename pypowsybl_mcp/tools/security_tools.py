@@ -16,11 +16,19 @@ from mcp.server.fastmcp import Context
 
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.tools.network_tools import NetworkTools
+from pypowsybl_mcp.utils.artifact_utils import (
+    artifact_response,
+    normalize_return_options,
+)
 from pypowsybl_mcp.utils.element_types import (
     ELEMENT_TYPE_TO_GETTER,
     element_type_hint,
 )
-from pypowsybl_mcp.utils.pagination import paginate
+from pypowsybl_mcp.utils.pagination import (
+    DEFAULT_PAGINATION_LIMIT,
+    MAX_PAGINATION_LIMIT,
+    paginate,
+)
 from pypowsybl_mcp.utils.user_session_management import get_session_id
 
 
@@ -71,6 +79,32 @@ class SecurityTools(PyPowsyblTool):
             "limit": round(float(getattr(violation, "limit", 0.0)), 2),
             "value": round(float(getattr(violation, "value", 0.0)), 2),
         }
+
+    @staticmethod
+    def _inline_overloaded_answer(
+        summary: dict, rows: list[dict], matched_count: int
+    ) -> dict:
+        """Put the overloaded rows in the answer, and say so when some were left out.
+
+        `rows` is the most loaded first and already capped; `matched_count` is how
+        many elements are really above the threshold. A cut that is not reported
+        reads as "these are all of them", so the answer flags it and points at the
+        artifact, which holds the whole list.
+        """
+        answer = {
+            **summary,
+            "matched_count": matched_count,
+            "returned_count": len(rows),
+        }
+        if len(rows) < matched_count:
+            answer["truncated"] = True
+            answer["hint"] = (
+                f"Only the {len(rows)} most loaded of {matched_count} elements are "
+                "listed. Call again with return_as='artifact' to get all of them "
+                "as a file."
+            )
+        answer["overloaded"] = rows
+        return answer
 
     @staticmethod
     def _loading_and_excess(
@@ -328,13 +362,14 @@ class SecurityTools(PyPowsyblTool):
 
     @staticmethod
     def _flatten_ranked_violations(
-        ranked_contingencies: list[dict], top_violations: int
+        ranked_contingencies: list[dict], top_violations: int | None
     ) -> list[dict]:
         """Gather every violation into one flat list, most loaded first.
 
         Each row remembers the contingency it comes from, so the list reads like
         a simple table. Rows without a real loading (infinite limit) go to the
-        end. We keep at most top_violations rows.
+        end. We keep at most top_violations rows, or all of them when it is None
+        - which is what an artifact wants, since nothing is truncated there.
         """
         flat = []
         for item in ranked_contingencies:
@@ -355,7 +390,7 @@ class SecurityTools(PyPowsyblTool):
             ),
             reverse=True,
         )
-        return flat[:top_violations]
+        return flat if top_violations is None else flat[:top_violations]
 
     async def run_security_analysis(
         self,
@@ -367,6 +402,8 @@ class SecurityTools(PyPowsyblTool):
         detail_limit: int = 25,
         limit_type: str | None = None,
         top_violations: int = 20,
+        return_as: str = "inline",
+        artifact_format: str = "json",
         limit: int | None = None,
         cursor: str | int | None = None,
         ctx: Context[ServerSession, None] = None,  # FastMCP injects this
@@ -433,6 +470,15 @@ class SecurityTools(PyPowsyblTool):
                 "LOW_VOLTAGE". Default None keeps them all; use "CURRENT" for overloads.
             top_violations (int, optional): How many lines to keep in the
                 "ranked_violations" table. Default: 20.
+            return_as (str, optional): "inline" (default) puts the violations in the
+                answer, capped by top_violations and detail_limit. "artifact" writes
+                every violation of every contingency to a temporary file instead -
+                one row per violation, carrying its contingency_id - and returns a
+                link to it next to the same counts. Use it for a full N-1 study: the
+                table runs into the thousands of rows, and the file is fetched over
+                plain HTTP by whoever needs the data instead of being read out loud.
+            artifact_format (str, optional): "json" (default) or "csv", when
+                return_as="artifact". Default: "json".
             limit (int, optional): Max entries in contingencies_with_violations per page.
             cursor (str | int, optional): Page offset for contingencies_with_violations.
 
@@ -448,6 +494,10 @@ class SecurityTools(PyPowsyblTool):
                 - top_violating_contingencies (list): Small ranked subset in summary mode
                 - contingencies_with_violations (list): Detailed violation information in detail mode
                 - error (str): Error message (if failed)
+                With return_as="artifact", ranked_violations and
+                contingencies_with_violations are replaced by:
+                - artifact (dict): url, format, row_count, columns, size_bytes, expires_at
+                - preview (list): the first few violation rows, to check the columns
 
         Example Output:
             {
@@ -515,6 +565,13 @@ class SecurityTools(PyPowsyblTool):
                 },
                 indent=2,
             )
+
+        try:
+            return_mode, artifact_format = normalize_return_options(
+                return_as, artifact_format
+            )
+        except ValueError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
 
         limit_type_filter = None
         if limit_type is not None:
@@ -591,9 +648,6 @@ class SecurityTools(PyPowsyblTool):
             contingencies_with_violations_list = [
                 item for item in ranked_contingencies if item["violation_count"] > 0
             ]
-            ranked_violations = self._flatten_ranked_violations(
-                contingencies_with_violations_list, top_violations
-            )
 
             post_contingency_data = {
                 "total_contingencies": len(post_contingency_results),
@@ -616,9 +670,42 @@ class SecurityTools(PyPowsyblTool):
                 "pre_contingency": pre_contingency_data,
                 "post_contingency": post_contingency_data,
                 "top_k": top_k,
-                "top_violations": top_violations,
-                "ranked_violations": ranked_violations,
             }
+
+            if return_mode == "artifact":
+                # The whole table goes to the file: every violation of every
+                # contingency, one row each, with no cap and no pagination. The
+                # ranked list kept for the inline answer would be a subset.
+                all_violations = self._flatten_ranked_violations(
+                    contingencies_with_violations_list, None
+                )
+                result["top_violating_contingencies"] = [
+                    {
+                        "contingency_id": item["contingency_id"],
+                        "status": item["status"],
+                        "violation_count": item["violation_count"],
+                    }
+                    for item in contingencies_with_violations_list[:top_k]
+                ]
+                logger.info(
+                    f"Security analysis completed for network '{network_id}' "
+                    f"({len(all_violations)} violations, returned as an artifact)"
+                )
+                return json.dumps(
+                    artifact_response(
+                        result,
+                        all_violations,
+                        f"{network_id}_security_analysis",
+                        artifact_format,
+                    ),
+                    indent=2,
+                    default=str,
+                )
+
+            result["top_violations"] = top_violations
+            result["ranked_violations"] = self._flatten_ranked_violations(
+                contingencies_with_violations_list, top_violations
+            )
 
             if mode == "summary":
                 # Keep only the most relevant contingencies to avoid huge payloads.
@@ -819,6 +906,8 @@ class SecurityTools(PyPowsyblTool):
         limit_kind: str | None = None,
         contingencies: list[dict] | str | None = None,
         min_nominal_voltage: float | None = None,
+        return_as: str = "inline",
+        artifact_format: str = "json",
         ctx: Context[ServerSession, None] = None,
     ) -> str:
         """
@@ -837,7 +926,10 @@ class SecurityTools(PyPowsyblTool):
                 - "n" (default): everyday operation on the current network state.
                 - "n1": after single-element outages (security analysis).
             threshold_percent (float, optional): Keep elements strictly above this loading
-                in percent (default: 100.0).
+                in percent (default: 100.0). For study="n1", only the elements that
+                break their limit after a contingency are reported by the security
+                analysis, so a threshold below 100 returns the same elements as 100:
+                it cannot reveal lines that stay just under their limit.
             limit_kind (str, optional): Which ampacity rating to use for study="n" only.
                 Defaults to "permanent" for study="n". Ignored for study="n1" because
                 run_security_analysis picks the correct limit internally.
@@ -845,11 +937,24 @@ class SecurityTools(PyPowsyblTool):
                 If omitted, create_contingencies_list() is called automatically.
             min_nominal_voltage (float, optional): When contingencies are auto-generated,
                 only elements at or above this voltage (kV) are included.
+            return_as (str, optional): "inline" (default) puts the overloaded elements
+                in the answer, the most loaded first; only the first 100 of them,
+                with truncated=true when more matched (matched_count always gives
+                the full number). "artifact" writes every one of them to
+                a temporary file instead and returns a link to it, with the counts and
+                a short preview - the useful mode when the whole list is wanted, such
+                as a broad threshold on a real network.
+            artifact_format (str, optional): "json" (default) or "csv", when
+                return_as="artifact". Default: "json".
 
         Returns:
             str: JSON with success, study, threshold_percent, matched_count, and overloaded
                 entries. Each entry has element_id and loading_percent; N-1 entries also
-                include contingency_id, value, limit, and limit_type.
+                include contingency_id, value, limit, and limit_type. returned_count
+                says how many entries are listed, and truncated and hint appear when
+                the list was cut.
+                With return_as="artifact", the overloaded list is replaced by an
+                artifact (url, format, row_count, columns, ...) and a preview.
 
         study="n" workflow (equivalent to get_network_element_data with mode="filter"):
             1. Reads line currents from the last loadflow on the active variant.
@@ -898,12 +1003,21 @@ class SecurityTools(PyPowsyblTool):
                 indent=2,
             )
 
+        try:
+            return_mode, artifact_format = normalize_return_options(
+                return_as, artifact_format
+            )
+        except ValueError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
+
         if study_normalized == "n":
             return await self._overloaded_in_normal_operation(
                 network_id=network_id,
                 element_type=element_type,
                 threshold=threshold,
                 limit_kind=limit_kind or "permanent",
+                return_mode=return_mode,
+                artifact_format=artifact_format,
                 ctx=ctx,
             )
 
@@ -913,6 +1027,8 @@ class SecurityTools(PyPowsyblTool):
             threshold=threshold,
             contingencies=contingencies,
             min_nominal_voltage=min_nominal_voltage,
+            return_mode=return_mode,
+            artifact_format=artifact_format,
             ctx=ctx,
         )
 
@@ -923,35 +1039,60 @@ class SecurityTools(PyPowsyblTool):
         element_type: str,
         threshold: float,
         limit_kind: str,
+        return_mode: str,
+        artifact_format: str,
         ctx: Context[ServerSession, None],
     ) -> str:
         """Study N: reuse the existing line filter on the current network snapshot."""
         network_tools = NetworkTools(self.pypowsybl_proxies)
-        raw = await network_tools.get_network_element_data(
-            network_id=network_id,
-            element_type=element_type,
-            mode="filter",
-            metric="loading_percent",
-            filter_op=">",
-            filter_value=threshold,
-            limit_kind=limit_kind,
-            ctx=ctx,
-        )
 
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return json.dumps(
-                {"success": False, "network_id": network_id, "error": raw},
-                indent=2,
+        # The filter answers one page at a time, most loaded first. An inline
+        # answer keeps the first page only, so it stays small; an artifact is
+        # asked for precisely to get every match, so it walks all the pages.
+        page_limit = (
+            MAX_PAGINATION_LIMIT
+            if return_mode == "artifact"
+            else DEFAULT_PAGINATION_LIMIT
+        )
+        elements: dict[str, dict] = {}
+        cursor = None
+        while True:
+            raw = await network_tools.get_network_element_data(
+                network_id=network_id,
+                element_type=element_type,
+                mode="filter",
+                metric="loading_percent",
+                filter_op=">",
+                filter_value=threshold,
+                limit_kind=limit_kind,
+                limit=page_limit,
+                cursor=cursor,
+                ctx=ctx,
             )
 
-        if not data.get("success"):
-            return raw
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                return json.dumps(
+                    {"success": False, "network_id": network_id, "error": raw},
+                    indent=2,
+                )
+
+            if not data.get("success"):
+                return raw
+
+            elements.update(data.get("elements", {}))
+            if return_mode != "artifact":
+                break
+            # A cursor that does not move would loop forever: stop there too.
+            next_cursor = (data.get("pagination") or {}).get("nextCursor")
+            if next_cursor is None or next_cursor == cursor:
+                break
+            cursor = next_cursor
 
         # Flatten the elements dict into a simple list the agent can scan quickly.
         overloaded = []
-        for element_id, fields in data.get("elements", {}).items():
+        for element_id, fields in elements.items():
             overloaded.append(
                 {
                     "element_id": element_id,
@@ -960,18 +1101,34 @@ class SecurityTools(PyPowsyblTool):
                 }
             )
 
+        summary = {
+            "success": True,
+            "study": "n",
+            "network_id": network_id,
+            "element_type": element_type,
+            "threshold_percent": threshold,
+            "limit_kind": data.get("limit_kind", limit_kind),
+            "variant_id": data.get("variant_id", "InitialState"),
+            "matched_count": len(overloaded),
+        }
+
+        if return_mode == "artifact":
+            return json.dumps(
+                artifact_response(
+                    summary,
+                    overloaded,
+                    f"{network_id}_overloaded_n",
+                    artifact_format,
+                ),
+                indent=2,
+                default=str,
+            )
+
+        # The filter counts every match before cutting its page.
         return json.dumps(
-            {
-                "success": True,
-                "study": "n",
-                "network_id": network_id,
-                "element_type": element_type,
-                "threshold_percent": threshold,
-                "limit_kind": data.get("limit_kind", limit_kind),
-                "variant_id": data.get("variant_id", "InitialState"),
-                "matched_count": len(overloaded),
-                "overloaded": overloaded,
-            },
+            self._inline_overloaded_answer(
+                summary, overloaded, data.get("matched_count", len(overloaded))
+            ),
             indent=2,
         )
 
@@ -983,6 +1140,8 @@ class SecurityTools(PyPowsyblTool):
         threshold: float,
         contingencies: list[dict] | str | None,
         min_nominal_voltage: float | None,
+        return_mode: str,
+        artifact_format: str,
         ctx: Context[ServerSession, None],
     ) -> str:
         """Study N-1: run security analysis and keep violations above the threshold."""
@@ -1054,19 +1213,33 @@ class SecurityTools(PyPowsyblTool):
 
         post = sa_data.get("post_contingency", {})
 
-        return json.dumps(
-            {
-                "success": True,
-                "study": "n1",
-                "network_id": network_id,
-                "element_type": element_type,
-                "threshold_percent": threshold,
-                "matched_count": len(overloaded),
-                "total_contingencies": post.get("total_contingencies"),
-                "contingencies_with_violations": post.get(
-                    "contingencies_with_violations"
+        summary = {
+            "success": True,
+            "study": "n1",
+            "network_id": network_id,
+            "element_type": element_type,
+            "threshold_percent": threshold,
+            "matched_count": len(overloaded),
+            "total_contingencies": post.get("total_contingencies"),
+            "contingencies_with_violations": post.get("contingencies_with_violations"),
+        }
+
+        if return_mode == "artifact":
+            return json.dumps(
+                artifact_response(
+                    summary,
+                    overloaded,
+                    f"{network_id}_overloaded_n1",
+                    artifact_format,
                 ),
-                "overloaded": overloaded,
-            },
+                indent=2,
+                default=str,
+            )
+
+        # Sorted above, so the cut keeps the worst cases.
+        return json.dumps(
+            self._inline_overloaded_answer(
+                summary, overloaded[:DEFAULT_PAGINATION_LIMIT], len(overloaded)
+            ),
             indent=2,
         )
