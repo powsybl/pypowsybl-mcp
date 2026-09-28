@@ -7,14 +7,14 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from pypowsybl_mcp.server import register_tools
 
 
 @pytest.fixture
 def mcp():
-    return FastMCP("TestServer")
+    return MCPServer("TestServer")
 
 
 def test_register_tools(mcp):
@@ -58,7 +58,7 @@ async def test_download_file_endpoint_handler():
 async def test_skill_resources_and_prompts_registered():
     from pypowsybl_mcp.server import register_skill_resources_and_prompts
 
-    test_mcp = FastMCP("TestServer")
+    test_mcp = MCPServer("TestServer")
     register_skill_resources_and_prompts(test_mcp)
 
     # Skills are exposed as concrete resources, discoverable via resources/list

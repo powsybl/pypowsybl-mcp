@@ -224,6 +224,10 @@ The same running server can be connected to other MCP clients that support strea
 
 See [MCP Client Integration](docs/mcp_client_integration.md) for examples.
 
+Because the server keeps state across tool calls, it only serves stateful MCP sessions opened with the `initialize`
+handshake. Clients that support it fall back to the handshake automatically; requests made in a stateless protocol
+version (`2026-07-28` and later) are refused. See [Sessions & State](docs/mcp_sessions.md).
+
 ## Example Prompts
 
 - `Load the network from /app/data/my_grid.xiidm and list all generators.`

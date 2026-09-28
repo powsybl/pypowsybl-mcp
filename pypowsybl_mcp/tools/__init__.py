@@ -6,8 +6,8 @@
 
 from cachetools import TTLCache
 from loguru import logger
-from mcp.server import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.proxy import PyPowsyblMCPServerProxy
 from pypowsybl_mcp.utils.session_registry import SESSIONS
@@ -19,7 +19,7 @@ class NetworkNotFoundError(ValueError):
 
 
 def wrap_class_methods_with_mcp_tool(
-    obj, mcp: FastMCP, exclude: list[str] | None = None
+    obj, mcp: MCPServer, exclude: list[str] | None = None
 ):
     """
     Wrap all public methods of an instance `obj` with mcp.tool(),
@@ -93,6 +93,6 @@ class PyPowsyblTool:
             raise NetworkNotFoundError(f"Network '{network_id}' not found")
         return proxy, network_id, proxy.networks[network_id]
 
-    def register_tools_with_mcp(self, mcp: FastMCP, exclude: list[str] | None = None):
+    def register_tools_with_mcp(self, mcp: MCPServer, exclude: list[str] | None = None):
         """Register a MCP instance to be used for tool wrapping."""
         wrap_class_methods_with_mcp_tool(self, mcp, exclude)

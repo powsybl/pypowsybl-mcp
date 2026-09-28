@@ -11,9 +11,8 @@ from bs4 import BeautifulSoup
 from cachetools import TTLCache
 from loguru import logger
 from markdownify import markdownify as md
-from mcp import ServerSession
-from mcp.server import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.tools import PyPowsyblTool
 from pypowsybl_mcp.utils.user_session_management import get_session_id
@@ -139,7 +138,7 @@ def _extract_method_index(html: str, class_object: str) -> str:
     return "\n".join(lines) if found else ""
 
 
-def register_resource_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
+def register_resource_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
     tools = ResourceTools(pypowsybl_proxies)
     tools.register_tools_with_mcp(mcp)
 
@@ -149,7 +148,7 @@ class ResourceTools(PyPowsyblTool):
         self,
         class_object: str,
         method_name: str = "",
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Fetch official pypowsybl API documentation and return it as markdown.
@@ -303,7 +302,7 @@ class ResourceTools(PyPowsyblTool):
     async def read_resource(
         self,
         resource_id: str,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Read a documentation resource already fetched this session with `get_online_resource`.

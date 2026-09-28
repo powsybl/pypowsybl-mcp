@@ -10,9 +10,8 @@ import pandas as pd
 import pypowsybl as pp
 from cachetools import TTLCache
 from loguru import logger
-from mcp import ServerSession
-from mcp.server import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.utils.artifact_utils import (
@@ -75,7 +74,7 @@ MODIFY_NETWORK_SPEC: dict[str, dict] = {
 }
 
 
-def register_network_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
+def register_network_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
     tools = NetworkTools(pypowsybl_proxies)
     tools.register_tools_with_mcp(mcp)
 
@@ -86,7 +85,7 @@ class NetworkTools(PyPowsyblTool):
         network_type: str,
         network_id: str,
         set_as_current: bool = True,
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> str:
         """
         Create a standard IEEE test network for power system analysis.
@@ -152,9 +151,7 @@ class NetworkTools(PyPowsyblTool):
             logger.error(f"Failed to create network: {e}")
             return f"Failed to create network: {e!s}"
 
-    async def switch_network(
-        self, network_id: str, ctx: Context[ServerSession, None] = None
-    ) -> str:
+    async def switch_network(self, network_id: str, ctx: Context = None) -> str:
         """
         Switch the active network context to a different loaded network.
 
@@ -210,7 +207,7 @@ class NetworkTools(PyPowsyblTool):
             logger.error(f"Failed to switch network: {e}")
             return f"Failed to switch network: {e!s}"
 
-    async def list_networks(self, ctx: Context[ServerSession, None] = None) -> str:
+    async def list_networks(self, ctx: Context = None) -> str:
         """
         List all currently loaded networks with their status and key statistics.
 
@@ -285,7 +282,7 @@ class NetworkTools(PyPowsyblTool):
             return f"Failed to list networks: {e!s}"
 
     async def get_network_info(
-        self, network_id: str | None = None, ctx: Context[ServerSession, None] = None
+        self, network_id: str | None = None, ctx: Context = None
     ) -> str:
         """
         Get detailed information and statistics about a power system network.
@@ -354,7 +351,7 @@ class NetworkTools(PyPowsyblTool):
         parameter: str,
         value: float,
         network_id: str | None = None,
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> str:
         """
         Modify parameters of network elements (generators, loads, lines).
@@ -526,7 +523,7 @@ class NetworkTools(PyPowsyblTool):
         line_id: str,
         active: bool,
         network_id: str | None = None,
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> str:
         """
         Activate or deactivate a transmission line in the network.
@@ -671,7 +668,7 @@ class NetworkTools(PyPowsyblTool):
         switch_id: str,
         open: bool,
         network_id: str | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Open or close a switch in the network (breaker, disconnector, load-break switch).
@@ -770,7 +767,7 @@ class NetworkTools(PyPowsyblTool):
         tap_changer_type: str = "ratio",
         side: str | None = None,
         network_id: str | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Change the tap position of a transformer's tap changer.
@@ -932,9 +929,7 @@ class NetworkTools(PyPowsyblTool):
             logger.error(f"Failed to set tap position: {e}")
             return f"Failed to set tap position: {e!s}"
 
-    async def remove_network(
-        self, network_id: str, ctx: Context[ServerSession, None] = None
-    ) -> str:
+    async def remove_network(self, network_id: str, ctx: Context = None) -> str:
         """
         Remove a network from server memory and free resources.
 
@@ -1036,7 +1031,7 @@ class NetworkTools(PyPowsyblTool):
         variant_id: str,
         base_variant_id: str = "InitialState",
         network_id: str | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Create a new network variant by cloning an existing one.
@@ -1079,7 +1074,7 @@ class NetworkTools(PyPowsyblTool):
         self,
         variant_id: str,
         network_id: str | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Switch the active working variant of a network.
@@ -1119,7 +1114,7 @@ class NetworkTools(PyPowsyblTool):
     async def get_working_variant(
         self,
         network_id: str | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Get the ID of the current working variant of a network.
@@ -1148,7 +1143,7 @@ class NetworkTools(PyPowsyblTool):
     async def list_variants(
         self,
         network_id: str | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         List all available variants for a network.
@@ -1181,7 +1176,7 @@ class NetworkTools(PyPowsyblTool):
         variant_id: str,
         network_id: str | None = None,
         fallback_variant_id: str | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Remove a variant from a network.
@@ -1239,7 +1234,7 @@ class NetworkTools(PyPowsyblTool):
         artifact_format: str = "json",
         limit: int | None = None,
         cursor: str | int | None = None,
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> str:
         """
         Check for bus voltage violations against operating limits.
@@ -1542,7 +1537,7 @@ class NetworkTools(PyPowsyblTool):
         artifact_format: str = "json",
         limit: int | None = None,
         cursor: str | int | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Retrieve detailed information about specific network elements as JSON.
@@ -2020,7 +2015,7 @@ class NetworkTools(PyPowsyblTool):
         network_id: str | None = None,
         k: int = 10,
         flow_side: str = "from",
-        ctx: Context[ServerSession, None] | None = None,
+        ctx: Context | None = None,
     ) -> str:
         """
         Returns the top K lines with the highest active power transit.
@@ -2036,7 +2031,7 @@ class NetworkTools(PyPowsyblTool):
             network_id: Network identifier (default: current network).
             k: Number of elements to return (0 to 50).
             flow_side: Direction used for measurement ("from" => p1, "to" => p2).
-            ctx: FastMCP context.
+            ctx: MCPServer context.
 
         Returns:
             str: JSON string containing a table with the following columns:

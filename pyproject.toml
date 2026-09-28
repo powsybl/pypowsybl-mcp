@@ -37,9 +37,12 @@ dependencies = [
     "cachetools>=7.1.4",
     "loguru>=0.7.3",
     "markdownify>=1.2.2",
-    "mcp<2",
-    "openai>=2.41.0",
-    "openai-agents[litellm]>=0.17.4",
+    "mcp>=2,<3",
+    # openai-agents 0.21+ requires openai>=3, which every released litellm still caps
+    # at <3: resolving it would silently downgrade litellm by ~15 minor versions.
+    # 0.20 is the first release that supports the MCP SDK v2 while keeping openai 2.x.
+    "openai>=2.41.0,<3",
+    "openai-agents[litellm]>=0.20",
     "pandas>=3.0.1",
     "pypowsybl==1.15.0",
     "starlette>=0.52.1",

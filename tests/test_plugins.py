@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from cachetools import TTLCache
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from pypowsybl_mcp.plugins import (
     PLUGIN_GROUP,
@@ -28,7 +28,7 @@ def _fake_entry_point(name, register_fn):
 
 @pytest.fixture
 def mcp():
-    return FastMCP("TestServer")
+    return MCPServer("TestServer")
 
 
 @pytest.fixture

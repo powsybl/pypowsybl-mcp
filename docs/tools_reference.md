@@ -154,6 +154,6 @@ LLM**.
 - All tools return a **string** (plain text or JSON-formatted text).
 - Tools that produce files (diagrams, exports) return a **temporary download URL** of the form
   `http://<MCP_PUBLIC_ADDRESS>:<MCP_PORT>/download/<token>/<filename>`.
-- The `ctx` parameter is injected automatically by FastMCP and must not be passed by the caller.
+- The `ctx` parameter is injected automatically by MCPServer and must not be passed by the caller.
 - This page lists the server's **built-in** tools only. Installed plugins can add further tools that appear
   alongside these in the same tool list — see [plugins.md](plugins.md).

@@ -5,12 +5,20 @@
 #  SPDX-License-Identifier: MPL-2.0
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+from mcp import Client
+from mcp.server.mcpserver import Context, MCPServer
+
 from pypowsybl_mcp.utils.user_session_management import (
+    SESSION_ID_KEY,
+    bind_session_id,
     check_session_id,
     get_session_id,
     get_session_info,
+    peek_session_id,
 )
 
 
@@ -87,3 +95,54 @@ def test_generated_session_id_is_usable_as_str_cache_key():
     assert isinstance(session_id, str)
     proxies = {session_id: "proxy"}
     assert str(session_id) in proxies
+
+
+def test_session_id_is_bound_to_the_connection_state():
+    """mcp 2 rebuilds `ctx.session` for every request: the ID must live on the
+    connection, which outlives it."""
+    connection = SimpleNamespace(state={})
+    ctx = SimpleNamespace(session=SimpleNamespace(_connection=connection))
+
+    session_id = get_session_id(ctx)
+
+    assert connection.state[SESSION_ID_KEY] == session_id
+    assert not hasattr(ctx.session, "session_id")
+
+    # A later request on the same connection gets a fresh session object.
+    next_ctx = SimpleNamespace(session=SimpleNamespace(_connection=connection))
+    assert get_session_id(next_ctx) == session_id
+
+
+def test_bind_session_id_repins_the_connection():
+    connection = SimpleNamespace(state={SESSION_ID_KEY: "generated"})
+    ctx = SimpleNamespace(session=SimpleNamespace(_connection=connection))
+
+    bind_session_id(ctx, "pinned")
+
+    assert peek_session_id(ctx) == "pinned"
+
+
+def test_peek_session_id_does_not_create_one():
+    connection = SimpleNamespace(state={})
+    ctx = SimpleNamespace(session=SimpleNamespace(_connection=connection))
+
+    assert peek_session_id(ctx) is None
+    assert peek_session_id(None) is None
+    assert connection.state == {}
+
+
+@pytest.mark.asyncio
+async def test_session_id_survives_across_tool_calls_of_one_client():
+    """Regression: two tool calls from the same client must share a session."""
+    server = MCPServer("TestServer")
+
+    @server.tool()
+    async def whoami(ctx: Context) -> str:
+        return get_session_id(ctx)
+
+    async with Client(server, mode="legacy") as client:
+        first = (await client.call_tool("whoami", {})).content[0].text
+        second = (await client.call_tool("whoami", {})).content[0].text
+
+    assert first == second
+    assert uuid.UUID(first).version == 4

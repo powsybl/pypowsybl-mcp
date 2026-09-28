@@ -12,9 +12,8 @@ from urllib.parse import urlparse
 import pypowsybl as pp
 from cachetools import TTLCache
 from loguru import logger
-from mcp import ServerSession
-from mcp.server import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.tools import PyPowsyblTool
 from pypowsybl_mcp.utils import DOWNLOAD_BASE_URL, DOWNLOAD_LINK_EXPIRY_SECONDS
@@ -22,7 +21,7 @@ from pypowsybl_mcp.utils.download_utils import generate_download_link
 from pypowsybl_mcp.utils.user_session_management import get_session_id
 
 
-def register_io_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
+def register_io_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
     io_tools = IOTools(pypowsybl_proxies)
     io_tools.register_tools_with_mcp(mcp)
 
@@ -48,7 +47,7 @@ class IOTools(PyPowsyblTool):
         url: str,
         network_id: str,
         set_as_current: bool = True,
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> dict:
         """
         Download and load a power system network from a URL.
@@ -159,7 +158,7 @@ class IOTools(PyPowsyblTool):
         path: str,
         network_id: str,
         set_as_current: bool = True,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> dict:
         """
         Load a power grid network from a local file path on the server.
@@ -223,7 +222,7 @@ class IOTools(PyPowsyblTool):
         network_id: str | None = None,
         file_name: str | None = None,
         format_type: str = "XIIDM",
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> dict:
         """
         Export a network to a file in standard power system format.

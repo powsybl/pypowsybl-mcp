@@ -102,26 +102,26 @@ your-plugin-package/
 ##### 2. Write your tools
 
 Subclass `PyPowsyblTool` and write one `async` method per tool. Its type hints and docstring *are* the tool's schema and
-description for the LLM - there's nothing else to declare.
+description for the LLM - there's nothing else to declare. The server runs on version 2 of the MCP Python SDK
+(`mcp>=2,<3`), where `FastMCP` was renamed `MCPServer`: import `Context` and `MCPServer` from `mcp.server.mcpserver`.
 
 ```python
 # your_plugin_package/tools.py
 from cachetools import TTLCache
-from mcp import ServerSession
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 from pypowsybl_mcp.tools import PyPowsyblTool
 
 
 class MyTools(PyPowsyblTool):
-    async def ping(self, ctx: Context[ServerSession, None] = None) -> str:
+    async def ping(self, ctx: Context = None) -> str:
         """Liveness check for this plugin."""
         return "pong from my-plugin"
 
     async def check_network_health(
         self,
         session_id: str,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """Example custom analysis tool using the current network."""
         proxy = self.get_proxy(session_id)
@@ -137,7 +137,7 @@ class MyTools(PyPowsyblTool):
     async def get_network_health_result(
         self,
         session_id: str,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """Retrieve the last cached result for the current network."""
         proxy = self.get_proxy(session_id)
@@ -145,7 +145,7 @@ class MyTools(PyPowsyblTool):
         return str(result) if result is not None else "No result cached yet."
 
 
-def register_plugin_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache) -> None:
+def register_plugin_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache) -> None:
     MyTools(pypowsybl_proxies).register_tools_with_mcp(mcp)
 ```
 
@@ -165,14 +165,14 @@ Built with the same primitives the host uses for its own built-in resources - th
 from pathlib import Path
 
 from cachetools import TTLCache
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.prompts import Prompt
-from mcp.server.fastmcp.resources import FileResource
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.prompts import Prompt
+from mcp.server.mcpserver.resources import FileResource
 
 GUIDE_PATH = Path(__file__).parent / "docs" / "guide.md"
 
 
-def register_plugin_resources(mcp: FastMCP, pypowsybl_proxies: TTLCache) -> None:
+def register_plugin_resources(mcp: MCPServer, pypowsybl_proxies: TTLCache) -> None:
     mcp.add_resource(
         FileResource(
             uri="myplugin://docs/guide",

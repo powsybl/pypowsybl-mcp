@@ -17,7 +17,7 @@ import os
 
 from cachetools import TTLCache
 from loguru import logger
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 # Groups for plugins
 PLUGIN_GROUP = "pypowsybl_mcp.plugins.v1"
@@ -33,7 +33,7 @@ def _disabled_plugin_names() -> set[str]:
     }
 
 
-def discover_and_load_plugins(mcp: FastMCP, pypowsybl_proxies: TTLCache) -> None:
+def discover_and_load_plugins(mcp: MCPServer, pypowsybl_proxies: TTLCache) -> None:
     """Load tool registrars declared under PLUGIN_GROUP by any installed package."""
     disabled = _disabled_plugin_names()
     for ep in importlib.metadata.entry_points(group=PLUGIN_GROUP):
@@ -52,7 +52,7 @@ def discover_and_load_plugins(mcp: FastMCP, pypowsybl_proxies: TTLCache) -> None
 
 
 def discover_and_load_resource_plugins(
-    mcp: FastMCP, pypowsybl_proxies: TTLCache
+    mcp: MCPServer, pypowsybl_proxies: TTLCache
 ) -> None:
     """Load resource/prompt registrars declared under RESOURCE_PLUGIN_GROUP by any installed package."""
     disabled = _disabled_plugin_names()

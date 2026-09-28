@@ -1168,7 +1168,7 @@ async def test_set_tap_position_3wt_requires_side(network_tools, mock_ctx):
 
 
 class MockMCP:
-    """Minimal FastMCP stand-in, mirroring the pattern used in test_sensitivity_tools.py."""
+    """Minimal MCPServer stand-in, mirroring the pattern used in test_sensitivity_tools.py."""
 
     def __init__(self):
         self.tools = {}

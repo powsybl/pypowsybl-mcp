@@ -10,15 +10,14 @@ from datetime import UTC, datetime
 import pypowsybl as pp
 from cachetools import TTLCache
 from loguru import logger
-from mcp import ServerSession
-from mcp.server import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.utils.user_session_management import get_session_id
 
 
-def register_loadflow_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
+def register_loadflow_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
     tools = LoadflowTools(pypowsybl_proxies)
     tools.register_tools_with_mcp(mcp)
 
@@ -26,7 +25,7 @@ def register_loadflow_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
 class LoadflowTools(PyPowsyblTool):
     async def get_loadflow_provider_info(
         self,
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> str:
         """
         Get information about available load flow providers.
@@ -40,7 +39,7 @@ class LoadflowTools(PyPowsyblTool):
         with set_loadflow_provider.
 
         Args:
-            ctx: FastMCP context (injected automatically).
+            ctx: MCPServer context (injected automatically).
 
         Returns:
             str: JSON formatted string containing:
@@ -111,7 +110,7 @@ class LoadflowTools(PyPowsyblTool):
     async def set_loadflow_provider(
         self,
         provider: str,
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> str:
         """
         Set the load flow provider for the current session.
@@ -132,7 +131,7 @@ class LoadflowTools(PyPowsyblTool):
                 Common providers:
                     - "OpenLoadFlow": Open-source load flow (default)
                     - "DynaFlow": RTE's dynamic/static flow solver
-            ctx: FastMCP context (injected automatically).
+            ctx: MCPServer context (injected automatically).
 
         Returns:
             str: JSON formatted string containing:
@@ -177,9 +176,7 @@ class LoadflowTools(PyPowsyblTool):
             logger.exception(f"Failed to set loadflow provider: {e}")
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
-    async def get_loadflow_params(
-        self, ctx: Context[ServerSession, None] = None
-    ) -> str:
+    async def get_loadflow_params(self, ctx: Context = None) -> str:
         """Get PyPowsybl loadflow configuration."""
         logger.debug("Getting PyPowsybl loadflow configuration")
         session_id = get_session_id(ctx)
@@ -192,7 +189,7 @@ class LoadflowTools(PyPowsyblTool):
 
     async def restore_default_loadflow_param(
         self,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """Restore default loadflow parameters"""
         session_id = get_session_id(ctx)
@@ -232,7 +229,7 @@ class LoadflowTools(PyPowsyblTool):
         connected_component_mode: str | None = None,
         dc_power_factor: float | None = None,
         hvdc_ac_emulation: bool | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Update load flow parameters for the current session.
@@ -309,7 +306,7 @@ class LoadflowTools(PyPowsyblTool):
         self,
         network_id: str | None = None,
         dc: bool = False,
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> str:
         """
         Execute power flow (loadflow) analysis on a network to compute steady-state operating point.

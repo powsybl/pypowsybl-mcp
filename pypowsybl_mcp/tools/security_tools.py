@@ -10,9 +10,8 @@ from typing import Any
 import pypowsybl as pp
 from cachetools import TTLCache
 from loguru import logger
-from mcp import ServerSession
-from mcp.server import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.tools.network_tools import NetworkTools
@@ -32,7 +31,7 @@ from pypowsybl_mcp.utils.pagination import (
 from pypowsybl_mcp.utils.user_session_management import get_session_id
 
 
-def register_security_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
+def register_security_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
     tools = SecurityTools(pypowsybl_proxies)
     # Private helpers (underscore-prefixed) are skipped automatically.
     tools.register_tools_with_mcp(mcp)
@@ -406,7 +405,7 @@ class SecurityTools(PyPowsyblTool):
         artifact_format: str = "json",
         limit: int | None = None,
         cursor: str | int | None = None,
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> str:
         """
         Execute N-1 security analysis to evaluate network robustness under contingencies.
@@ -757,7 +756,7 @@ class SecurityTools(PyPowsyblTool):
         max_nominal_voltage: float | None = None,
         limit: int | None = None,
         cursor: str | int | None = None,
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> str:
         """
         Create a list of contingencies for security analysis based on network elements and filter criteria.
@@ -908,7 +907,7 @@ class SecurityTools(PyPowsyblTool):
         min_nominal_voltage: float | None = None,
         return_as: str = "inline",
         artifact_format: str = "json",
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Find network elements loaded above a threshold, in normal (N) or N-1 operation.
@@ -1041,7 +1040,7 @@ class SecurityTools(PyPowsyblTool):
         limit_kind: str,
         return_mode: str,
         artifact_format: str,
-        ctx: Context[ServerSession, None],
+        ctx: Context,
     ) -> str:
         """Study N: reuse the existing line filter on the current network snapshot."""
         network_tools = NetworkTools(self.pypowsybl_proxies)
@@ -1142,7 +1141,7 @@ class SecurityTools(PyPowsyblTool):
         min_nominal_voltage: float | None,
         return_mode: str,
         artifact_format: str,
-        ctx: Context[ServerSession, None],
+        ctx: Context,
     ) -> str:
         """Study N-1: run security analysis and keep violations above the threshold."""
         session_id = get_session_id(ctx)

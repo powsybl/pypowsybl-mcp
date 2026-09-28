@@ -6,9 +6,8 @@
 import os
 
 from loguru import logger
-from mcp import ServerSession
-from mcp.server import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.llm_utils.agents.code_generation import generate_code_from_macro
 from pypowsybl_mcp.tools import PyPowsyblTool
@@ -16,7 +15,7 @@ from pypowsybl_mcp.utils import DOWNLOAD_BASE_URL, DOWNLOAD_LINK_EXPIRY_SECONDS
 from pypowsybl_mcp.utils.download_utils import generate_download_link
 
 
-def register_code_tools(mcp: FastMCP, pypowsybl_proxies):
+def register_code_tools(mcp: MCPServer, pypowsybl_proxies):
     tools = CodeTools(pypowsybl_proxies)
     tools.register_tools_with_mcp(mcp)
 
@@ -26,7 +25,7 @@ class CodeTools(PyPowsyblTool):
         self,
         actions: str,
         script_name: str = "my_script.py",
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Generate a standalone Python script from a sequence of MCP tool actions.
