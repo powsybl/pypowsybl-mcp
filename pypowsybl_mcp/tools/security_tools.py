@@ -24,7 +24,11 @@ from pypowsybl_mcp.utils.element_types import (
     ELEMENT_TYPE_TO_GETTER,
     element_type_hint,
 )
-from pypowsybl_mcp.utils.pagination import paginate
+from pypowsybl_mcp.utils.pagination import (
+    DEFAULT_PAGINATION_LIMIT,
+    MAX_PAGINATION_LIMIT,
+    paginate,
+)
 from pypowsybl_mcp.utils.user_session_management import get_session_id
 
 
@@ -75,6 +79,32 @@ class SecurityTools(PyPowsyblTool):
             "limit": round(float(getattr(violation, "limit", 0.0)), 2),
             "value": round(float(getattr(violation, "value", 0.0)), 2),
         }
+
+    @staticmethod
+    def _inline_overloaded_answer(
+        summary: dict, rows: list[dict], matched_count: int
+    ) -> dict:
+        """Put the overloaded rows in the answer, and say so when some were left out.
+
+        `rows` is the most loaded first and already capped; `matched_count` is how
+        many elements are really above the threshold. A cut that is not reported
+        reads as "these are all of them", so the answer flags it and points at the
+        artifact, which holds the whole list.
+        """
+        answer = {
+            **summary,
+            "matched_count": matched_count,
+            "returned_count": len(rows),
+        }
+        if len(rows) < matched_count:
+            answer["truncated"] = True
+            answer["hint"] = (
+                f"Only the {len(rows)} most loaded of {matched_count} elements are "
+                "listed. Call again with return_as='artifact' to get all of them "
+                "as a file."
+            )
+        answer["overloaded"] = rows
+        return answer
 
     @staticmethod
     def _loading_and_excess(
@@ -905,16 +935,21 @@ class SecurityTools(PyPowsyblTool):
             min_nominal_voltage (float, optional): When contingencies are auto-generated,
                 only elements at or above this voltage (kV) are included.
             return_as (str, optional): "inline" (default) puts the overloaded elements
-                in the answer. "artifact" writes them to a temporary file instead and
-                returns a link to it, with the counts and a short preview - the useful
-                mode for an N-1 screening on a real network, where the list runs long.
+                in the answer, the most loaded first; for study="n", only the first
+                100 of them, with truncated=true when more matched (matched_count
+                always gives the full number). "artifact" writes every one of them to
+                a temporary file instead and returns a link to it, with the counts and
+                a short preview - the useful mode when the whole list is wanted, such
+                as a broad threshold on a real network.
             artifact_format (str, optional): "json" (default) or "csv", when
                 return_as="artifact". Default: "json".
 
         Returns:
             str: JSON with success, study, threshold_percent, matched_count, and overloaded
                 entries. Each entry has element_id and loading_percent; N-1 entries also
-                include contingency_id, value, limit, and limit_type.
+                include contingency_id, value, limit, and limit_type. For study="n",
+                returned_count says how many entries are listed, and truncated and
+                hint appear when the list was cut.
                 With return_as="artifact", the overloaded list is replaced by an
                 artifact (url, format, row_count, columns, ...) and a preview.
 
@@ -1007,31 +1042,54 @@ class SecurityTools(PyPowsyblTool):
     ) -> str:
         """Study N: reuse the existing line filter on the current network snapshot."""
         network_tools = NetworkTools(self.pypowsybl_proxies)
-        raw = await network_tools.get_network_element_data(
-            network_id=network_id,
-            element_type=element_type,
-            mode="filter",
-            metric="loading_percent",
-            filter_op=">",
-            filter_value=threshold,
-            limit_kind=limit_kind,
-            ctx=ctx,
-        )
 
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return json.dumps(
-                {"success": False, "network_id": network_id, "error": raw},
-                indent=2,
+        # The filter answers one page at a time, most loaded first. An inline
+        # answer keeps the first page only, so it stays small; an artifact is
+        # asked for precisely to get every match, so it walks all the pages.
+        page_limit = (
+            MAX_PAGINATION_LIMIT
+            if return_mode == "artifact"
+            else DEFAULT_PAGINATION_LIMIT
+        )
+        elements: dict[str, dict] = {}
+        cursor = None
+        while True:
+            raw = await network_tools.get_network_element_data(
+                network_id=network_id,
+                element_type=element_type,
+                mode="filter",
+                metric="loading_percent",
+                filter_op=">",
+                filter_value=threshold,
+                limit_kind=limit_kind,
+                limit=page_limit,
+                cursor=cursor,
+                ctx=ctx,
             )
 
-        if not data.get("success"):
-            return raw
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                return json.dumps(
+                    {"success": False, "network_id": network_id, "error": raw},
+                    indent=2,
+                )
+
+            if not data.get("success"):
+                return raw
+
+            elements.update(data.get("elements", {}))
+            if return_mode != "artifact":
+                break
+            # A cursor that does not move would loop forever: stop there too.
+            next_cursor = (data.get("pagination") or {}).get("nextCursor")
+            if next_cursor is None or next_cursor == cursor:
+                break
+            cursor = next_cursor
 
         # Flatten the elements dict into a simple list the agent can scan quickly.
         overloaded = []
-        for element_id, fields in data.get("elements", {}).items():
+        for element_id, fields in elements.items():
             overloaded.append(
                 {
                     "element_id": element_id,
@@ -1063,7 +1121,13 @@ class SecurityTools(PyPowsyblTool):
                 default=str,
             )
 
-        return json.dumps({**summary, "overloaded": overloaded}, indent=2)
+        # The filter counts every match before cutting its page.
+        return json.dumps(
+            self._inline_overloaded_answer(
+                summary, overloaded, data.get("matched_count", len(overloaded))
+            ),
+            indent=2,
+        )
 
     async def _overloaded_after_contingencies(
         self,
