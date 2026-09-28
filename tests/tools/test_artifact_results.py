@@ -189,6 +189,25 @@ async def test_an_unknown_artifact_format_is_refused(network_tools, mock_ctx):
     assert "json, csv" in data["error"]
 
 
+@pytest.mark.asyncio
+async def test_the_artifact_format_is_not_checked_for_an_inline_answer(
+    network_tools, mock_ctx
+):
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = network_with_buses([440.0])
+    proxy.loadflow_results["net1"] = {"converged": True}
+
+    data = json.loads(
+        await network_tools.check_voltage_violations(
+            network_id="net1", artifact_format="xlsx", ctx=mock_ctx
+        )
+    )
+
+    assert data["success"] is True
+    assert "artifact" not in data
+    assert len(data["violations"]) == 1
+
+
 # --- get_network_element_data ----------------------------------------------
 
 
@@ -299,6 +318,92 @@ async def test_reading_elements_restores_the_working_variant_even_as_an_artifact
     )
 
     assert network.set_working_variant.call_args_list[-1].args == ("v2",)
+
+
+@pytest.mark.asyncio
+async def test_element_ids_go_to_a_file_when_an_artifact_is_asked_for(
+    network_tools, mock_ctx
+):
+    proxy = network_tools.get_proxy("test-session")
+    network = MagicMock()
+    network.get_variant_ids.return_value = ["InitialState"]
+    network.get_working_variant_id.return_value = "InitialState"
+    network.get_elements_ids.return_value = [f"G{i}" for i in range(1, 251)]
+    proxy.networks["net1"] = network
+
+    data = json.loads(
+        await network_tools.get_network_element_data(
+            network_id="net1",
+            element_type="generator",
+            get_only_ids=True,
+            return_as="artifact",
+            ctx=mock_ctx,
+        )
+    )
+
+    assert data["return_as"] == "artifact"
+    assert data["total_elements"] == 250
+    assert data["artifact"]["columns"] == ["id"]
+    assert "element_ids" not in data
+    rows = artifact_rows(data)
+    assert len(rows) == 250
+    assert rows[0] == {"id": "G1"}
+
+
+@pytest.mark.asyncio
+async def test_element_ids_read_from_the_getter_can_go_to_a_csv_file(
+    network_tools, mock_ctx
+):
+    proxy = network_tools.get_proxy("test-session")
+    network = MagicMock()
+    network.get_variant_ids.return_value = ["InitialState"]
+    network.get_working_variant_id.return_value = "InitialState"
+    network.get_voltage_levels.return_value = pd.DataFrame(
+        {"nominal_v": [400.0, 225.0]}, index=["VL1", "VL2"]
+    )
+    proxy.networks["net1"] = network
+
+    data = json.loads(
+        await network_tools.get_network_element_data(
+            network_id="net1",
+            element_type="voltage_level",
+            get_only_ids=True,
+            return_as="artifact",
+            artifact_format="csv",
+            ctx=mock_ctx,
+        )
+    )
+
+    assert data["artifact"]["format"] == "csv"
+    assert artifact_bytes(data).decode("utf-8-sig").splitlines() == [
+        "id",
+        "VL1",
+        "VL2",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_element_data_ignores_the_artifact_format_when_inline(
+    network_tools, mock_ctx
+):
+    proxy = network_tools.get_proxy("test-session")
+    network = MagicMock()
+    network.get_variant_ids.return_value = ["InitialState"]
+    network.get_working_variant_id.return_value = "InitialState"
+    network.get_elements_ids.return_value = ["G1", "G2"]
+    proxy.networks["net1"] = network
+
+    data = json.loads(
+        await network_tools.get_network_element_data(
+            network_id="net1",
+            element_type="generator",
+            get_only_ids=True,
+            artifact_format="xlsx",
+            ctx=mock_ctx,
+        )
+    )
+
+    assert data == ["G1", "G2"]
 
 
 # --- run_security_analysis --------------------------------------------------
@@ -456,6 +561,48 @@ async def test_an_unknown_return_as_is_refused_by_the_security_analysis(
     assert "inline, artifact" in data["error"]
 
 
+@pytest.mark.asyncio
+async def test_the_violations_are_flattened_once_for_an_artifact(
+    security_tools, mock_ctx
+):
+    post_results = {
+        f"C{i}": FakeResult("CONVERGED", [FakeViolation(f"LINE_{i}")])
+        for i in range(1, 4)
+    }
+
+    with patch.object(
+        security_tools,
+        "_flatten_ranked_violations",
+        wraps=security_tools._flatten_ranked_violations,
+    ) as flatten:
+        data = json.loads(
+            await run_analysis(
+                security_tools, mock_ctx, post_results, return_as="artifact"
+            )
+        )
+
+    assert data["artifact"]["row_count"] == 3
+    # Only the uncapped pass: the capped list is for the inline answer.
+    assert flatten.call_count == 1
+    assert flatten.call_args.args[1] is None
+
+
+@pytest.mark.asyncio
+async def test_the_security_analysis_ignores_the_artifact_format_when_inline(
+    security_tools, mock_ctx
+):
+    post_results = {"C1": FakeResult("CONVERGED", [FakeViolation("LINE_1")])}
+
+    data = json.loads(
+        await run_analysis(
+            security_tools, mock_ctx, post_results, artifact_format="xlsx"
+        )
+    )
+
+    assert data["success"] is True
+    assert len(data["ranked_violations"]) == 1
+
+
 # --- get_overloaded_elements ------------------------------------------------
 
 
@@ -591,3 +738,36 @@ async def test_overloaded_elements_refuse_an_unknown_return_as(
 
     assert data["success"] is False
     assert "inline, artifact" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_overloaded_elements_ignore_the_artifact_format_when_inline(
+    security_tools, mock_ctx
+):
+    proxy = security_tools.get_proxy("test-session")
+    proxy.networks["net1"] = MagicMock()
+
+    filter_response = json.dumps(
+        {
+            "success": True,
+            "network_id": "net1",
+            "limit_kind": "permanent",
+            "elements": {"l1": {"loading_percent": 120.0}},
+        }
+    )
+
+    with patch(
+        "pypowsybl_mcp.tools.security_tools.NetworkTools.get_network_element_data",
+        new=AsyncMock(return_value=filter_response),
+    ):
+        data = json.loads(
+            await security_tools.get_overloaded_elements(
+                network_id="net1",
+                study="n",
+                artifact_format="xlsx",
+                ctx=mock_ctx,
+            )
+        )
+
+    assert data["success"] is True
+    assert [item["element_id"] for item in data["overloaded"]] == ["l1"]

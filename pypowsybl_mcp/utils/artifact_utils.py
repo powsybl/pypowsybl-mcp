@@ -63,6 +63,21 @@ def normalize_artifact_format(artifact_format: str | None) -> str:
     return fmt
 
 
+def normalize_return_options(
+    return_as: str | None, artifact_format: str | None
+) -> tuple[str, str | None]:
+    """Read `return_as` and, only when an artifact is asked for, `artifact_format`.
+
+    An inline answer is written in no format, so the argument is left as it came:
+    a client that always sends the field must not get an error for a value the
+    call never uses.
+    """
+    mode = normalize_return_as(return_as)
+    if mode == "artifact":
+        return mode, normalize_artifact_format(artifact_format)
+    return mode, artifact_format
+
+
 def columns_of(rows: list[dict[str, Any]]) -> list[str]:
     """The union of the row keys, in the order they first appear."""
     columns: list[str] = []

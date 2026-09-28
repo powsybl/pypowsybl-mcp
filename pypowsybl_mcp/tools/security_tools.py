@@ -18,8 +18,7 @@ from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.tools.network_tools import NetworkTools
 from pypowsybl_mcp.utils.artifact_utils import (
     artifact_response,
-    normalize_artifact_format,
-    normalize_return_as,
+    normalize_return_options,
 )
 from pypowsybl_mcp.utils.element_types import (
     ELEMENT_TYPE_TO_GETTER,
@@ -538,8 +537,9 @@ class SecurityTools(PyPowsyblTool):
             )
 
         try:
-            return_mode = normalize_return_as(return_as)
-            artifact_format = normalize_artifact_format(artifact_format)
+            return_mode, artifact_format = normalize_return_options(
+                return_as, artifact_format
+            )
         except ValueError as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
@@ -618,9 +618,6 @@ class SecurityTools(PyPowsyblTool):
             contingencies_with_violations_list = [
                 item for item in ranked_contingencies if item["violation_count"] > 0
             ]
-            ranked_violations = self._flatten_ranked_violations(
-                contingencies_with_violations_list, top_violations
-            )
 
             post_contingency_data = {
                 "total_contingencies": len(post_contingency_results),
@@ -676,7 +673,9 @@ class SecurityTools(PyPowsyblTool):
                 )
 
             result["top_violations"] = top_violations
-            result["ranked_violations"] = ranked_violations
+            result["ranked_violations"] = self._flatten_ranked_violations(
+                contingencies_with_violations_list, top_violations
+            )
 
             if mode == "summary":
                 # Keep only the most relevant contingencies to avoid huge payloads.
@@ -967,8 +966,9 @@ class SecurityTools(PyPowsyblTool):
             )
 
         try:
-            return_mode = normalize_return_as(return_as)
-            artifact_format = normalize_artifact_format(artifact_format)
+            return_mode, artifact_format = normalize_return_options(
+                return_as, artifact_format
+            )
         except ValueError as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 

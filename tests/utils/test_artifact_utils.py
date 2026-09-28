@@ -19,6 +19,7 @@ from pypowsybl_mcp.utils.artifact_utils import (
     dataframe_to_rows,
     normalize_artifact_format,
     normalize_return_as,
+    normalize_return_options,
 )
 from pypowsybl_mcp.utils.download_utils import download_links
 
@@ -58,6 +59,13 @@ def test_artifact_format_defaults_to_json():
 def test_an_unknown_artifact_format_says_what_is_accepted():
     with pytest.raises(ValueError, match="json, csv"):
         normalize_artifact_format("xlsx")
+
+
+def test_the_artifact_format_is_only_checked_when_an_artifact_is_asked_for():
+    assert normalize_return_options(None, "xlsx") == ("inline", "xlsx")
+    assert normalize_return_options("artifact", ".CSV") == ("artifact", "csv")
+    with pytest.raises(ValueError, match="json, csv"):
+        normalize_return_options("artifact", "xlsx")
 
 
 # --- rows -------------------------------------------------------------------

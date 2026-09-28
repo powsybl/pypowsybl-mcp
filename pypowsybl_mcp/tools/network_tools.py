@@ -18,8 +18,7 @@ from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.utils.artifact_utils import (
     artifact_response,
     dataframe_to_rows,
-    normalize_artifact_format,
-    normalize_return_as,
+    normalize_return_options,
 )
 from pypowsybl_mcp.utils.element_data_filter import (
     apply_element_filter,
@@ -1347,8 +1346,9 @@ class NetworkTools(PyPowsyblTool):
             )
 
         try:
-            return_mode = normalize_return_as(return_as)
-            artifact_format = normalize_artifact_format(artifact_format)
+            return_mode, artifact_format = normalize_return_options(
+                return_as, artifact_format
+            )
         except ValueError as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
@@ -1638,7 +1638,8 @@ class NetworkTools(PyPowsyblTool):
                 complete element data with all attributes; if comparison is requested,
                 only elements that differ between the two variants. With
                 get_only_ids=True: a JSON array of IDs when limit is None, otherwise
-                an object with element_ids + pagination.
+                an object with element_ids + pagination; with return_as="artifact",
+                the IDs go to the file, one row each under an "id" column.
                 Returns error message if network not found or invalid element type.
 
         Example Usage:
@@ -1698,8 +1699,9 @@ class NetworkTools(PyPowsyblTool):
             return msg
 
         try:
-            return_mode = normalize_return_as(return_as)
-            artifact_format = normalize_artifact_format(artifact_format)
+            return_mode, artifact_format = normalize_return_options(
+                return_as, artifact_format
+            )
         except ValueError as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
@@ -1775,6 +1777,26 @@ class NetworkTools(PyPowsyblTool):
                     logger.debug(
                         f"Retrieved {len(element_ids)} {element_type} IDs from "
                         f"network '{network_id}' using {method_name}()"
+                    )
+
+                if return_mode == "artifact":
+                    # Every ID, one row each: the full list is exactly what would
+                    # flood the answer if it were inlined.
+                    return json.dumps(
+                        artifact_response(
+                            {
+                                "success": True,
+                                "network_id": network_id,
+                                "variant_id": variant_id,
+                                "element_type": element_type,
+                                "total_elements": len(element_ids),
+                            },
+                            [{"id": element_id} for element_id in element_ids],
+                            f"{network_id}_{element_type}_ids",
+                            artifact_format,
+                        ),
+                        indent=2,
+                        default=str,
                     )
 
                 try:
