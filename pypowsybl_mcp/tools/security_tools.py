@@ -926,7 +926,10 @@ class SecurityTools(PyPowsyblTool):
                 - "n" (default): everyday operation on the current network state.
                 - "n1": after single-element outages (security analysis).
             threshold_percent (float, optional): Keep elements strictly above this loading
-                in percent (default: 100.0).
+                in percent (default: 100.0). For study="n1", only the elements that
+                break their limit after a contingency are reported by the security
+                analysis, so a threshold below 100 returns the same elements as 100:
+                it cannot reveal lines that stay just under their limit.
             limit_kind (str, optional): Which ampacity rating to use for study="n" only.
                 Defaults to "permanent" for study="n". Ignored for study="n1" because
                 run_security_analysis picks the correct limit internally.
@@ -935,9 +938,9 @@ class SecurityTools(PyPowsyblTool):
             min_nominal_voltage (float, optional): When contingencies are auto-generated,
                 only elements at or above this voltage (kV) are included.
             return_as (str, optional): "inline" (default) puts the overloaded elements
-                in the answer, the most loaded first; for study="n", only the first
-                100 of them, with truncated=true when more matched (matched_count
-                always gives the full number). "artifact" writes every one of them to
+                in the answer, the most loaded first; only the first 100 of them,
+                with truncated=true when more matched (matched_count always gives
+                the full number). "artifact" writes every one of them to
                 a temporary file instead and returns a link to it, with the counts and
                 a short preview - the useful mode when the whole list is wanted, such
                 as a broad threshold on a real network.
@@ -947,9 +950,9 @@ class SecurityTools(PyPowsyblTool):
         Returns:
             str: JSON with success, study, threshold_percent, matched_count, and overloaded
                 entries. Each entry has element_id and loading_percent; N-1 entries also
-                include contingency_id, value, limit, and limit_type. For study="n",
-                returned_count says how many entries are listed, and truncated and
-                hint appear when the list was cut.
+                include contingency_id, value, limit, and limit_type. returned_count
+                says how many entries are listed, and truncated and hint appear when
+                the list was cut.
                 With return_as="artifact", the overloaded list is replaced by an
                 artifact (url, format, row_count, columns, ...) and a preview.
 
@@ -1233,4 +1236,10 @@ class SecurityTools(PyPowsyblTool):
                 default=str,
             )
 
-        return json.dumps({**summary, "overloaded": overloaded}, indent=2)
+        # Sorted above, so the cut keeps the worst cases.
+        return json.dumps(
+            self._inline_overloaded_answer(
+                summary, overloaded[:DEFAULT_PAGINATION_LIMIT], len(overloaded)
+            ),
+            indent=2,
+        )

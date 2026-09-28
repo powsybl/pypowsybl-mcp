@@ -824,6 +824,94 @@ async def test_overloaded_elements_after_contingencies_go_to_a_file(
     ]
 
 
+async def overloaded_after_contingencies(security_tools, mock_ctx, count, **kwargs):
+    """Run the N-1 study against `count` contingencies that each overload a line.
+
+    The line of contingency Ci is loaded at 101 + i percent, so the higher the
+    index, the worse the case.
+    """
+    proxy = security_tools.get_proxy("test-session")
+    proxy.networks["net1"] = MagicMock()
+    proxy.loadflow_results["net1"] = {"converged": True}
+
+    sa_response = json.dumps(
+        {
+            "success": True,
+            "network_id": "net1",
+            "post_contingency": {
+                "total_contingencies": count,
+                "contingencies_with_violations": count,
+            },
+            "contingencies_with_violations": [
+                {
+                    "contingency_id": f"C{i}",
+                    "violations": [
+                        {
+                            "subject_id": f"l{i}",
+                            "loading_percent": 101.0 + i,
+                            "value": 1010.0 + 10 * i,
+                            "limit": 1000.0,
+                            "limit_type": "CURRENT",
+                        }
+                    ],
+                }
+                for i in range(count)
+            ],
+        }
+    )
+
+    with patch(
+        "pypowsybl_mcp.tools.security_tools.SecurityTools.run_security_analysis",
+        new=AsyncMock(return_value=sa_response),
+    ):
+        return json.loads(
+            await security_tools.get_overloaded_elements(
+                network_id="net1",
+                study="n1",
+                contingencies=[{"element_id": "l1", "contingency_id": "C1"}],
+                ctx=mock_ctx,
+                **kwargs,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_n1_study_inline_answer_keeps_the_worst_cases_and_says_it_was_cut(
+    security_tools, mock_ctx
+):
+    data = await overloaded_after_contingencies(security_tools, mock_ctx, 150)
+
+    assert data["matched_count"] == 150
+    assert data["returned_count"] == 100
+    assert data["truncated"] is True
+    assert "return_as='artifact'" in data["hint"]
+    assert [item["contingency_id"] for item in data["overloaded"]] == [
+        f"C{i}" for i in range(149, 49, -1)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_n1_study_inline_answer_is_not_flagged_when_nothing_was_cut(
+    security_tools, mock_ctx
+):
+    data = await overloaded_after_contingencies(security_tools, mock_ctx, 21)
+
+    assert data["matched_count"] == 21
+    assert data["returned_count"] == 21
+    assert "truncated" not in data
+    assert len(data["overloaded"]) == 21
+
+
+@pytest.mark.asyncio
+async def test_the_n1_study_artifact_is_not_capped(security_tools, mock_ctx):
+    data = await overloaded_after_contingencies(
+        security_tools, mock_ctx, 150, return_as="artifact"
+    )
+
+    assert data["matched_count"] == 150
+    assert len(artifact_rows(data)) == 150
+
+
 @pytest.mark.asyncio
 async def test_overloaded_elements_refuse_an_unknown_return_as(
     security_tools, mock_ctx
