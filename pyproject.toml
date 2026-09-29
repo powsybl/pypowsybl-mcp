@@ -35,6 +35,7 @@ classifiers = [
 dependencies = [
     "beautifulsoup4>=4.15.0",
     "cachetools>=7.1.4",
+    "httpx2>=2.5.0",
     "loguru>=0.7.3",
     "markdownify>=1.2.2",
     "mcp>=2,<3",

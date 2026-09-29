@@ -66,7 +66,6 @@ def test_get_session_info():
     existing_id = str(uuid.uuid4())
     ctx.session.session_id = existing_id
     ctx.request_id = "req-123"
-    ctx.client_id = "client-456"
 
     # This function just logs things and doesn't return anything
     get_session_info(ctx)

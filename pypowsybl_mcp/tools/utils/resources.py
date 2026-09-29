@@ -6,7 +6,7 @@
 import json
 import os
 
-import httpx
+import httpx2
 from bs4 import BeautifulSoup
 from cachetools import TTLCache
 from loguru import logger
@@ -253,7 +253,7 @@ class ResourceTools(PyPowsyblTool):
             session_id = get_session_id(ctx)
             proxy = self.get_proxy(session_id)
 
-            async with httpx.AsyncClient(
+            async with httpx2.AsyncClient(
                 proxy=os.getenv("https_proxy") or os.getenv("HTTPS_PROXY") or None,
                 follow_redirects=True,
             ) as client:

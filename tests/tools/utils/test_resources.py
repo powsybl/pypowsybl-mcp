@@ -7,7 +7,7 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 from cachetools import TTLCache
 
@@ -116,7 +116,7 @@ def mock_ctx():
 
 
 def make_mock_async_client(html=DOC_PAGE_HTML, raise_for_status_error=None):
-    """Build a mock httpx.AsyncClient usable as an async context manager."""
+    """Build a mock httpx2.AsyncClient usable as an async context manager."""
     response = MagicMock()
     response.text = html
     if raise_for_status_error is not None:
@@ -232,7 +232,7 @@ async def test_get_online_resource_method_documentation(
 
     client_cm, client = make_mock_async_client()
     with patch(
-        "pypowsybl_mcp.tools.utils.resources.httpx.AsyncClient",
+        "pypowsybl_mcp.tools.utils.resources.httpx2.AsyncClient",
         return_value=client_cm,
     ):
         result = json.loads(
@@ -267,7 +267,7 @@ async def test_get_online_resource_prepends_pitfall_banner(
 
     client_cm, _ = make_mock_async_client()
     with patch(
-        "pypowsybl_mcp.tools.utils.resources.httpx.AsyncClient",
+        "pypowsybl_mcp.tools.utils.resources.httpx2.AsyncClient",
         return_value=client_cm,
     ):
         result = json.loads(
@@ -296,7 +296,7 @@ async def test_get_online_resource_class_page(
 
     client_cm, client = make_mock_async_client(html=OVERVIEW_HTML)
     with patch(
-        "pypowsybl_mcp.tools.utils.resources.httpx.AsyncClient",
+        "pypowsybl_mcp.tools.utils.resources.httpx2.AsyncClient",
         return_value=client_cm,
     ):
         result = json.loads(
@@ -328,12 +328,12 @@ async def test_get_online_resource_http_error(
     get_online_resource = mcp.tools["get_online_resource"]
 
     client_cm, _ = make_mock_async_client(
-        raise_for_status_error=httpx.HTTPStatusError(
+        raise_for_status_error=httpx2.HTTPStatusError(
             "404 Not Found", request=MagicMock(), response=MagicMock()
         )
     )
     with patch(
-        "pypowsybl_mcp.tools.utils.resources.httpx.AsyncClient",
+        "pypowsybl_mcp.tools.utils.resources.httpx2.AsyncClient",
         return_value=client_cm,
     ):
         result = json.loads(
