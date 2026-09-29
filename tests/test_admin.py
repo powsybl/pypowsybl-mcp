@@ -9,8 +9,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from starlette.testclient import TestClient
 
 from pypowsybl_mcp.admin import build_snapshot, register_admin_routes
@@ -47,7 +47,7 @@ def registry():
 @pytest.fixture
 def client(proxies, registry, monkeypatch):
     monkeypatch.setenv("MCP_AUTH_TOKEN", TOKEN)
-    mcp = FastMCP("TestServer")
+    mcp = MCPServer("TestServer")
     register_admin_routes(mcp, proxies, registry)
     return TestClient(mcp.streamable_http_app())
 
@@ -79,7 +79,7 @@ def test_sessions_is_disabled_without_a_configured_token(
     proxies, registry, monkeypatch
 ):
     monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
-    mcp = FastMCP("TestServer")
+    mcp = MCPServer("TestServer")
     register_admin_routes(mcp, proxies, registry)
 
     response = TestClient(mcp.streamable_http_app()).get(
@@ -152,7 +152,7 @@ def test_snapshot_reaps_expired_sessions(proxies, registry):
 
 @pytest.mark.asyncio
 async def test_tool_calls_are_attributed_to_the_calling_session(registry):
-    mcp = FastMCP("TestServer")
+    mcp = MCPServer("TestServer")
 
     @mcp.tool()
     def failing_tool() -> str:
@@ -196,7 +196,7 @@ async def test_short_calls_are_timed_on_a_coarse_monotonic_clock(registry, monke
     )
     monkeypatch.setattr(instrumentation, "time", coarse)
 
-    mcp = FastMCP("TestServer")
+    mcp = MCPServer("TestServer")
 
     @mcp.tool()
     def working_tool() -> str:
@@ -214,7 +214,7 @@ async def test_short_calls_are_timed_on_a_coarse_monotonic_clock(registry, monke
 
 @pytest.mark.asyncio
 async def test_instrumentation_is_applied_once(registry):
-    mcp = FastMCP("TestServer")
+    mcp = MCPServer("TestServer")
 
     @mcp.tool()
     def working_tool() -> str:
@@ -231,7 +231,7 @@ async def test_instrumentation_is_applied_once(registry):
 
 @pytest.mark.asyncio
 async def test_a_call_without_a_session_is_not_attributed(registry):
-    mcp = FastMCP("TestServer")
+    mcp = MCPServer("TestServer")
 
     @mcp.tool()
     def working_tool() -> str:

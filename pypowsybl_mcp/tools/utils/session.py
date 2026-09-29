@@ -8,18 +8,18 @@ import os
 import pypowsybl as pp
 from cachetools import TTLCache
 from loguru import logger
-from mcp import ServerSession
-from mcp.server import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.utils.session_registry import SESSIONS
+from pypowsybl_mcp.utils.user_session_management import bind_session_id
 
 
-def register_session_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
+def register_session_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
     # ----------------------------------- ADMIN FUNCTIONS
     @mcp.tool()
     async def get_pypowsybl_version(
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Get the version of the pypowsybl library being used by the MCP server.
@@ -35,7 +35,7 @@ def register_session_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
     async def set_session_id(
         authorization_token: str,
         session_id: str,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Set the active session ID for the current MCP connection.
@@ -54,7 +54,7 @@ def register_session_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
         ):
             return "Invalid authorization token, you cannot not use this function"
         if ctx and ctx.session:
-            ctx.session.session_id = session_id
+            bind_session_id(ctx, session_id)
             logger.info(f"Session ID set to {session_id} for current connection")
             return f"Session ID set to {session_id}"
         return "Error: Could not set session ID (no context)"
@@ -65,7 +65,7 @@ def register_session_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
         source_session_id: str,
         target_session_id: str,
         overwrite: bool = True,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Duplicate the state of one session into another.

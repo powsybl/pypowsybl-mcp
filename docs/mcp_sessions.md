@@ -4,18 +4,33 @@ This document explains how **state** and **sessions** are maintained in the PyPo
 
 #### What "session" means in MCP (in this codebase)
 
-MCP tool calls are executed with a `Context` object (FastMCP) that contains a `session` object. That session object
-is the anchor point used by the server to keep **per-client** state.
+MCP tool calls are executed with a `Context` object (MCPServer). Since mcp 2, the `ctx.session` object it carries is
+rebuilt for every request, so it cannot hold state by itself. What outlives a single tool call is the MCP
+**connection** behind it: on streamable HTTP, one per `Mcp-Session-Id`, created by the `initialize` handshake. Its
+per-connection `state` dictionary is the anchor point used by the server to keep **per-client** state.
 
 The session management utilities live in `pypowsybl_mcp/utils/user_session_management.py`:
 
-- `check_session_id(ctx)` — if `ctx.session.session_id` does not exist, generates a new UUID and stores it on
-  `ctx.session.session_id`.
-- `get_session_id(ctx)` — ensures a `session_id` exists and returns it.
-- `get_session_info(ctx)` — returns session ID, request ID, and client ID for debugging.
+- `check_session_id(ctx)` — if no session ID is bound to the connection yet, generates a new UUID and binds it.
+- `get_session_id(ctx)` — ensures a session ID exists and returns it.
+- `peek_session_id(ctx)` — returns the bound session ID, or `None`, without creating one.
+- `bind_session_id(ctx, session_id)` — binds a given session ID to the connection (used by `set_session_id`).
+- `get_session_info(ctx)` — logs session ID, request ID, and client name for debugging.
 
 This is an **in-memory, server-side** session identifier. It is not automatically the same as a user identity or a
-chat conversation ID. It is simply a stable key for the lifetime of the MCP `ServerSession`.
+chat conversation ID. It is simply a stable key for the lifetime of the MCP connection.
+
+#### Stateful protocol versions only
+
+MCP protocol versions from `2026-07-28` on are **stateless**: each request carries its own envelope and builds its own
+connection, so there is nothing to bind a session ID to, and a network loaded by one tool call would be gone by the
+next. The server therefore refuses every request made in such a version
+(`pypowsybl_mcp/utils/stateful_sessions.py`, installed as an `MCPServer` middleware):
+
+- clients in `auto` mode (the default of the mcp 2 `Client`) probe `server/discover`, get an error, and fall back to
+  the `initialize` handshake, which gives them a stateful connection;
+- clients pinned to a stateless protocol version get an explicit `-32601` error instead of silently losing their
+  state between calls.
 
 #### Per-session proxies (stateful server design)
 
@@ -75,7 +90,8 @@ There are therefore **two levels of TTL caching**:
 Two protected admin tools are registered in `pypowsybl_mcp/tools/utils/session.py`. They are guarded by an
 `MCP_AUTH_TOKEN` environment variable and **must never be called directly by an LLM**.
 
-- `set_session_id(authorization_token, session_id, ctx)` — overrides the session ID for the current MCP connection.
+- `set_session_id(authorization_token, session_id, ctx)` — overrides the session ID bound to the current MCP
+  connection.
   Useful when an external orchestrator needs to bind an MCP connection to a specific pre-existing session.
 
 - `duplicate_session(authorization_token, source_session_id, target_session_id, overwrite, ctx)` — deep-copies the
@@ -126,9 +142,9 @@ Two protected admin tools are registered in `pypowsybl_mcp/tools/utils/session.p
 When registering a new tool, follow the established pattern:
 
 ```python
-def register_my_tools(mcp: FastMCP, pypowsybl_proxies: ThreadSafeTTLCache):
+def register_my_tools(mcp: MCPServer, pypowsybl_proxies: ThreadSafeTTLCache):
     @mcp.tool()
-    async def my_tool(..., ctx: Context[ServerSession, None] = None) -> str:
+    async def my_tool(..., ctx: Context = None) -> str:
         session_id = get_session_id(ctx)
         proxy = pypowsybl_proxies.get(session_id) or PyPowsyblMCPServerProxy()
         pypowsybl_proxies[session_id] = proxy

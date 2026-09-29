@@ -7,21 +7,21 @@
 
 `PyPowsyblTool.get_proxy()` already sees every call that touches session state,
 but not which tool made it nor whether it failed. That is known one level up,
-in FastMCP's tool manager, which is wrapped here.
+in MCPServer's tool manager, which is wrapped here.
 
-The wrapper goes on `mcp._tool_manager.call_tool` rather than on
-`mcp.call_tool`: `FastMCP._setup_handlers()` binds `self.call_tool` into the
-low-level server at construction time, so replacing that attribute afterwards
-would have no effect, while `self._tool_manager` is looked up on every call.
+The wrapper goes on `mcp._tool_manager.call_tool`, which receives the request
+`Context` for every tool call and is looked up on each call, so it can be
+replaced after the server is built.
 """
 
 import time
 from typing import Any
 
 from loguru import logger
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from pypowsybl_mcp.utils.session_registry import SessionRegistry
+from pypowsybl_mcp.utils.user_session_management import peek_session_id
 
 _INSTRUMENTED_FLAG = "_pypowsybl_mcp_instrumented"
 
@@ -34,12 +34,12 @@ def _session_id_of(context: Any) -> Any | None:
     anonymous.
     """
     try:
-        return getattr(context.session, "session_id", None)
-    except AttributeError:
+        return peek_session_id(context)
+    except (AttributeError, ValueError):  # no request behind this context
         return None
 
 
-def instrument_tool_calls(mcp: FastMCP, registry: SessionRegistry) -> None:
+def instrument_tool_calls(mcp: MCPServer, registry: SessionRegistry) -> None:
     """Count tool calls, failures and durations per session on `mcp`.
 
     Idempotent: instrumenting the same server twice is a no-op, so importing

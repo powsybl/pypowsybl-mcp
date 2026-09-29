@@ -29,7 +29,7 @@ from typing import Any
 import pypowsybl as pp
 from cachetools import TTLCache
 from loguru import logger
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -214,7 +214,7 @@ def build_snapshot(
 
 
 def register_admin_routes(
-    mcp: FastMCP, proxies: TTLCache, registry: SessionRegistry = SESSIONS
+    mcp: MCPServer, proxies: TTLCache, registry: SessionRegistry = SESSIONS
 ) -> None:
     """Add `/admin/health` and `/admin/sessions` to the MCP server's HTTP app."""
 

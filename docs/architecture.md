@@ -10,7 +10,7 @@ This document describes the internal architecture of the PyPowsybl MCP server.
 
 | Component                 | File                                             | Role                                                  |
 |---------------------------|--------------------------------------------------|-------------------------------------------------------|
-| `FastMCP` server          | `pypowsybl_mcp/server.py`                        | Entry point, tool registration, HTTP route            |
+| `MCPServer` server          | `pypowsybl_mcp/server.py`                        | Entry point, tool registration, HTTP route            |
 | `PyPowsyblMCPServerProxy` | `pypowsybl_mcp/proxy.py`                         | Per-session state container                           |
 | Tool groups               | `pypowsybl_mcp/tools/`                           | Business logic, one class per domain                  |
 | Plugin discovery          | `pypowsybl_mcp/plugins.py`                       | Entry-point scanning and loading for external plugins |
@@ -39,10 +39,10 @@ This document describes the internal architecture of the PyPowsybl MCP server.
 ```
 MCP tool call
     │
-    ├─ 1. FastMCP deserializes arguments and injects Context
+    ├─ 1. MCPServer deserializes arguments and injects Context
     │
     ├─ 2. Tool handler calls get_session_id(ctx)
-    │       └─ assigns a UUID to ctx.session.session_id if missing
+    │       └─ binds a UUID to the MCP connection state if missing
     │
     ├─ 3. Tool handler calls self.get_proxy(session_id)
     │       └─ creates a new PyPowsyblMCPServerProxy if not in cache
@@ -62,6 +62,9 @@ and is indistinguishable from a built-in one once loaded (see [Plugins](#plugins
 The server uses the **streamable-HTTP** MCP transport (not stdio). It listens on `0.0.0.0` at the port defined by
 `MCP_PORT` (default `9992`). A custom `GET /download/{token}/{filename}` route serves temporary file downloads generated
 by export or visualization tools.
+
+Only stateful (handshake-era) MCP protocol versions are served: requests made in a stateless version (`2026-07-28` and
+later) are refused so that clients fall back to the `initialize` handshake (see [mcp_sessions.md](mcp_sessions.md)).
 
 #### Stateful vs stateless design
 

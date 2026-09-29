@@ -4,19 +4,19 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 """
-PyPowsybl FastMCP Server
+PyPowsybl MCP Server
 
 A Model Context Protocol server for interacting with PyPowsybl power system networks.
 Provides tools for network management, analysis execution, and grid visualization.
-Uses FastMCP for simplified server implementation.
+Uses MCPServer for simplified server implementation.
 """
 
 import os
 from pathlib import Path
 
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.server.fastmcp.prompts import Prompt
-from mcp.server.fastmcp.resources import FileResource
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.prompts import Prompt
+from mcp.server.mcpserver.resources import FileResource
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -44,13 +44,12 @@ from pypowsybl_mcp.utils.download_utils import (
 )
 from pypowsybl_mcp.utils.instrumentation import instrument_tool_calls
 from pypowsybl_mcp.utils.session_registry import SESSIONS
+from pypowsybl_mcp.utils.stateful_sessions import require_stateful_session
 
 # instantiate an MCP server client
-mcp = FastMCP(
-    "PyPowsybl MCP Server",
-    port=int(os.getenv("MCP_PORT", DEFAULT_PORT)),
-    host="0.0.0.0",
-)
+# Sessions hold state across tool calls, so stateless protocol versions are
+# refused (see utils/stateful_sessions.py).
+mcp = MCPServer("PyPowsybl MCP Server", middleware=[require_stateful_session])
 
 # Create pypowsybl proxy instances
 MAX_NUMBER_OF_CLIENTS = 100
@@ -84,7 +83,7 @@ def _make_skill_reader(skill_path: Path):
     return read_skill
 
 
-def register_skill_resources_and_prompts(mcp: FastMCP):
+def register_skill_resources_and_prompts(mcp: MCPServer):
     """Expose each skill file as a listable MCP resource and as an MCP prompt.
 
     Concrete resources (unlike URI templates) appear in resources/list, so
@@ -134,7 +133,7 @@ def read_temp_resource(resource_id: str, ctx: Context) -> str:
 
 
 # Tools
-def register_tools(mcp: FastMCP):
+def register_tools(mcp: MCPServer):
     """Register all available tools with the MCP server."""
     register_io_tools(mcp, pypowsybl_proxies)
     register_network_tools(mcp, pypowsybl_proxies)
@@ -164,4 +163,8 @@ instrument_tool_calls(mcp, SESSIONS)
 
 if __name__ == "__main__":
     register_tools(mcp)
-    mcp.run(transport="streamable-http")
+    mcp.run(
+        transport="streamable-http",
+        host="0.0.0.0",
+        port=int(os.getenv("MCP_PORT", DEFAULT_PORT)),
+    )

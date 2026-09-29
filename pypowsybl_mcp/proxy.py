@@ -38,7 +38,7 @@ VISUALIZATION_DEFAULT_PARAMETERS_PATH = (
 
 
 class PyPowsyblMCPServerProxy:
-    """FastMCP Server proxy for PyPowsybl integration with state management."""
+    """MCP server proxy for PyPowsybl integration with state management."""
 
     def __init__(self):
         self.networks: ThreadSafeTTLCache[str, Network] = ThreadSafeTTLCache(

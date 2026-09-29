@@ -9,15 +9,14 @@ from typing import Any
 import pypowsybl as pp
 from cachetools import TTLCache
 from loguru import logger
-from mcp import ServerSession
-from mcp.server import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.utils.pagination import attach_pagination, paginate
 
 
-def register_sensitivity_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
+def register_sensitivity_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
     tools = SensitivityTools(pypowsybl_proxies)
     # Private helpers (underscore-prefixed) are skipped automatically.
     tools.register_tools_with_mcp(mcp)
@@ -76,7 +75,7 @@ class SensitivityTools(PyPowsyblTool):
         contingencies: list[str] | None = None,
         limit: int | None = None,
         cursor: str | int | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Perform DC sensitivity analysis on a network.
@@ -113,7 +112,7 @@ class SensitivityTools(PyPowsyblTool):
             contingencies (list[str], optional): List of element IDs for single-element contingencies.
             limit (int, optional): Maximum rows per matrix (paginated JSON). None = full markdown.
             cursor (str | int, optional): Page offset for matrix rows.
-            ctx (Context, optional): FastMCP context.
+            ctx (Context, optional): MCPServer context.
 
         Example zones:
             [{"id": "FR", "type": "country", "country": "FR"}]
@@ -183,7 +182,7 @@ class SensitivityTools(PyPowsyblTool):
         matrix_id: str = "m",
         limit: int | None = None,
         cursor: str | int | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Perform AC sensitivity analysis on a network.
@@ -216,7 +215,7 @@ class SensitivityTools(PyPowsyblTool):
             matrix_id (str, optional): The ID to name the sensitivity matrix. Defaults to "m".
             limit (int, optional): Maximum rows per matrix (paginated JSON). None = full markdown.
             cursor (str | int, optional): Page offset.
-            ctx (Context, optional): FastMCP context.
+            ctx (Context, optional): MCPServer context.
         """
         try:
             _, network_id, network = self.resolve_network(ctx, network_id)
@@ -257,7 +256,7 @@ class SensitivityTools(PyPowsyblTool):
         matrix_id: str = "psdf",
         limit: int | None = None,
         cursor: str | int | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Compute Phase Shift Distribution Factors (PSDF).
@@ -321,7 +320,7 @@ class SensitivityTools(PyPowsyblTool):
         matrix_id: str = "dcdf",
         limit: int | None = None,
         cursor: str | int | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Compute HVDC active power sensitivity (DCDF).
@@ -375,7 +374,7 @@ class SensitivityTools(PyPowsyblTool):
         matrix_id: str = "ptdf",
         limit: int | None = None,
         cursor: str | int | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Compute Power Transfer Distribution Factors (PTDF) between two zones.
@@ -461,7 +460,7 @@ class SensitivityTools(PyPowsyblTool):
         contingencies: list[str] | None = None,
         limit: int | None = None,
         cursor: str | int | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Perform a custom sensitivity analysis by specifying function and variable types.

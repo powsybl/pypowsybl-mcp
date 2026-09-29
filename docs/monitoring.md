@@ -96,7 +96,7 @@ was last used, nor what it lost. `pypowsybl_mcp/utils/session_registry.py` keeps
 | Field                                | Where it comes from                                                            |
 |--------------------------------------|--------------------------------------------------------------------------------|
 | `created_at`, `last_seen`            | `SessionRegistry.touch()`, called from `PyPowsyblTool.get_proxy()`              |
-| `tool_calls`, `errors`, `tools_used` | a wrapper around FastMCP's tool manager (`utils/instrumentation.py`)            |
+| `tool_calls`, `errors`, `tools_used` | a wrapper around MCPServer's tool manager (`utils/instrumentation.py`)            |
 | `*_duration_ms`                      | the same wrapper, timing each call and accumulating a total, a max and the last |
 | `evictions`                          | reconciliation: whatever the cache no longer holds is counted and dropped, expiry or capacity told apart by age |
 | `rss_mb`                             | `/proc/self/statm` (Linux); `null` elsewhere — no new dependency                |

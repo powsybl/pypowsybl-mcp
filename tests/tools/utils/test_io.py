@@ -19,7 +19,6 @@ class MockContext:
         self.session = MagicMock()
         self.session.session_id = session_id
         self.request_id = "test-request"
-        self.client_id = "test-client"
 
 
 class MockMCP:

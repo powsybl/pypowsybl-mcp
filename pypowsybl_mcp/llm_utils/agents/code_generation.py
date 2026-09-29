@@ -30,7 +30,7 @@ Your task is to generate a standalone, executable Python script that replicates 
    - Ensure the generated code produces equivalent results to the MCP tool chain
 
 2. **Eliminate MCP Dependencies**
-   - Remove all references to: MCP protocol, FastMCP, tool decorators, context objects, session management, server infrastructure
+   - Remove all references to: MCP protocol, MCPServer, tool decorators, context objects, session management, server infrastructure
    - Replace MCP tool calls with direct API calls or inline code
    - Convert async patterns to sync (unless async is truly essential for the underlying logic)
    - Remove all request/response handling, routing, and HTTP endpoint code

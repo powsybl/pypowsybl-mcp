@@ -5,9 +5,8 @@
 #  SPDX-License-Identifier: MPL-2.0
 from cachetools import TTLCache
 from loguru import logger
-from mcp import ServerSession
-from mcp.server import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 from pypowsybl import network as pn
 
 from pypowsybl_mcp.tools import PyPowsyblTool
@@ -16,7 +15,7 @@ from pypowsybl_mcp.utils.download_utils import generate_download_link
 from pypowsybl_mcp.utils.user_session_management import get_session_id
 
 
-def register_visualization_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
+def register_visualization_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
     tools = VisualizationTools(pypowsybl_proxies)
     tools.register_tools_with_mcp(mcp)
 
@@ -26,7 +25,7 @@ class VisualizationTools(PyPowsyblTool):
         self,
         network_id: str | None = None,
         substation_id: str | None = None,
-        ctx: Context[ServerSession, None] = None,
+        ctx: Context = None,
     ) -> str:
         """
         Generate a detailed single-line diagram (SLD) for a specific substation.
@@ -145,7 +144,7 @@ class VisualizationTools(PyPowsyblTool):
             return msg
 
     async def visualize_network(
-        self, network_id: str | None = None, ctx: Context[ServerSession, None] = None
+        self, network_id: str | None = None, ctx: Context = None
     ) -> str:
         """
         Generate a visual network diagram showing the topology and key components.
