@@ -7,7 +7,7 @@
 """Tests for `return_as="artifact"` on the read tools that return big tables."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -258,11 +258,8 @@ async def test_a_filtered_artifact_holds_every_match_not_just_the_page(
         await network_tools.get_network_element_data(
             network_id="net1",
             element_type="generator",
-            mode="filter",
-            metric="p_abs",
-            filter_op="gt",
-            filter_value=0,
-            return_as="artifact",
+            conditions=[{"field": "p_abs", "op": ">", "value": 0}],
+            return_as="artifact_json",
             limit=3,
             ctx=mock_ctx,
         )
@@ -286,8 +283,7 @@ async def test_element_data_can_be_written_as_csv(network_tools, mock_ctx):
         await network_tools.get_network_element_data(
             network_id="net1",
             element_type="bus",
-            return_as="artifact",
-            artifact_format="csv",
+            return_as="artifact_csv",
             ctx=mock_ctx,
         )
     )
@@ -368,8 +364,7 @@ async def test_element_ids_read_from_the_getter_can_go_to_a_csv_file(
             network_id="net1",
             element_type="voltage_level",
             get_only_ids=True,
-            return_as="artifact",
-            artifact_format="csv",
+            return_as="artifact_csv",
             ctx=mock_ctx,
         )
     )
@@ -398,7 +393,6 @@ async def test_element_data_ignores_the_artifact_format_when_inline(
             network_id="net1",
             element_type="generator",
             get_only_ids=True,
-            artifact_format="xlsx",
             ctx=mock_ctx,
         )
     )
@@ -601,362 +595,3 @@ async def test_the_security_analysis_ignores_the_artifact_format_when_inline(
 
     assert data["success"] is True
     assert len(data["ranked_violations"]) == 1
-
-
-# --- get_overloaded_elements ------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_overloaded_elements_in_normal_operation_go_to_a_file(
-    security_tools, mock_ctx
-):
-    proxy = security_tools.get_proxy("test-session")
-    proxy.networks["net1"] = MagicMock()
-
-    filter_response = json.dumps(
-        {
-            "success": True,
-            "network_id": "net1",
-            "variant_id": "InitialState",
-            "limit_kind": "permanent",
-            "elements": {f"l{i}": {"loading_percent": 100.0 + i} for i in range(1, 13)},
-        }
-    )
-
-    with patch(
-        "pypowsybl_mcp.tools.security_tools.NetworkTools.get_network_element_data",
-        new=AsyncMock(return_value=filter_response),
-    ):
-        data = json.loads(
-            await security_tools.get_overloaded_elements(
-                network_id="net1",
-                study="n",
-                threshold_percent=100,
-                return_as="artifact",
-                ctx=mock_ctx,
-            )
-        )
-
-    assert data["matched_count"] == 12
-    assert "overloaded" not in data
-    assert data["artifact"]["row_count"] == 12
-    assert data["artifact"]["columns"] == [
-        "element_id",
-        "loading_percent",
-        "limit_kind",
-    ]
-    assert len(artifact_rows(data)) == 12
-
-
-def network_with_overloaded_lines(count):
-    """A network whose `count` lines are all above their limit, l0 the least loaded.
-
-    The line filter is not mocked, so the study N goes through the real
-    filter and its real pagination.
-    """
-    network = MagicMock()
-    network.get_variant_ids.return_value = ["InitialState"]
-    network.get_working_variant_id.return_value = "InitialState"
-    currents = [101.0 + i for i in range(count)]
-    network.get_lines.return_value = pd.DataFrame(
-        {
-            "i1": currents,
-            "i2": [-current for current in currents],
-            "permanent_limit1": [100.0] * count,
-        },
-        index=[f"l{i}" for i in range(count)],
-    )
-    return network
-
-
-@pytest.mark.asyncio
-async def test_the_n_study_artifact_holds_every_overloaded_line(
-    security_tools, mock_ctx
-):
-    proxy = security_tools.get_proxy("test-session")
-    proxy.networks["net1"] = network_with_overloaded_lines(250)
-
-    data = json.loads(
-        await security_tools.get_overloaded_elements(
-            network_id="net1", study="n", return_as="artifact", ctx=mock_ctx
-        )
-    )
-
-    assert data["matched_count"] == 250
-    assert data["artifact"]["row_count"] == 250
-    rows = artifact_rows(data)
-    assert rows[0]["element_id"] == "l249"
-    assert rows[-1]["element_id"] == "l0"
-
-
-@pytest.mark.asyncio
-async def test_the_n_study_artifact_joins_the_pages_without_gaps_or_repeats(
-    security_tools, mock_ctx
-):
-    proxy = security_tools.get_proxy("test-session")
-    proxy.networks["net1"] = network_with_overloaded_lines(250)
-
-    # A small page size, so 250 matches take seven pages.
-    with patch("pypowsybl_mcp.tools.security_tools.MAX_PAGINATION_LIMIT", 40):
-        data = json.loads(
-            await security_tools.get_overloaded_elements(
-                network_id="net1", study="n", return_as="artifact", ctx=mock_ctx
-            )
-        )
-
-    rows = artifact_rows(data)
-    assert [row["element_id"] for row in rows] == [f"l{i}" for i in range(249, -1, -1)]
-    assert data["matched_count"] == 250
-
-
-@pytest.mark.asyncio
-async def test_the_n_study_inline_answer_says_when_it_was_cut(security_tools, mock_ctx):
-    proxy = security_tools.get_proxy("test-session")
-    proxy.networks["net1"] = network_with_overloaded_lines(250)
-
-    data = json.loads(
-        await security_tools.get_overloaded_elements(
-            network_id="net1", study="n", ctx=mock_ctx
-        )
-    )
-
-    assert data["matched_count"] == 250
-    assert data["returned_count"] == 100
-    assert data["truncated"] is True
-    assert "return_as='artifact'" in data["hint"]
-    # The most loaded lines are the ones kept.
-    assert [item["element_id"] for item in data["overloaded"]] == [
-        f"l{i}" for i in range(249, 149, -1)
-    ]
-
-
-@pytest.mark.asyncio
-async def test_the_n_study_inline_answer_is_not_flagged_when_nothing_was_cut(
-    security_tools, mock_ctx
-):
-    proxy = security_tools.get_proxy("test-session")
-    proxy.networks["net1"] = network_with_overloaded_lines(12)
-
-    data = json.loads(
-        await security_tools.get_overloaded_elements(
-            network_id="net1", study="n", ctx=mock_ctx
-        )
-    )
-
-    assert data["matched_count"] == 12
-    assert data["returned_count"] == 12
-    assert "truncated" not in data
-    assert "hint" not in data
-
-
-@pytest.mark.asyncio
-async def test_overloaded_elements_after_contingencies_go_to_a_file(
-    security_tools, mock_ctx
-):
-    proxy = security_tools.get_proxy("test-session")
-    proxy.networks["net1"] = MagicMock()
-    proxy.loadflow_results["net1"] = {"converged": True}
-
-    sa_response = json.dumps(
-        {
-            "success": True,
-            "network_id": "net1",
-            "post_contingency": {
-                "total_contingencies": 3,
-                "contingencies_with_violations": 2,
-            },
-            "contingencies_with_violations": [
-                {
-                    "contingency_id": "C1",
-                    "violations": [
-                        {
-                            "subject_id": "l1",
-                            "loading_percent": 130.0,
-                            "value": 1300.0,
-                            "limit": 1000.0,
-                            "limit_type": "CURRENT",
-                        }
-                    ],
-                },
-                {
-                    "contingency_id": "C2",
-                    "violations": [
-                        {
-                            "subject_id": "l2",
-                            "loading_percent": 90.0,
-                            "value": 900.0,
-                            "limit": 1000.0,
-                            "limit_type": "CURRENT",
-                        }
-                    ],
-                },
-            ],
-        }
-    )
-
-    with patch(
-        "pypowsybl_mcp.tools.security_tools.SecurityTools.run_security_analysis",
-        new=AsyncMock(return_value=sa_response),
-    ):
-        data = json.loads(
-            await security_tools.get_overloaded_elements(
-                network_id="net1",
-                study="n1",
-                threshold_percent=100,
-                contingencies=[{"element_id": "l1", "contingency_id": "C1"}],
-                return_as="artifact",
-                ctx=mock_ctx,
-            )
-        )
-
-    # Only the element above the threshold is kept, artifact or not.
-    assert data["matched_count"] == 1
-    assert data["total_contingencies"] == 3
-    assert artifact_rows(data) == [
-        {
-            "contingency_id": "C1",
-            "element_id": "l1",
-            "loading_percent": 130.0,
-            "value": 1300.0,
-            "limit": 1000.0,
-            "limit_type": "CURRENT",
-        }
-    ]
-
-
-async def overloaded_after_contingencies(security_tools, mock_ctx, count, **kwargs):
-    """Run the N-1 study against `count` contingencies that each overload a line.
-
-    The line of contingency Ci is loaded at 101 + i percent, so the higher the
-    index, the worse the case.
-    """
-    proxy = security_tools.get_proxy("test-session")
-    proxy.networks["net1"] = MagicMock()
-    proxy.loadflow_results["net1"] = {"converged": True}
-
-    sa_response = json.dumps(
-        {
-            "success": True,
-            "network_id": "net1",
-            "post_contingency": {
-                "total_contingencies": count,
-                "contingencies_with_violations": count,
-            },
-            "contingencies_with_violations": [
-                {
-                    "contingency_id": f"C{i}",
-                    "violations": [
-                        {
-                            "subject_id": f"l{i}",
-                            "loading_percent": 101.0 + i,
-                            "value": 1010.0 + 10 * i,
-                            "limit": 1000.0,
-                            "limit_type": "CURRENT",
-                        }
-                    ],
-                }
-                for i in range(count)
-            ],
-        }
-    )
-
-    with patch(
-        "pypowsybl_mcp.tools.security_tools.SecurityTools.run_security_analysis",
-        new=AsyncMock(return_value=sa_response),
-    ):
-        return json.loads(
-            await security_tools.get_overloaded_elements(
-                network_id="net1",
-                study="n1",
-                contingencies=[{"element_id": "l1", "contingency_id": "C1"}],
-                ctx=mock_ctx,
-                **kwargs,
-            )
-        )
-
-
-@pytest.mark.asyncio
-async def test_the_n1_study_inline_answer_keeps_the_worst_cases_and_says_it_was_cut(
-    security_tools, mock_ctx
-):
-    data = await overloaded_after_contingencies(security_tools, mock_ctx, 150)
-
-    assert data["matched_count"] == 150
-    assert data["returned_count"] == 100
-    assert data["truncated"] is True
-    assert "return_as='artifact'" in data["hint"]
-    assert [item["contingency_id"] for item in data["overloaded"]] == [
-        f"C{i}" for i in range(149, 49, -1)
-    ]
-
-
-@pytest.mark.asyncio
-async def test_the_n1_study_inline_answer_is_not_flagged_when_nothing_was_cut(
-    security_tools, mock_ctx
-):
-    data = await overloaded_after_contingencies(security_tools, mock_ctx, 21)
-
-    assert data["matched_count"] == 21
-    assert data["returned_count"] == 21
-    assert "truncated" not in data
-    assert len(data["overloaded"]) == 21
-
-
-@pytest.mark.asyncio
-async def test_the_n1_study_artifact_is_not_capped(security_tools, mock_ctx):
-    data = await overloaded_after_contingencies(
-        security_tools, mock_ctx, 150, return_as="artifact"
-    )
-
-    assert data["matched_count"] == 150
-    assert len(artifact_rows(data)) == 150
-
-
-@pytest.mark.asyncio
-async def test_overloaded_elements_refuse_an_unknown_return_as(
-    security_tools, mock_ctx
-):
-    proxy = security_tools.get_proxy("test-session")
-    proxy.networks["net1"] = MagicMock()
-
-    data = json.loads(
-        await security_tools.get_overloaded_elements(
-            network_id="net1", return_as="file", ctx=mock_ctx
-        )
-    )
-
-    assert data["success"] is False
-    assert "inline, artifact" in data["error"]
-
-
-@pytest.mark.asyncio
-async def test_overloaded_elements_ignore_the_artifact_format_when_inline(
-    security_tools, mock_ctx
-):
-    proxy = security_tools.get_proxy("test-session")
-    proxy.networks["net1"] = MagicMock()
-
-    filter_response = json.dumps(
-        {
-            "success": True,
-            "network_id": "net1",
-            "limit_kind": "permanent",
-            "elements": {"l1": {"loading_percent": 120.0}},
-        }
-    )
-
-    with patch(
-        "pypowsybl_mcp.tools.security_tools.NetworkTools.get_network_element_data",
-        new=AsyncMock(return_value=filter_response),
-    ):
-        data = json.loads(
-            await security_tools.get_overloaded_elements(
-                network_id="net1",
-                study="n",
-                artifact_format="xlsx",
-                ctx=mock_ctx,
-            )
-        )
-
-    assert data["success"] is True
-    assert [item["element_id"] for item in data["overloaded"]] == ["l1"]

@@ -344,3 +344,25 @@ def test_register_security_tools():
     register_security_tools(mock_mcp, proxies)
 
     assert mock_mcp.tool.called
+
+
+def test_flatten_ranked_violations_threshold_filters_rows():
+    ranked = [
+        {
+            "contingency_id": "C1",
+            "status": "CONVERGED",
+            "violations": [
+                {"subject_id": "L1", "loading_percent": 150.0},
+                {"subject_id": "L2", "loading_percent": 80.0},
+                {"subject_id": "L3", "loading_percent": None},
+            ],
+        }
+    ]
+
+    # Above 100% only: L1 (L2 below, L3 has no loading).
+    kept = SecurityTools._flatten_ranked_violations(ranked, None, 100.0)
+    assert [v["subject_id"] for v in kept] == ["L1"]
+
+    # No threshold keeps every row (None-loading sorted last).
+    everything = SecurityTools._flatten_ranked_violations(ranked, None, None)
+    assert len(everything) == 3

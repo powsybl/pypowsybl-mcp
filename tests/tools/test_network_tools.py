@@ -607,10 +607,7 @@ async def test_get_network_element_data_filter_full_dataset(network_tools, mock_
     result = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="generator",
-        mode="filter",
-        metric="loading_percent",
-        filter_op=">",
-        filter_value=90,
+        conditions=[{"field": "loading_percent", "op": ">", "value": 90}],
         ctx=mock_ctx,
     )
 
@@ -639,11 +636,8 @@ async def test_get_network_element_data_filter_sorted(network_tools, mock_ctx):
     result = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="line",
-        mode="filter",
-        metric="loading_percent",
-        filter_op=">",
-        filter_value=100,
-        sort="desc",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 100}],
+        order_by="-loading_percent",
         ctx=mock_ctx,
     )
 
@@ -673,11 +667,8 @@ async def test_get_network_element_data_filter_respects_limit(network_tools, moc
     result = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="line",
-        mode="filter",
-        metric="loading_percent",
-        filter_op=">",
-        filter_value=0,
-        sort="desc",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
+        order_by="-loading_percent",
         limit=2,
         ctx=mock_ctx,
     )
@@ -720,11 +711,8 @@ async def test_get_network_element_data_filter_caps_without_limit(
     result = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="line",
-        mode="filter",
-        metric="loading_percent",
-        filter_op=">",
-        filter_value=0,
-        sort="desc",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
+        order_by="-loading_percent",
         # No limit on purpose.
         ctx=mock_ctx,
     )
@@ -759,11 +747,8 @@ async def test_get_network_element_data_filter_pagination_cursor(
     result = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="line",
-        mode="filter",
-        metric="loading_percent",
-        filter_op=">",
-        filter_value=0,
-        sort="desc",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
+        order_by="-loading_percent",
         limit=2,
         cursor="2",
         ctx=mock_ctx,
@@ -786,16 +771,13 @@ async def test_get_network_element_data_filter_errors(network_tools, mock_ctx):
     result = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="generator",
-        mode="filter",
-        metric="loading_percent",
-        filter_op="???",
-        filter_value=1,
+        conditions=[{"field": "loading_percent", "op": "???", "value": 1}],
         ctx=mock_ctx,
     )
 
     data = json.loads(result)
     assert data["success"] is False
-    assert "filter_op" in data["error"]
+    assert "op" in data["error"]
 
 
 @pytest.mark.asyncio
@@ -822,10 +804,7 @@ async def test_filter_lines_loading_from_operational_limits(network_tools, mock_
     result = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="line",
-        mode="filter",
-        metric="loading_percent",
-        filter_op=">",
-        filter_value=90,
+        conditions=[{"field": "loading_percent", "op": ">", "value": 90}],
         ctx=mock_ctx,
     )
 
@@ -834,7 +813,6 @@ async def test_filter_lines_loading_from_operational_limits(network_tools, mock_
     assert data["matched_count"] == 1
     assert list(data["elements"].keys()) == ["l1"]
     assert data["elements"]["l1"]["loading_percent"] == pytest.approx(100.0)
-    assert data["limit_kind"] == "permanent"
 
 
 @pytest.mark.asyncio
@@ -861,11 +839,7 @@ async def test_get_network_element_data_filter_temporary_limit(network_tools, mo
     result_perm = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="line",
-        mode="filter",
-        metric="loading_percent",
-        filter_op=">",
-        filter_value=100,
-        limit_kind="permanent",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 100}],
         ctx=mock_ctx,
     )
     data_perm = json.loads(result_perm)
@@ -881,15 +855,10 @@ async def test_get_network_element_data_filter_temporary_limit(network_tools, mo
     result_temp = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="line",
-        mode="filter",
-        metric="loading_percent",
-        filter_op=">",
-        filter_value=100,
-        limit_kind="temporary",
+        conditions=[{"field": "loading_percent_temporary", "op": ">", "value": 100}],
         ctx=mock_ctx,
     )
     data = json.loads(result_temp)
-    assert data["limit_kind"] == "temporary"
     assert data["matched_count"] == 0
 
 
@@ -919,16 +888,12 @@ async def test_get_network_element_data_filter_temporary_limit_still_overloaded(
     result = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="line",
-        mode="filter",
-        metric="loading_percent",
-        filter_op=">",
-        filter_value=100,
-        limit_kind="temporary",
+        conditions=[{"field": "loading_percent_temporary", "op": ">", "value": 100}],
         ctx=mock_ctx,
     )
     data = json.loads(result)
     assert data["matched_count"] == 1
-    assert data["elements"]["l1"]["loading_percent"] == pytest.approx(110.0)
+    assert data["elements"]["l1"]["loading_percent_temporary"] == pytest.approx(110.0)
 
 
 @pytest.mark.asyncio
@@ -979,7 +944,7 @@ async def test_get_network_element_data_2wt_tap_changer(network_tools, mock_ctx)
     result = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="two_windings_transformer",
-        main_synchronous_component=False,
+        main_component="connected",
         ctx=mock_ctx,
     )
     data = json.loads(result)
@@ -1040,10 +1005,8 @@ async def test_get_network_element_data_main_area_filter(network_tools, mock_ctx
 
     # Default (both True): only generators in the main synchronous component.
     main_only = await gen_ids()
-    # Both False: every generator, islanded areas included.
-    everything = await gen_ids(
-        main_connected_component=False, main_synchronous_component=False
-    )
+    # "none": every generator, islanded areas included.
+    everything = await gen_ids(main_component="none")
 
     assert everything == {"GH1", "GH2", "GH3", "GTH1", "GTH2"}
     assert main_only == {"GTH1", "GTH2"}
@@ -1062,13 +1025,47 @@ async def test_get_network_element_data_main_area_filter_hvdc(network_tools, moc
     result = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="hvdc_line",
-        main_connected_component=True,
-        main_synchronous_component=False,
+        main_component="connected",
         ctx=mock_ctx,
     )
     data = json.loads(result)
     # Both HVDC links have a converter station on the main connected component.
     assert set(data.keys()) == {"HVDC1", "HVDC2"}
+
+
+@pytest.mark.asyncio
+async def test_get_network_element_data_geotags_attach_and_filter(
+    network_tools, mock_ctx
+):
+    """attach=['geotags'] materialises country, which a condition can filter on."""
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_variant_ids.return_value = ["InitialState"]
+    mock_net.get_working_variant_id.return_value = "InitialState"
+    mock_net.get_loads.return_value = pd.DataFrame(
+        {"p0": [1.0, 2.0], "voltage_level_id": ["VL1", "VL2"]},
+        index=["LOAD_FR", "LOAD_ES"],
+    )
+    mock_net.get_substations.return_value = pd.DataFrame(
+        {"country": ["FR", "ES"]}, index=["S1", "S2"]
+    )
+    mock_net.get_voltage_levels.return_value = pd.DataFrame(
+        {"substation_id": ["S1", "S2"]}, index=["VL1", "VL2"]
+    )
+    proxy.networks["net1"] = mock_net
+
+    result = await network_tools.get_network_element_data(
+        network_id="net1",
+        element_type="load",
+        attach=["geotags"],
+        conditions=[{"field": "country", "op": "==", "value": "FR"}],
+        ctx=mock_ctx,
+    )
+
+    data = json.loads(result)
+    assert data["success"] is True
+    assert list(data["elements"].keys()) == ["LOAD_FR"]
+    assert data["elements"]["LOAD_FR"]["country"] == "FR"
 
 
 @pytest.mark.asyncio
@@ -2249,68 +2246,177 @@ async def test_get_network_element_data_tap_changer_failures_are_tolerated(
     assert "t1" in result
 
 
+def _variant_aware_network(getter_name, frames_by_variant):
+    """A MagicMock network whose getter returns a frame per working variant."""
+    net = MagicMock()
+    net.get_variant_ids.return_value = list(frames_by_variant)
+    state = {"current": next(iter(frames_by_variant))}
+    net.get_working_variant_id.side_effect = lambda: state["current"]
+    net.set_working_variant.side_effect = lambda v: state.update(current=v)
+    getattr(net, getter_name).side_effect = lambda: frames_by_variant[state["current"]]
+    return net, state
+
+
 @pytest.mark.asyncio
-async def test_get_network_element_data_compare_filter_conflict(
-    network_tools, mock_ctx
-):
+async def test_compare_variants_variant_not_found(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    mock_net.get_variant_ids.return_value = ["InitialState", "v2"]
+    mock_net.get_variant_ids.return_value = ["InitialState"]
+    mock_net.get_working_variant_id.return_value = "InitialState"
     mock_net.get_generators.return_value = pd.DataFrame({"p": [1.0]}, index=["g1"])
     proxy.networks["net1"] = mock_net
 
-    result = await network_tools.get_network_element_data(
+    result = await network_tools.compare_variants(
         network_id="net1",
         element_type="generator",
-        mode="filter",
-        compare_with_variant_id="v2",
+        variant_b="missing_variant",
         ctx=mock_ctx,
     )
 
     data = json.loads(result)
     assert data["success"] is False
-    assert "mode='filter' cannot be combined" in data["error"]
+    assert "Variant 'missing_variant' not found" in data["error"]
 
 
 @pytest.mark.asyncio
-async def test_get_network_element_data_compare_variant_not_found(
-    network_tools, mock_ctx
-):
+async def test_compare_variants_detects_a_changed_cell(network_tools, mock_ctx):
+    proxy = network_tools.get_proxy("test-session")
+    mock_net, _ = _variant_aware_network(
+        "get_generators",
+        {
+            "InitialState": pd.DataFrame({"target_p": [100.0]}, index=["g1"]),
+            "v2": pd.DataFrame({"target_p": [150.0]}, index=["g1"]),
+        },
+    )
+    proxy.networks["net1"] = mock_net
+
+    result = await network_tools.compare_variants(
+        network_id="net1",
+        element_type="generator",
+        variant_a="InitialState",
+        variant_b="v2",
+        ctx=mock_ctx,
+    )
+
+    data = json.loads(result)
+    assert data["success"] is True
+    assert data["counts"] == {
+        "total": 1,
+        "scoped": 1,
+        "common": 1,
+        "added": 0,
+        "removed": 0,
+        "changed": 1,
+    }
+    assert data["changed"] == [
+        {"id": "g1", "changes": {"target_p": {"a": 100.0, "b": 150.0}}}
+    ]
+    # the working variant is restored after the call
+    mock_net.set_working_variant.assert_called_with("InitialState")
+
+
+@pytest.mark.asyncio
+async def test_compare_variants_requires_variant_b(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
     mock_net.get_variant_ids.return_value = ["InitialState"]
-    mock_net.get_generators.return_value = pd.DataFrame({"p": [1.0]}, index=["g1"])
     proxy.networks["net1"] = mock_net
 
-    result = await network_tools.get_network_element_data(
-        network_id="net1",
-        element_type="generator",
-        compare_with_variant_id="missing_variant",
-        ctx=mock_ctx,
+    result = await network_tools.compare_variants(
+        network_id="net1", element_type="generator", ctx=mock_ctx
     )
 
-    assert "Variant 'missing_variant' not found in network 'net1'" in result
+    data = json.loads(result)
+    assert data["success"] is False
+    assert "variant_b is required" in data["error"]
 
 
 @pytest.mark.asyncio
-async def test_get_network_element_data_compare_success(network_tools, mock_ctx):
+async def test_compare_variants_rejects_bus(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
     mock_net.get_variant_ids.return_value = ["InitialState", "v2"]
-    df_initial = pd.DataFrame({"p": [100.0]}, index=["g1"])
-    df_v2 = pd.DataFrame({"p": [150.0]}, index=["g1"])
-    mock_net.get_generators.side_effect = [df_initial, df_v2]
     proxy.networks["net1"] = mock_net
 
-    result = await network_tools.get_network_element_data(
+    result = await network_tools.compare_variants(
+        network_id="net1", element_type="bus", variant_b="v2", ctx=mock_ctx
+    )
+
+    data = json.loads(result)
+    assert data["success"] is False
+    assert "cannot diff 'bus'" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_compare_variants_rejects_state_scope_field(network_tools, mock_ctx):
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_variant_ids.return_value = ["InitialState", "v2"]
+    proxy.networks["net1"] = mock_net
+
+    result = await network_tools.compare_variants(
         network_id="net1",
-        element_type="generator",
-        compare_with_variant_id="v2",
+        element_type="line",
+        variant_b="v2",
+        conditions=[{"field": "p1", "op": ">", "value": 0}],
         ctx=mock_ctx,
     )
 
-    assert "g1" in result
-    mock_net.set_working_variant.assert_any_call("v2")
+    data = json.loads(result)
+    assert data["success"] is False
+    assert "variant-independent" in data["error"]
+    assert "p1" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_compare_variants_outage_is_changed_not_removed(network_tools, mock_ctx):
+    """Disconnecting an element in B shows in `changed`, never as `removed`."""
+    proxy = network_tools.get_proxy("test-session")
+    mock_net, _ = _variant_aware_network(
+        "get_lines",
+        {
+            "InitialState": pd.DataFrame(
+                {
+                    "connected2": [True, True],
+                    "voltage_level1_id": ["VL1", "VL2"],
+                    "voltage_level2_id": ["VL1", "VL2"],
+                },
+                index=["L1", "L2"],
+            ),
+            "outage": pd.DataFrame(
+                {
+                    "connected2": [True, False],
+                    "voltage_level1_id": ["VL1", "VL2"],
+                    "voltage_level2_id": ["VL1", "VL2"],
+                },
+                index=["L1", "L2"],
+            ),
+        },
+    )
+    mock_net.get_operational_limits.return_value = pd.DataFrame()
+    mock_net.get_voltage_levels.return_value = pd.DataFrame(
+        {"substation_id": ["S1", "S2"], "nominal_v": [400.0, 225.0]},
+        index=["VL1", "VL2"],
+    )
+    mock_net.get_substations.return_value = pd.DataFrame(
+        {"country": ["FR", "FR"]}, index=["S1", "S2"]
+    )
+    proxy.networks["net1"] = mock_net
+
+    result = await network_tools.compare_variants(
+        network_id="net1",
+        element_type="line",
+        variant_a="InitialState",
+        variant_b="outage",
+        conditions=[{"field": "country1", "op": "==", "value": "FR"}],
+        ctx=mock_ctx,
+    )
+
+    data = json.loads(result)
+    assert data["success"] is True
+    assert data["counts"]["removed"] == 0
+    assert data["counts"]["added"] == 0
+    assert [c["id"] for c in data["changed"]] == ["L2"]
 
 
 @pytest.mark.asyncio
@@ -2328,10 +2434,7 @@ async def test_get_network_element_data_filter_pagination_invalid_cursor(
     result = await network_tools.get_network_element_data(
         network_id="net1",
         element_type="generator",
-        mode="filter",
-        metric="loading_percent",
-        filter_op=">",
-        filter_value=0,
+        conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
         cursor="bogus-cursor",
         ctx=mock_ctx,
     )
@@ -2339,23 +2442,6 @@ async def test_get_network_element_data_filter_pagination_invalid_cursor(
     data = json.loads(result)
     assert data["success"] is False
     assert "Invalid cursor" in data["error"]
-
-
-@pytest.mark.asyncio
-async def test_get_network_element_data_unsupported_mode(network_tools, mock_ctx):
-    proxy = network_tools.get_proxy("test-session")
-    mock_net = MagicMock()
-    mock_net.get_generators.return_value = pd.DataFrame({"p": [1.0]}, index=["g1"])
-    mock_net.get_variant_ids.return_value = ["InitialState"]
-    proxy.networks["net1"] = mock_net
-
-    result = await network_tools.get_network_element_data(
-        network_id="net1", element_type="generator", mode="bogus", ctx=mock_ctx
-    )
-
-    data = json.loads(result)
-    assert data["success"] is False
-    assert "Unsupported mode 'bogus'" in data["error"]
 
 
 @pytest.mark.asyncio
@@ -2886,3 +2972,136 @@ async def test_get_top_active_power_transit_lines_exception(network_tools, mock_
     )
 
     assert "Failed to compute top active power transit lines: lines boom" in result
+
+
+# --- check_current_violations ----------------------------------------------
+
+
+def _current_network():
+    """A network with one overloaded line (150%), one healthy (50%), one
+    overloaded 2WT (150%), on voltage levels VL1=400 kV and VL2=225 kV."""
+    net = MagicMock()
+    net.get_variant_ids.return_value = ["InitialState"]
+    net.get_working_variant_id.return_value = "InitialState"
+    net.get_lines.return_value = pd.DataFrame(
+        {
+            "i1": [150.0, 50.0],
+            "i2": [-150.0, -50.0],
+            "voltage_level1_id": ["VL1", "VL2"],
+            "voltage_level2_id": ["VL1", "VL2"],
+        },
+        index=["L1", "L2"],
+    )
+    net.get_2_windings_transformers.return_value = pd.DataFrame(
+        {
+            "i1": [300.0],
+            "i2": [-300.0],
+            "voltage_level1_id": ["VL1"],
+            "voltage_level2_id": ["VL1"],
+        },
+        index=["T1"],
+    )
+    net.get_operational_limits.return_value = pd.DataFrame(
+        {
+            "element_id": ["L1", "L2", "T1"],
+            "side": ["ONE", "ONE", "ONE"],
+            "type": ["CURRENT", "CURRENT", "CURRENT"],
+            "acceptable_duration": [-1, -1, -1],
+            "value": [100.0, 100.0, 200.0],
+        }
+    )
+    net.get_voltage_levels.return_value = pd.DataFrame(
+        {"substation_id": ["S1", "S2"], "nominal_v": [400.0, 225.0]},
+        index=["VL1", "VL2"],
+    )
+    return net
+
+
+@pytest.mark.asyncio
+async def test_check_current_violations_sweeps_line_and_2wt(network_tools, mock_ctx):
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = _current_network()
+    proxy.loadflow_results["net1"] = {"converged": True}  # skip the auto load flow
+
+    data = json.loads(
+        await network_tools.check_current_violations(
+            network_id="net1", threshold_percent=100, ctx=mock_ctx
+        )
+    )
+
+    assert data["success"] is True
+    assert data["loadflow_executed"] is False
+    assert data["element_types"] == ["line", "two_windings_transformer"]
+    ids = {(v["element_id"], v["element_type"]) for v in data["violations"]}
+    assert ("L1", "line") in ids
+    assert ("T1", "two_windings_transformer") in ids
+    assert ("L2", "line") not in ids  # only 50% loaded
+    # worst-first, with excess over 100%
+    assert data["violations"][0]["loading_percent"] == 150.0
+    assert data["violations"][0]["excess_percent"] == 50.0
+    assert data["violations"][0]["violation_type"] == "CURRENT"
+
+
+@pytest.mark.asyncio
+async def test_check_current_violations_single_type_and_band(network_tools, mock_ctx):
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = _current_network()
+    proxy.loadflow_results["net1"] = {"converged": True}
+
+    # Narrow to lines only.
+    line_only = json.loads(
+        await network_tools.check_current_violations(
+            network_id="net1", element_type="line", threshold_percent=100, ctx=mock_ctx
+        )
+    )
+    assert [v["element_id"] for v in line_only["violations"]] == ["L1"]
+    assert line_only["element_types"] == ["line"]
+
+    # Band keeps only the 400 kV branches.
+    band = json.loads(
+        await network_tools.check_current_violations(
+            network_id="net1", min_nominal_voltage=300, threshold_percent=100, ctx=mock_ctx
+        )
+    )
+    assert {v["element_id"] for v in band["violations"]} == {"L1", "T1"}
+
+
+@pytest.mark.asyncio
+async def test_check_current_violations_auto_runs_loadflow(network_tools, mock_ctx):
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = _current_network()  # no cached load flow
+
+    class _Status:
+        name = "CONVERGED"
+
+    class _Result:
+        status = _Status()
+        connected_component_num = 0
+
+    with patch(
+        "pypowsybl_mcp.tools.network_tools.pp.loadflow.run_ac",
+        return_value=[_Result()],
+    ):
+        data = json.loads(
+            await network_tools.check_current_violations(
+                network_id="net1", threshold_percent=100, ctx=mock_ctx
+            )
+        )
+
+    assert data["loadflow_executed"] is True
+    assert data["violation_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_check_current_violations_rejects_bad_limit_kind(network_tools, mock_ctx):
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = _current_network()
+    proxy.loadflow_results["net1"] = {"converged": True}
+
+    data = json.loads(
+        await network_tools.check_current_violations(
+            network_id="net1", limit_kind="bogus", ctx=mock_ctx
+        )
+    )
+    assert data["success"] is False
+    assert "limit_kind" in data["error"]
