@@ -30,9 +30,11 @@ This document lists all MCP tools exposed by the PyPowsybl MCP server, grouped b
 
 | Tool                                 | Description                                                                 |
 |--------------------------------------|-----------------------------------------------------------------------------|
-| `get_network_element_data`           | Return tabular data for a given element type (buses, lines, generators, …); pass `get_only_ids=True` for just the element IDs. |
+| `get_network_element_data`           | Return tabular data for a given element type (buses, lines, generators, …); pass `conditions` to filter, `attach` to enrich, `get_only_ids=True` for just the element IDs. |
+| `compare_variants`                   | Diff one element type's table between two variants (added/removed/changed); scope with variant-independent `conditions`. |
 | `get_top_active_power_transit_lines` | Return the lines with the highest active power transit.                     |
-| `check_voltage_violations`           | List buses whose voltage is outside acceptable bounds.                      |
+| `check_voltage_violations`           | List buses whose voltage is outside acceptable bounds (N state).            |
+| `check_current_violations`           | List branches loaded above a threshold in the N state (line + 2WT, worst first). |
 
 `get_network_element_data` and `check_voltage_violations` also take `return_as="artifact"` to hand a large table over
 as a file instead of inlining it — see [Returning a big result as a file](#returning-a-big-result-as-a-file-return_asartifact).
@@ -84,9 +86,8 @@ as a file instead of inlining it — see [Returning a big result as a file](#ret
 
 | Tool                        | Description                                                                  |
 |-----------------------------|------------------------------------------------------------------------------|
-| `run_security_analysis`     | Run N-1 (or N-k) security analysis using a contingency list.                 |
+| `run_security_analysis`     | Run N-1 (or N-k) security analysis using a contingency list; pass `threshold_percent` (with `limit_type="CURRENT"`) to keep only overloads. |
 | `create_contingencies_list` | Automatically generate a contingency list from the current network topology. |
-| `get_overloaded_elements`   | Find elements above a loading threshold in normal (N) or N-1 operation.      |
 
 ---
 
