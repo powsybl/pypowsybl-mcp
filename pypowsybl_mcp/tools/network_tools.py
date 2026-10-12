@@ -20,11 +20,19 @@ from pypowsybl_mcp.utils.artifact_utils import (
     normalize_return_options,
 )
 from pypowsybl_mcp.utils.element_data_filter import (
+    FilterError,
     apply_element_filter,
-    attach_current_limits,
+    attach_full_current_limits,
+    attach_nominal_voltage,
+    attach_substation_geotags,
+    attach_substation_id,
     attach_tap_changer_data,
+    attach_voltage_limits,
+    collect_condition_fields,
+    element_nominal_voltage,
     filter_elements_to_main_area,
     main_area_bus_ids,
+    parse_main_component,
 )
 from pypowsybl_mcp.utils.element_types import (
     ELEMENT_TYPE_TO_GETTER,
@@ -33,6 +41,7 @@ from pypowsybl_mcp.utils.element_types import (
 )
 from pypowsybl_mcp.utils.pagination import (
     DEFAULT_PAGINATION_LIMIT,
+    MAX_PAGINATION_LIMIT,
     attach_pagination,
     paginate,
 )
@@ -72,6 +81,58 @@ MODIFY_NETWORK_SPEC: dict[str, dict] = {
         },
     },
 }
+
+
+# Enrichment tokens get_network_element_data accepts for its `attach` argument.
+# current_limits -> permanent_limit1/2 + temporary_limit1/2; geotags ->
+# country/regionCvg (via the substation hop); voltage_limits -> low/high_voltage_limit
+# on bus rows. (surface-conventions §7)
+_SUPPORTED_ATTACH_TOKENS = {"current_limits", "geotags", "voltage_limits"}
+
+
+# Variant-independent fields compare_variants may scope by (surface-conventions
+# §5). A diff must never be scoped by per-variant state (p, v_mag, connected*) or
+# a derived metric, which would select a different subset per variant and fake
+# added/removed; those are rejected with a friendly error.
+_COMPARE_SCOPE_ALLOWLIST = {
+    "country", "country1", "country2",
+    "regionCvg", "regionCvg1", "regionCvg2",
+    "nominal_v",
+    "substation_id",
+    "voltage_level_id", "voltage_level1_id", "voltage_level2_id",
+}
+_GEOTAG_SCOPE_FIELDS = {
+    "country", "country1", "country2",
+    "regionCvg", "regionCvg1", "regionCvg2",
+}
+# Longest added/removed id list shown inline before it is truncated with a hint.
+_COMPARE_ID_LIST_CAP = 200
+
+
+def _attach_scope_columns(df, network, element_type, referenced):
+    """Materialise the allowlisted scope columns a compare predicate references.
+
+    voltage_level_id[1/2] are already real columns on the element frames; the
+    rest are joined on demand so an unused join never runs.
+    """
+    if referenced & _GEOTAG_SCOPE_FIELDS:
+        df = attach_substation_geotags(df, network, element_type)
+    if "nominal_v" in referenced:
+        df = attach_nominal_voltage(df, network, element_type)
+    if "substation_id" in referenced:
+        df = attach_substation_id(df, network, element_type)
+    return df
+
+
+def _cells_differ(a_value, b_value):
+    """NaN-aware inequality: two NaNs are equal, a NaN vs a value differs."""
+    a_na = pd.isna(a_value)
+    b_na = pd.isna(b_value)
+    if a_na and b_na:
+        return False
+    if a_na != b_na:
+        return True
+    return a_value != b_value
 
 
 def register_network_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
@@ -1518,167 +1579,350 @@ class NetworkTools(PyPowsyblTool):
                 {"success": False, "network_id": network_id, "error": str(e)}, indent=2
             )
 
+    async def check_current_violations(
+        self,
+        network_id: str | None = None,
+        element_type: str | None = None,
+        threshold_percent: float = 100.0,
+        limit_kind: str = "permanent",
+        min_nominal_voltage: float | None = None,
+        max_nominal_voltage: float | None = None,
+        main_component: str = "none",
+        return_as: str = "inline",
+        limit: int | None = None,
+        cursor: str | int | None = None,
+        ctx: Context = None,
+    ) -> str:
+        """Check branches for current/thermal overloads in the N state.
+
+        The current-side twin of check_voltage_violations: it sweeps every branch
+        (no component filter by default), auto-runs an AC load flow if none is
+        cached, and reports every branch loaded above threshold_percent, worst
+        first. Operates on the currently active working variant.
+
+        Args:
+            network_id (str, optional): Network to check. None = current network.
+            element_type (str, optional): One branch type to check. None sweeps
+                both "line" and "two_windings_transformer" (the types with loading
+                math) in a single call.
+            threshold_percent (float, optional): Report branches loaded strictly
+                above this percentage. Default 100.0.
+            limit_kind (str, optional): Which rating is the denominator —
+                "permanent" (default, the normal N limit) or "temporary" (the
+                higher short-term rating; falls back to permanent where none).
+            min_nominal_voltage / max_nominal_voltage (float, optional): Keep only
+                branches whose nominal voltage (higher side) is within the band
+                (kV, inclusive). None = no band filter.
+            main_component (str, optional): Component scope — "none" (default,
+                every branch, matching the voltage tool), "both", "connected",
+                "synchronous".
+            return_as (str, optional): "inline" (default) or "artifact_json" /
+                "artifact_csv".
+            limit (int, optional): Violations per page (inline). None = all.
+            cursor (str | int, optional): Page offset; use pagination.nextCursor.
+
+        Returns:
+            str: JSON. {"success": true, loadflow_executed, element_types,
+            threshold_percent, limit_kind, total_elements, matched_count,
+            violation_count, violations[{element_id, name, element_type,
+            voltage_level1_id, voltage_level2_id, nominal_v, i_a, limit_a,
+            loading_percent, excess_percent, limit_kind, violation_type:"CURRENT"}]}.
+            On non-convergence, success=false with failed_components.
+
+        Example:
+            check_current_violations(threshold_percent=100)  # line + 2WT overloads
+        """
+        try:
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
+
+        kind = (limit_kind or "permanent").strip().lower()
+        if kind not in ("permanent", "temporary"):
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": f"Invalid limit_kind '{limit_kind}': expected "
+                    "'permanent' or 'temporary'",
+                },
+                indent=2,
+            )
+        try:
+            return_mode, artifact_format = normalize_return_options(return_as, None)
+            parse_main_component(main_component)  # validate; delegated call reuses it
+        except ValueError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
+
+        metric = "loading_percent" if kind == "permanent" else "loading_percent_temporary"
+        limit_column = "permanent_limit1" if kind == "permanent" else "temporary_limit1"
+
+        try:
+            loadflow_executed = False
+            if network_id not in proxy.loadflow_results:
+                loadflow_executed = True
+                results = pp.loadflow.run_ac(network)
+                if not all(r.status.name == "CONVERGED" for r in results):
+                    return json.dumps(
+                        {
+                            "success": False,
+                            "network_id": network_id,
+                            "loadflow_executed": True,
+                            "loadflow_converged": False,
+                            "failed_components": [
+                                {
+                                    "component_num": r.connected_component_num,
+                                    "status": r.status.name,
+                                }
+                                for r in results
+                                if r.status.name != "CONVERGED"
+                            ],
+                            "error": "Load flow failed to converge",
+                        },
+                        indent=2,
+                    )
+                proxy.loadflow_results[network_id] = {
+                    "converged": True,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+
+            types = (
+                [element_type]
+                if element_type
+                else ["line", "two_windings_transformer"]
+            )
+            working_variant = network.get_working_variant_id()
+
+            # Nominal voltage per voltage level, for the optional band filter.
+            band_active = (
+                min_nominal_voltage is not None or max_nominal_voltage is not None
+            )
+            vl_nominal = {}
+            if band_active:
+                try:
+                    vls = network.get_voltage_levels()
+                    if isinstance(vls, pd.DataFrame) and "nominal_v" in vls.columns:
+                        vl_nominal = vls["nominal_v"].to_dict()
+                except (pp.PyPowsyblError, ValueError, KeyError):
+                    vl_nominal = {}
+
+            violations = []
+            total_elements = 0
+            for element_t in types:
+                cursor_t = None
+                while True:
+                    raw = await self.get_network_element_data(
+                        network_id=network_id,
+                        variant_id=working_variant,
+                        element_type=element_t,
+                        conditions=[
+                            {"field": metric, "op": ">", "value": threshold_percent}
+                        ],
+                        order_by=f"-{metric}",
+                        attach=["current_limits"],
+                        main_component=main_component,
+                        limit=MAX_PAGINATION_LIMIT,
+                        cursor=cursor_t,
+                        ctx=ctx,
+                    )
+                    data = json.loads(raw)
+                    if not data.get("success"):
+                        return raw
+                    total_elements += data.get("total_elements", 0)
+                    for element_id, fields in data.get("elements", {}).items():
+                        nominal_v = element_nominal_voltage(
+                            element_t, fields, vl_nominal
+                        )
+                        if band_active:
+                            if pd.isna(nominal_v):
+                                continue
+                            if (
+                                min_nominal_voltage is not None
+                                and nominal_v < min_nominal_voltage
+                            ):
+                                continue
+                            if (
+                                max_nominal_voltage is not None
+                                and nominal_v > max_nominal_voltage
+                            ):
+                                continue
+                        loading = fields.get(metric)
+                        i1 = fields.get("i1")
+                        i2 = fields.get("i2")
+                        currents = [
+                            abs(v) for v in (i1, i2) if v is not None and not pd.isna(v)
+                        ]
+                        limit_a = fields.get(limit_column)
+                        name = fields.get("name") or ""
+                        violations.append(
+                            {
+                                "element_id": element_id,
+                                "name": "" if pd.isna(name) else name,
+                                "element_type": element_t,
+                                "voltage_level1_id": fields.get("voltage_level1_id"),
+                                "voltage_level2_id": fields.get("voltage_level2_id"),
+                                "nominal_v": None
+                                if pd.isna(nominal_v)
+                                else round(float(nominal_v), 3),
+                                "i_a": round(max(currents), 3) if currents else None,
+                                "limit_a": None
+                                if limit_a is None or pd.isna(limit_a)
+                                else round(float(limit_a), 3),
+                                "loading_percent": None
+                                if loading is None or pd.isna(loading)
+                                else round(float(loading), 2),
+                                "excess_percent": None
+                                if loading is None or pd.isna(loading)
+                                else round(float(loading) - 100.0, 2),
+                                "limit_kind": kind,
+                                "violation_type": "CURRENT",
+                            }
+                        )
+                    pagination = data.get("pagination")
+                    if not pagination:
+                        break
+                    next_cursor = pagination.get("nextCursor")
+                    if next_cursor is None or next_cursor == cursor_t:
+                        break
+                    cursor_t = next_cursor
+
+            # Worst first, across both types (no caller sort — a safety report has
+            # one sensible order).
+            violations.sort(
+                key=lambda v: v["loading_percent"]
+                if v["loading_percent"] is not None
+                else float("-inf"),
+                reverse=True,
+            )
+
+            summary = {
+                "success": True,
+                "network_id": network_id,
+                "loadflow_executed": loadflow_executed,
+                "element_types": types,
+                "threshold_percent": threshold_percent,
+                "limit_kind": kind,
+                "total_elements": total_elements,
+                "matched_count": len(violations),
+                "violation_count": len(violations),
+            }
+
+            if return_mode == "artifact":
+                result = artifact_response(
+                    summary,
+                    violations,
+                    f"{network_id}_current_violations",
+                    artifact_format,
+                )
+            else:
+                try:
+                    violations_out, pagination = paginate(
+                        violations, limit=limit, cursor=cursor
+                    )
+                except ValueError as e:
+                    return json.dumps({"success": False, "error": str(e)}, indent=2)
+                result = attach_pagination(
+                    {
+                        **summary,
+                        "returned_count": len(violations_out),
+                        "violations": violations_out,
+                    },
+                    pagination,
+                )
+                if pagination and len(violations_out) < len(violations):
+                    result["truncated"] = True
+                    result["hint"] = (
+                        "More violations than this page; use return_as='artifact_json' "
+                        "for every match, or page with cursor."
+                    )
+
+            logger.info(
+                f"Current check for '{network_id}': {len(violations)} violations found"
+            )
+            return json.dumps(result, indent=2, default=str)
+
+        except (pp.PyPowsyblError, ValueError, KeyError) as e:
+            logger.error(f"Failed to check current violations: {e}")
+            return json.dumps(
+                {"success": False, "network_id": network_id, "error": str(e)}, indent=2
+            )
+
     async def get_network_element_data(
         self,
         network_id: str | None = None,
         variant_id="InitialState",
         element_type: str | None = None,
-        compare_with_variant_id: str | None = None,
-        mode: str | None = None,
-        metric: str | None = None,
-        filter_op: str | None = None,
-        filter_value: float | str | None = None,
-        sort: str = "desc",
-        limit_kind: str = "permanent",
-        main_connected_component: bool = True,
-        main_synchronous_component: bool = True,
+        conditions: list | dict | str | None = None,
+        order_by: str | None = None,
+        attach: list[str] | None = None,
+        main_component: str = "both",
         get_only_ids: bool = False,
         return_as: str = "inline",
-        artifact_format: str = "json",
         limit: int | None = None,
         cursor: str | int | None = None,
         ctx: Context = None,
     ) -> str:
-        """
-        Retrieve detailed information about specific network elements as JSON.
+        """Query one variant's elements of a given type, optionally filtered.
 
-        Gets the complete data for a specific element type (substations, generators, lines, etc.)
-        from a power system network or variant of the network. Returns all attributes and parameters for the elements
-        in JSON format, suitable for detailed analysis or data export.
+        Omit `conditions` for the full element table; pass it to keep only the
+        matching rows (the former mode="filter").
 
         Args:
-            network_id (str, optional): Network to query. If None, uses current network. Default: None.
-            variant_id (str, optional): Variant to query. If None, uses default variant_id. Default: 'InitialState'.
-            element_type (str): Type of elements to retrieve. Supported types:
-                - "voltage_level": Voltage level information
-                - "substation": Substation information
-                - "bus": Bus/node data with voltages
-                - "generator": Generation units with power output
-                - "load": Load points with consumption
-                - "line": Transmission lines with ratings
-                - "two_windings_transformer": Two-winding transformers
-                  ("transformer" on its own always means this one)
-                - "three_windings_transformer": Three-winding transformers
-                - "hvdc_line": HVDC transmission lines
-                - "shunt_compensator": Shunt compensation devices
-                - "static_var_compensator": Static var compensators
-                - "vsc_converter_station": VSC converter stations
-                - "lcc_converter_station": LCC converter stations
-                - "switch": Switching devices
-                Any other pypowsybl element table is accepted too, named after
-                its pypowsybl ElementType lowercased (e.g. "battery",
-                "tie_line", "busbar_section"). Names are canonical and singular:
-                no abbreviations or plural variants. An invalid name comes back
-                with the full list and a suggestion.
-            compare_with_variant_id (str, optional): Variant to compare with. If None, do not do comparison. Default: None.
-            mode (str, optional): Use "filter" to keep only the elements that match a
-                condition. Omit it (or use "list") to get the full element list. Default: None.
-            metric (str, optional): Column name or derived metric to test. Derived metrics
-                are "loading_percent", "p_abs" and "q_abs". Required when mode="filter".
-            filter_value (float, optional): Threshold for the comparison. You choose
-                this value; 90 or 100 are common examples for loading_percent but
-                nothing is hard-coded.
-            sort (str, optional): Order of the filtered rows: "desc" (default) or "asc".
-            limit_kind (str, optional): For lines and 2-winding transformers only,
-                when metric is loading_percent: which ampacity rating from
-                get_operational_limits() to use as the denominator.
-
-                pypowsybl stores both ratings in the same table (type CURRENT,
-                value in amperes). They are distinguished by acceptable_duration:
-                  - "permanent" (default): duration -1, the normal continuous limit.
-                    Typical use: check loading in everyday N operation.
-                  - "temporary": duration > 0, a higher limit allowed for a short
-                    time after an outage. Typical use: check loading against the
-                    N-1 rating when your network already reflects post-contingency
-                    flows (from a prior loadflow or variant).
-
-                permanent and temporary are often different values, but not always;
-                if a line has no temporary row, we fall back to the permanent one.
-
-                Important: this only selects which limit to divide by. It does not
-                run a contingency study and does not change i1/i2 — currents always
-                come from the network state you already loaded. Ignored for generators,
-                loads, and other element types.
-            main_connected_component (bool, optional): Keep only elements with at
-                least one terminal in the network's main connected component
-                (component index 0). Default: True.
-            main_synchronous_component (bool, optional): Keep only elements with at
-                least one terminal in the main synchronous component (index 0).
-                When both flags are True a terminal must be in both. HVDC lines
-                are resolved through their converter stations. Set both False to
-                return every element, including islanded ones. Default: True.
-            limit (int, optional): How many elements per page. In list mode, None
-                returns everything. In filter mode there is always a page: if you
-                leave limit out, we fall back to the default page size so a wide
-                filter cannot return a huge answer. matched_count always tells you
-                how many elements matched; elements only holds the current page.
-                Ask for a bigger limit, or move on with cursor, to see more.
-            cursor (str | int, optional): Page offset. Use pagination.nextCursor for the next page.
-            get_only_ids (bool, optional): When True, return only the element IDs
-                for element_type instead of their full data — faster and cheaper
-                for enumeration, validation or feeding IDs to other tools. The IDs
-                reflect variant_id. The mode/metric/filter and compare_with_variant_id
-                arguments are ignored in this mode. Default: False.
-            return_as (str, optional): "inline" (default) puts the elements in the
-                answer, paginated. "artifact" writes every matching element to a
-                temporary file instead and returns a link to it, with the counts and
-                a short preview. Use it whenever the whole table is wanted rather
-                than a glance - a bus table on a real network is hundreds of rows,
-                and the file is fetched over plain HTTP by whoever needs the data.
-            artifact_format (str, optional): "json" (default) or "csv", when
-                return_as="artifact". Default: "json".
+            network_id (str, optional): Network to query. None = current network.
+            variant_id (str, optional): Variant to query. Default 'InitialState'.
+            element_type (str): Element table, canonical singular name, e.g.
+                "line", "generator", "bus", "two_windings_transformer",
+                "hvdc_line", "substation". "transformer" means two-winding. Any
+                pypowsybl ElementType lowercased is accepted; an invalid name
+                returns the list and a suggestion.
+            conditions (list | dict | str, optional): Structured predicate. A flat
+                list is implicit AND; {"all": [...]} / {"any": [...]} nests AND/OR.
+                Each leaf is {"field", "op", and exactly one of "value" | "ref"}:
+                  - field: a real column OR a derived metric — loading_percent,
+                    loading_percent_temporary, p_abs, q_abs.
+                  - op: > >= < <= == != (gt/ge/lt/le/eq/ne aliases), in, not_in.
+                    Ordered ops need a numeric value; == / != / in / not_in accept
+                    strings and lists (e.g. country == "FR").
+                  - value: a literal (number/string/bool, or a list for in/not_in);
+                    ref: another field to compare against per row (i1 > permanent_limit1).
+                A JSON string is accepted and parsed. None = full list (no filter).
+            order_by (str, optional): Sort the filtered rows: "-field"=descending,
+                "field"=ascending, bare "asc"/"desc" on the default field,
+                None = the first leaf's field, descending.
+            attach (list[str], optional): Enrichment tokens that materialise extra
+                columns conditions (and the output) can reference:
+                  - "current_limits" → permanent_limit1/2, temporary_limit1/2 (A);
+                  - "geotags" → country, regionCvg from the substation (country1/2,
+                    regionCvg1/2 on branches). regionCvg is a French region for
+                    domestic substations but the country ISO for foreign ones; use
+                    country for country-level filters. Absent on networks without it.
+                  - "voltage_limits" → low_voltage_limit, high_voltage_limit (kV) on
+                    bus rows (network-declared only; not a voltage-violation check).
+                Unknown token → friendly error.
+            main_component (str, optional): Component scope — "both" (default,
+                intersect), "connected", "synchronous", or "none" (every element,
+                islanded included). Terminals resolved through converter stations
+                for HVDC lines.
+            get_only_ids (bool, optional): Return only the element IDs (fast path),
+                ignoring conditions/attach/compare. Default False.
+            return_as (str, optional): "inline" (default, paginated) or
+                "artifact_json" / "artifact_csv" to write the whole result to a file
+                and return a link, counts and a short preview.
+            limit (int, optional): Page size. List mode: None = all. Filter mode
+                always paginates (default page size when omitted); matched_count
+                gives the full match count regardless.
+            cursor (str | int, optional): Page offset; use pagination.nextCursor.
 
         Returns:
-            str: JSON-formatted string. With get_only_ids=False (default): the
-                complete element data with all attributes; if comparison is requested,
-                only elements that differ between the two variants. With
-                get_only_ids=True: a JSON array of IDs when limit is None, otherwise
-                an object with element_ids + pagination; with return_as="artifact",
-                the IDs go to the file, one row each under an "id" column.
-                Returns error message if network not found or invalid element type.
+            str: JSON. Success → {"success": true, ...}; with conditions,
+            total_elements / matched_count plus the "elements" page (or the
+            artifact). loading_percent on lines/2WT = max(|i1|,|i2|) / the attached
+            permanent rating × 100; loading_percent_temporary uses the temporary
+            rating; generators use |p| / max_p.
 
-        Example Usage:
-            # Get all substations
-            substations = get_network_element_data("ieee_14", "substation")
-
-            # Get all generators
-            generators = get_network_element_data("ieee_14", "generator")
-
-            # Get lines from current network
-            lines = get_network_element_data(None, "line")
-
-            # Get only the generator IDs (replaces get_network_elements_ids)
-            gen_ids = get_network_element_data("ieee_14", "generator", get_only_ids=True)
-            → ["B1-G", "B2-G", ...]
-
-        Use Cases:
-            - compare variants from same network
-
-        Returns Data Including:
-            - Element IDs and names
-            - Electrical parameters (voltage, power, impedance, etc.)
-            - Connection topology
-            - Operating limits
-            - Status information
-            - Geographic location (if available)
-
-        Notes:
-            - Returns all available attributes for each element type
-            - Data structure varies by element type
-            - Pass get_only_ids=True for just the IDs (no other attributes)
-            - Data reflects current state (including loadflow results if run)
-            - loading_percent on lines/transformers: max(|i1|, |i2|) in amperes,
-              divided by the current limit picked via limit_kind (see above).
-              get_lines() does not include that limit; we read it from
-              get_operational_limits() and attach it as current_limit1 before
-              filtering. Generators use |p| / max_p instead.
-
-        Related Tools:
-            - get_network_info(): Get network statistics summary
-            - modify_network(): Modify element parameters
-            - get_online_resource(class_object='network'): Look up the underlying
-              pypowsybl network API (methods, signatures, parameters) instead of
-              relying on prior knowledge
+        Example:
+            # Lines loaded above their permanent rating, worst first
+            get_network_element_data("ieee_14", element_type="line",
+                conditions=[{"field": "loading_percent", "op": ">", "value": 100}])
         """
         try:
             _, network_id, network = self.resolve_network(ctx, network_id)
@@ -1694,9 +1938,19 @@ class NetworkTools(PyPowsyblTool):
             return msg
 
         try:
-            return_mode, artifact_format = normalize_return_options(
-                return_as, artifact_format
+            # artifact_format is folded into return_as now ({inline, artifact_json,
+            # artifact_csv}); pass None for the legacy second argument.
+            return_mode, artifact_format = normalize_return_options(return_as, None)
+            main_connected_component, main_synchronous_component = parse_main_component(
+                main_component
             )
+            attach_tokens = set(attach or [])
+            unknown_attach = attach_tokens - _SUPPORTED_ATTACH_TOKENS
+            if unknown_attach:
+                raise ValueError(
+                    f"Unknown attach token(s): {', '.join(sorted(unknown_attach))}. "
+                    f"Supported: {', '.join(sorted(_SUPPORTED_ATTACH_TOKENS))}"
+                )
         except ValueError as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
@@ -1821,23 +2075,23 @@ class NetworkTools(PyPowsyblTool):
             )
 
             # get_lines() returns i1/i2 (current in A) but not Imax. Imax is in
-            # get_operational_limits(). We join it here so loading_percent works.
-            if compare_with_variant_id is None and element_type in (
-                "line",
-                "two_windings_transformer",
-            ):
+            # get_operational_limits(). We materialise the full ampacity set
+            # (permanent_limit1/2, temporary_limit1/2) so loading_percent and
+            # loading_percent_temporary resolve, and a leaf can compare against a
+            # per-row rating. This is the current_limits attach, applied implicitly
+            # for the two types that have loading math.
+            if element_type in ("line", "two_windings_transformer"):
                 limits_df = None
                 try:
                     limits_df = network.get_operational_limits()
                 except (pp.PyPowsyblError, ValueError, KeyError) as e:
                     logger.debug(f"get_operational_limits failed: {e}")
-                kind = (limit_kind or "permanent").strip().lower()
-                elements_df = attach_current_limits(elements_df, limits_df, kind)
+                elements_df = attach_full_current_limits(elements_df, limits_df)
 
             # Transformer tables do not carry their tap-changer details. Join the
             # tap position, range and regulated side so the caller sees them in
             # one call (see set_tap_position() to change the position).
-            if compare_with_variant_id is None and element_type in (
+            if element_type in (
                 "two_windings_transformer",
                 "three_windings_transformer",
             ):
@@ -1855,41 +2109,27 @@ class NetworkTools(PyPowsyblTool):
                     elements_df, ratio_df, phase_df, element_type
                 )
 
-            mode_normalized = (mode or "").strip().lower()
-
-            if compare_with_variant_id is not None:
-                if mode_normalized == "filter":
-                    return json.dumps(
-                        {
-                            "success": False,
-                            "error": "mode='filter' cannot be combined with compare_with_variant_id",
-                        },
-                        indent=2,
-                    )
-                if compare_with_variant_id not in network.get_variant_ids():
-                    msg = f"Variant '{compare_with_variant_id}' not found in network '{network_id}'"
-                    logger.warning(msg)
-                    return msg
-                network.set_working_variant(compare_with_variant_id)
-                compare_df = method()
-                elements_df = elements_df.compare(
-                    compare_df, result_names=(variant_id, compare_with_variant_id)
+            # Opt-in enrichments: geotags (country/regionCvg from the substation)
+            # and voltage_limits (declared low/high limit on bus rows).
+            if "geotags" in attach_tokens:
+                elements_df = attach_substation_geotags(
+                    elements_df, network, element_type
                 )
+            if "voltage_limits" in attach_tokens:
+                elements_df = attach_voltage_limits(elements_df, network, element_type)
 
             total_elements = len(elements_df)
             logger.debug(
                 f"Retrieved {total_elements} {element_type} from network '{network_id}'"
             )
 
-            if mode_normalized == "filter":
+            if conditions is not None:
                 try:
                     filtered_df = apply_element_filter(
                         elements_df,
                         element_type=element_type,
-                        metric=metric,
-                        filter_op=filter_op,
-                        filter_value=filter_value,
-                        sort=sort,
+                        conditions=conditions,
+                        order_by=order_by,
                     )
                 except ValueError as e:
                     return json.dumps({"success": False, "error": str(e)}, indent=2)
@@ -1913,11 +2153,8 @@ class NetworkTools(PyPowsyblTool):
                     "network_id": network_id,
                     "variant_id": variant_id,
                     "element_type": element_type,
-                    "metric": metric,
-                    "filter_op": filter_op,
-                    "filter_value": filter_value,
-                    "sort": sort or "desc",
-                    "limit_kind": (limit_kind or "permanent"),
+                    "conditions": conditions,
+                    "order_by": order_by,
                     "total_elements": total_elements,
                     "matched_count": matched_count,
                 }
@@ -1929,7 +2166,7 @@ class NetworkTools(PyPowsyblTool):
                         artifact_response(
                             summary,
                             dataframe_to_rows(filtered_df),
-                            f"{network_id}_{element_type}_{metric or 'filtered'}",
+                            f"{network_id}_{element_type}_filtered",
                             artifact_format,
                         ),
                         indent=2,
@@ -1950,15 +2187,6 @@ class NetworkTools(PyPowsyblTool):
                 payload = attach_pagination(payload, pagination)
                 return json.dumps(payload, indent=2)
 
-            if mode_normalized not in ("", "list"):
-                return json.dumps(
-                    {
-                        "success": False,
-                        "error": f"Unsupported mode '{mode}'. Use 'filter' or omit mode.",
-                    },
-                    indent=2,
-                )
-
             if return_mode == "artifact":
                 return json.dumps(
                     artifact_response(
@@ -1967,7 +2195,6 @@ class NetworkTools(PyPowsyblTool):
                             "network_id": network_id,
                             "variant_id": variant_id,
                             "element_type": element_type,
-                            "compare_with_variant_id": compare_with_variant_id,
                             "total_elements": total_elements,
                         },
                         dataframe_to_rows(elements_df),
@@ -2003,6 +2230,298 @@ class NetworkTools(PyPowsyblTool):
         finally:
             # Restore the caller's working variant so a read never leaks the
             # variant switches done above into the shared/cached network.
+            try:
+                network.set_working_variant(original_variant_id)
+            except (pp.PyPowsyblError, ValueError, KeyError) as e:
+                logger.warning(
+                    f"Could not restore working variant '{original_variant_id}': {e}"
+                )
+
+    async def compare_variants(
+        self,
+        network_id: str | None = None,
+        element_type: str = "line",
+        variant_a: str = "InitialState",
+        variant_b: str | None = None,
+        conditions: list | dict | str | None = None,
+        columns: list[str] | None = None,
+        return_as: str = "inline",
+        limit: int | None = None,
+        cursor: str | int | None = None,
+        ctx: Context = None,
+    ) -> str:
+        """Diff one element type's table between two variants: added/removed/changed.
+
+        A variant stores state (flows, tap position, connection status), not
+        structure, so for an equipment type the two index sets match and
+        added/removed are empty by construction — an outage shows up in `changed`
+        (e.g. connected2 true→false), not as `removed`.
+
+        Args:
+            network_id (str, optional): Network. None = current network.
+            element_type (str): Element table to diff (e.g. "line", "generator",
+                "two_windings_transformer"). "bus" is refused (topology-derived
+                index churns between variants).
+            variant_a (str): Baseline variant. Default 'InitialState'.
+            variant_b (str): Variant compared against A. Required.
+            conditions (list | dict | str, optional): Scope predicate, the same
+                grammar as get_network_element_data but restricted to
+                variant-independent fields: country[1/2], regionCvg[1/2],
+                nominal_v (higher side for branches), substation_id,
+                voltage_level_id[1/2]. A state or derived field (p, v_mag,
+                loading_percent, connected*) is rejected — it would select a
+                different subset per variant and fake added/removed. Applied
+                identically to both variants. None = compare the whole table.
+            columns (list[str], optional): Restrict which columns are diffed.
+                None = every column present in both variants.
+            return_as (str, optional): "inline" (default) or "artifact_json" /
+                "artifact_csv" (one long row per change: id, change_type, column,
+                value_a, value_b).
+            limit (int, optional): Page size for the `changed` list. None = all.
+            cursor (str | int, optional): Page offset; use pagination.nextCursor.
+
+        Returns:
+            str: JSON. {"success": true, counts {total, scoped, common, added,
+            removed, changed}, added[], removed[], changed[{id, changes:{col:{a,b}}}]}.
+            An empty diff means "nothing changed in scope". Flows/voltages only
+            differ meaningfully if both variants were solved (run a load flow on
+            each first); structural diffs need none.
+
+        Example:
+            compare_variants("net", element_type="line", variant_a="InitialState",
+                variant_b="outage", conditions=[{"field": "nominal_v", "op": ">=",
+                "value": 225}])
+        """
+        try:
+            _, network_id, network = self.resolve_network(ctx, network_id)
+        except NetworkNotFoundError as e:
+            logger.warning(str(e))
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
+
+        if element_type == "bus":
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": "compare_variants cannot diff 'bus': the bus view is "
+                    "topology-derived and its ids churn between variants. Diff a "
+                    "stable equipment type instead.",
+                },
+                indent=2,
+            )
+        if variant_b is None:
+            return json.dumps(
+                {"success": False, "error": "variant_b is required."}, indent=2
+            )
+
+        try:
+            return_mode, artifact_format = normalize_return_options(return_as, None)
+        except ValueError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
+
+        element_methods = ELEMENT_TYPE_TO_GETTER
+        if element_type not in element_methods:
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": f"Invalid element type '{element_type}'. "
+                    f"{element_type_hint(element_type, element_methods)}",
+                },
+                indent=2,
+            )
+        method_name = element_methods[element_type]
+        if not hasattr(network, method_name):
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": f"Method '{method_name}' not available for this network",
+                },
+                indent=2,
+            )
+        method = getattr(network, method_name)
+
+        # Reject any scope field outside the variant-independent allowlist before
+        # touching the network.
+        try:
+            referenced = collect_condition_fields(conditions)
+        except FilterError as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
+        illegal = referenced - _COMPARE_SCOPE_ALLOWLIST
+        if illegal:
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": "compare_variants scopes only by variant-independent "
+                    f"fields ({', '.join(sorted(_COMPARE_SCOPE_ALLOWLIST))}); "
+                    f"{', '.join(sorted(illegal))} is per-variant state and would "
+                    "fake added/removed.",
+                },
+                indent=2,
+            )
+
+        original_variant_id = network.get_working_variant_id()
+        try:
+            existing = network.get_variant_ids()
+            for vid in (variant_a, variant_b):
+                if vid not in existing:
+                    return json.dumps(
+                        {
+                            "success": False,
+                            "error": f"Variant '{vid}' not found in network '{network_id}'",
+                        },
+                        indent=2,
+                    )
+
+            def scoped(vid):
+                network.set_working_variant(vid)
+                frame = method()
+                frame = _attach_scope_columns(
+                    frame, network, element_type, referenced
+                )
+                if conditions is not None:
+                    frame = apply_element_filter(
+                        frame, element_type=element_type, conditions=conditions
+                    )
+                return frame
+
+            network.set_working_variant(variant_a)
+            total = len(method())
+            df_a = scoped(variant_a)
+            df_b = scoped(variant_b)
+
+            added = list(df_b.index.difference(df_a.index))
+            removed = list(df_a.index.difference(df_b.index))
+            common = df_a.index.intersection(df_b.index)
+
+            if columns:
+                diff_cols = [
+                    c for c in columns if c in df_a.columns and c in df_b.columns
+                ]
+            else:
+                diff_cols = [c for c in df_a.columns if c in df_b.columns]
+
+            a_common = df_a.loc[common, diff_cols]
+            b_common = df_b.loc[common, diff_cols]
+            changed = []
+            for element_id in common:
+                changes = {}
+                for col in diff_cols:
+                    a_val = a_common.at[element_id, col]
+                    b_val = b_common.at[element_id, col]
+                    if _cells_differ(a_val, b_val):
+                        changes[col] = {"a": a_val, "b": b_val}
+                if changes:
+                    changed.append({"id": element_id, "changes": changes})
+
+            counts = {
+                "total": total,
+                "scoped": len(df_a),
+                "common": len(common),
+                "added": len(added),
+                "removed": len(removed),
+                "changed": len(changed),
+            }
+            summary = {
+                "success": True,
+                "network_id": network_id,
+                "element_type": element_type,
+                "variant_a": variant_a,
+                "variant_b": variant_b,
+                "conditions": conditions,
+                "counts": counts,
+            }
+            # For an equipment type, a non-empty added/removed is an artifact of
+            # filter divergence or a getter dropping rows, never a real change.
+            if added or removed:
+                summary["warning"] = (
+                    "Non-empty added/removed on an equipment type usually means a "
+                    "getter dropped rows or the filter diverged, not a structural "
+                    "change; equipment index sets should match across variants."
+                )
+
+            if return_mode == "artifact":
+                rows = []
+                for element_id in added:
+                    rows.append(
+                        {
+                            "id": element_id,
+                            "change_type": "added",
+                            "column": None,
+                            "value_a": None,
+                            "value_b": None,
+                        }
+                    )
+                for element_id in removed:
+                    rows.append(
+                        {
+                            "id": element_id,
+                            "change_type": "removed",
+                            "column": None,
+                            "value_a": None,
+                            "value_b": None,
+                        }
+                    )
+                for entry in changed:
+                    for col, pair in entry["changes"].items():
+                        rows.append(
+                            {
+                                "id": entry["id"],
+                                "change_type": "changed",
+                                "column": col,
+                                "value_a": pair["a"],
+                                "value_b": pair["b"],
+                            }
+                        )
+                return json.dumps(
+                    artifact_response(
+                        summary,
+                        rows,
+                        f"{network_id}_{element_type}_variant_diff",
+                        artifact_format,
+                    ),
+                    indent=2,
+                    default=str,
+                )
+
+            added_page, added_truncated = (
+                (added[:_COMPARE_ID_LIST_CAP], True)
+                if len(added) > _COMPARE_ID_LIST_CAP
+                else (added, False)
+            )
+            removed_page, removed_truncated = (
+                (removed[:_COMPARE_ID_LIST_CAP], True)
+                if len(removed) > _COMPARE_ID_LIST_CAP
+                else (removed, False)
+            )
+
+            try:
+                changed_page, pagination = paginate(
+                    changed, limit=limit, cursor=cursor
+                )
+            except (ValueError, TypeError) as e:
+                return json.dumps({"success": False, "error": str(e)}, indent=2)
+
+            payload = {
+                **summary,
+                "added": added_page,
+                "removed": removed_page,
+                "changed": changed_page,
+            }
+            if added_truncated or removed_truncated:
+                payload["truncated"] = True
+                payload["hint"] = (
+                    "added/removed id lists were cut; use return_as='artifact_json' "
+                    "for the full diff."
+                )
+            if pagination is not None:
+                payload = attach_pagination(payload, pagination)
+            return json.dumps(payload, indent=2, default=str)
+
+        except (pp.PyPowsyblError, ValueError, KeyError) as e:
+            logger.error(f"Failed to compare variants: {e}")
+            return json.dumps(
+                {"success": False, "network_id": network_id, "error": str(e)}, indent=2
+            )
+        finally:
             try:
                 network.set_working_variant(original_variant_id)
             except (pp.PyPowsyblError, ValueError, KeyError) as e:

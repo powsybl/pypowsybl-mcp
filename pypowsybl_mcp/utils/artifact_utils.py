@@ -71,7 +71,16 @@ def normalize_return_options(
     An inline answer is written in no format, so the argument is left as it came:
     a client that always sends the field must not get an error for a value the
     call never uses.
+
+    Also accepts the folded vocabulary (surface-conventions §2) where the format
+    rides in the one argument: "artifact_json" / "artifact_csv". Tools on that
+    convention pass only return_as and leave artifact_format as None; the legacy
+    (return_as, artifact_format) pair keeps working for tools not yet migrated.
     """
+    folded = (return_as or "").strip().lower()
+    if folded in ("artifact_json", "artifact_csv"):
+        return "artifact", folded.split("_", 1)[1]
+
     mode = normalize_return_as(return_as)
     if mode == "artifact":
         return mode, normalize_artifact_format(artifact_format)

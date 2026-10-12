@@ -4,18 +4,25 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
-"""Filter a network element table on one metric and one threshold.
+"""Evaluate a structured ``conditions`` predicate over a network element table.
 
-Used when get_network_element_data is called with mode="filter", for example
-to return only lines where loading_percent is above 90.
+A condition is a leaf ``{"field", "op", "value"|"ref"}`` or an
+``{"all"|"any": [...]}`` group that nests AND/OR; a bare list is an implicit AND.
+Fields resolve through compute_metric (a real column or a derived metric such as
+loading_percent), so no user string is ever tokenised, compiled, or eval'd.
+
+Used when get_network_element_data is called with a ``conditions`` argument, for
+example to return only lines where loading_percent is above 90.
 """
 
+import json
 import operator
 
 import pandas as pd
 
-# The MCP client sends filter_op as a string (">", "gt", ...). We map it to
-# a real comparison function from the standard library operator module.
+# A leaf op is a string (">", "gt", "==", ...). We map it to a real comparison
+# function from the standard library operator module. Membership ops (in/not_in)
+# live in MEMBERSHIP below; they evaluate via Series.isin, not an operator.*.
 COMPARISONS = {
     ">": operator.gt,
     "gt": operator.gt,
@@ -31,8 +38,32 @@ COMPARISONS = {
     "ne": operator.ne,
 }
 
+# Membership ops take a list value and evaluate via Series.isin, so they are
+# kept apart from the operator.* comparisons above.
+MEMBERSHIP = {
+    "in": lambda series, values: series.isin(values),
+    "not_in": lambda series, values: ~series.isin(values),
+}
+
+# Ordered comparisons require a numeric operand; equality/inequality accept
+# strings and bools unchanged (categorical support, no float coercion).
+_ORDERED_OPS = {">", "gt", ">=", "ge", "<", "lt", "<=", "le"}
+
+# Guard a pathological conditions tree from an LLM/HTTP caller (cheap DoS vector).
+_MAX_CONDITION_DEPTH = 25
+_MAX_CONDITION_LEAVES = 100
+
+
+class FilterError(ValueError):
+    """A malformed or invalid ``conditions`` predicate.
+
+    Subclasses ValueError so the existing ``except ValueError`` handler in
+    get_network_element_data still turns it into a friendly JSON error.
+    """
+
+
 # These metrics are not columns in the pypowsybl table; we compute them here.
-DERIVED_METRICS = ("loading_percent", "p_abs", "q_abs")
+DERIVED_METRICS = ("loading_percent", "loading_percent_temporary", "p_abs", "q_abs")
 
 # Lines and transformers have two terminals (side 1 and side 2).
 TWO_SIDED_TYPES = ("line", "hvdc_line", "two_windings_transformer")
@@ -84,6 +115,32 @@ MAIN_COMPONENT_INDEX = 0
 # Element tables address their terminals through these bus-id columns: an
 # injection has one (bus_id), a branch two or three (bus1_id..bus3_id).
 _BUS_ID_COLUMNS = ("bus_id", "bus1_id", "bus2_id", "bus3_id")
+
+
+# The shared component-scoping vocabulary (surface-conventions §5). Replaces the
+# main_connected_component / main_synchronous_component boolean pair with one enum.
+_MAIN_COMPONENT_MODES = {
+    "both": (True, True),
+    "connected": (True, False),
+    "synchronous": (False, True),
+    "none": (False, False),
+}
+
+
+def parse_main_component(main_component):
+    """Unpack main_component into the (connected, synchronous) boolean pair.
+
+    main_component in {both, connected, synchronous, none}; "both" (the default)
+    intersects the two filters, "none" applies neither. Raises FilterError on an
+    unknown value so the tool surfaces a friendly message.
+    """
+    value = (main_component or "both").strip().lower()
+    if value not in _MAIN_COMPONENT_MODES:
+        raise FilterError(
+            f"Invalid main_component '{main_component}': expected one of "
+            f"{', '.join(_MAIN_COMPONENT_MODES)}"
+        )
+    return _MAIN_COMPONENT_MODES[value]
 
 
 def main_area_bus_ids(network, *, main_connected_component, main_synchronous_component):
@@ -192,6 +249,285 @@ def attach_current_limits(df, limits_df, limit_kind="permanent"):
     return out
 
 
+def _select_per_side_limits(limits):
+    """Per-side permanent and temporary ampacity from get_operational_limits().
+
+    Returns a dict of Series keyed by element id, one per materialised column
+    (permanent_limit1/2, temporary_limit1/2). Temporary falls back to the
+    permanent rating for a side where no temporary row exists.
+    """
+    current = limits[limits["type"] == "CURRENT"]
+    out = {}
+    for side, suffix in (("ONE", "1"), ("TWO", "2")):
+        side_rows = current[current["side"] == side]
+        permanent = (
+            side_rows[side_rows["acceptable_duration"] == -1]
+            .drop_duplicates("element_id")
+            .set_index("element_id")["value"]
+        )
+        temporary = (
+            side_rows[side_rows["acceptable_duration"] > 0]
+            .sort_values("acceptable_duration")
+            .drop_duplicates("element_id", keep="last")
+            .set_index("element_id")["value"]
+        )
+        out[f"permanent_limit{suffix}"] = permanent
+        out[f"temporary_limit{suffix}"] = temporary.combine_first(permanent)
+    return out
+
+
+def attach_full_current_limits(df, limits_df):
+    """Materialise the full ampacity rating set as columns (the current_limits
+    attach token): permanent_limit1/2 and temporary_limit1/2, in amperes.
+
+    Generalises attach_current_limits (which adds only current_limit1) so the
+    derived metrics loading_percent (permanent) and loading_percent_temporary
+    (temporary) both resolve, and so a leaf can compare against a per-row rating
+    (e.g. i1 > permanent_limit1). Absent ratings are left as NaN; a side's
+    temporary falls back to its permanent rating.
+    """
+    if limits_df is None or getattr(limits_df, "empty", True):
+        return df
+    limits = limits_df.reset_index()
+    required = ("element_id", "side", "type", "acceptable_duration", "value")
+    if any(col not in limits.columns for col in required):
+        return df
+    per_side = _select_per_side_limits(limits)
+    out = df.copy()
+    for column, series in per_side.items():
+        if not series.empty:
+            out[column] = out.index.map(series)
+    return out
+
+
+# Geographical tags attached from the substation. country is the ISO code
+# (always present); regionCvg is an IIDM property on RTE snapshots (operator
+# region for domestic substations, country ISO for foreign ones) and is simply
+# absent on generic networks.
+_GEOTAG_COLUMNS = ("country", "regionCvg")
+
+
+def _substation_geotags(network):
+    """Map substation_id -> {country, regionCvg} as a frame.
+
+    Reads get_substations(all_attributes=True), which surfaces the regionCvg
+    property as a column on datasets that define it. A missing regionCvg yields
+    an empty (all-NA) column rather than an error, so a query that references it
+    simply matches nothing on networks without the property.
+    """
+    subs = network.get_substations(all_attributes=True)
+    if not isinstance(subs, pd.DataFrame):
+        return pd.DataFrame(columns=_GEOTAG_COLUMNS)
+    out = pd.DataFrame(index=subs.index)
+    for tag in _GEOTAG_COLUMNS:
+        out[tag] = subs[tag] if tag in subs.columns else pd.NA
+    return out
+
+
+def _voltage_level_to_substation(network):
+    """Series mapping voltage_level_id -> substation_id (variant-independent)."""
+    vls = network.get_voltage_levels()
+    if isinstance(vls, pd.DataFrame) and "substation_id" in vls.columns:
+        return vls["substation_id"]
+    return pd.Series(dtype=object)
+
+
+def _converter_station_voltage_levels(network):
+    """Map each converter station id -> its voltage_level_id (VSC and LCC)."""
+    vl_by_station = {}
+    for getter in ("get_vsc_converter_stations", "get_lcc_converter_stations"):
+        stations = getattr(network, getter)()
+        if isinstance(stations, pd.DataFrame) and "voltage_level_id" in stations.columns:
+            vl_by_station.update(stations["voltage_level_id"].to_dict())
+    return vl_by_station
+
+
+def attach_substation_geotags(elements_df, network, element_type):
+    """Attach country/regionCvg to each element via the voltage-level hop.
+
+    Elements carry no geography of their own; it lives on the substation. We
+    resolve voltage_level -> substation -> {country, regionCvg} and attach:
+      - injections (one terminal): single country / regionCvg columns;
+      - two-sided branches (line, two_windings_transformer): country1/country2,
+        regionCvg1/regionCvg2 (an interconnector spans two countries);
+      - hvdc_line: per side, via its converter stations' voltage levels;
+      - substation: skipped (the columns are already on the table).
+    """
+    if elements_df is None or elements_df.empty or element_type == "substation":
+        return elements_df
+
+    geotags = _substation_geotags(network)
+    vl_to_sub = _voltage_level_to_substation(network)
+
+    def tags_for(vl_series):
+        sub = vl_series.map(vl_to_sub)
+        return {tag: sub.map(geotags[tag]) for tag in _GEOTAG_COLUMNS}
+
+    out = elements_df.copy()
+
+    if element_type == "hvdc_line":
+        vl_by_station = _converter_station_voltage_levels(network)
+        for end, col in (("1", "converter_station1_id"), ("2", "converter_station2_id")):
+            if col in out.columns:
+                tags = tags_for(out[col].map(vl_by_station))
+                for tag in _GEOTAG_COLUMNS:
+                    out[f"{tag}{end}"] = tags[tag]
+        return out
+
+    if "voltage_level1_id" in out.columns or "voltage_level2_id" in out.columns:
+        for end in ("1", "2"):
+            col = f"voltage_level{end}_id"
+            if col in out.columns:
+                tags = tags_for(out[col])
+                for tag in _GEOTAG_COLUMNS:
+                    out[f"{tag}{end}"] = tags[tag]
+        return out
+
+    if "voltage_level_id" in out.columns:
+        tags = tags_for(out["voltage_level_id"])
+        for tag in _GEOTAG_COLUMNS:
+            out[tag] = tags[tag]
+    return out
+
+
+def attach_substation_id(elements_df, network, element_type):
+    """Attach substation_id to single-terminal elements via the VL hop.
+
+    Branches span two substations, so substation_id is only meaningful for
+    injections; left untouched when already present or unresolvable.
+    """
+    if elements_df is None or elements_df.empty or "substation_id" in elements_df.columns:
+        return elements_df
+    if "voltage_level_id" not in elements_df.columns:
+        return elements_df
+    vl_to_sub = _voltage_level_to_substation(network)
+    out = elements_df.copy()
+    out["substation_id"] = out["voltage_level_id"].map(vl_to_sub)
+    return out
+
+
+def _vl_nominal_voltage_map(network):
+    """Series mapping voltage_level_id -> nominal_v (kV)."""
+    vls = network.get_voltage_levels()
+    if isinstance(vls, pd.DataFrame) and "nominal_v" in vls.columns:
+        return vls["nominal_v"]
+    return pd.Series(dtype=float)
+
+
+def converter_station_nominal_voltages(network, vl_nominal):
+    """Map each converter station id -> its voltage level's nominal_v (NaN if none)."""
+    out = {}
+    for getter in ("get_vsc_converter_stations", "get_lcc_converter_stations"):
+        stations = getattr(network, getter)()
+        if isinstance(stations, pd.DataFrame) and "voltage_level_id" in stations.columns:
+            for station_id, vl_id in stations["voltage_level_id"].items():
+                out[station_id] = vl_nominal.get(vl_id, float("nan"))
+    return out
+
+
+def attach_nominal_voltage(elements_df, network, element_type):
+    """Attach a nominal_v column (kV) resolved from static voltage-level ids.
+
+    The higher of a branch's two terminals (so a 400/90 kV asset reads 400),
+    the single voltage level for an injection, the converter-station AC side for
+    an HVDC line. NaN when unresolvable, so a band comparison excludes the
+    element from both sides symmetrically rather than bucketing it at 0 kV.
+    """
+    if elements_df is None or elements_df.empty or "nominal_v" in elements_df.columns:
+        return elements_df
+    vl_nominal = _vl_nominal_voltage_map(network)
+    out = elements_df.copy()
+
+    if element_type == "hvdc_line":
+        conv = converter_station_nominal_voltages(network, vl_nominal)
+        sides = [
+            out[col].map(conv)
+            for col in ("converter_station1_id", "converter_station2_id")
+            if col in out.columns
+        ]
+    elif "voltage_level1_id" in out.columns or "voltage_level2_id" in out.columns:
+        sides = [
+            out[col].map(vl_nominal)
+            for col in ("voltage_level1_id", "voltage_level2_id")
+            if col in out.columns
+        ]
+    elif "voltage_level_id" in out.columns:
+        sides = [out["voltage_level_id"].map(vl_nominal)]
+    else:
+        sides = []
+
+    if sides:
+        # skipna max => the higher resolved side, or NaN when neither resolves.
+        out["nominal_v"] = pd.concat(sides, axis=1).max(axis=1)
+    else:
+        out["nominal_v"] = float("nan")
+    return out
+
+
+def _higher_side(a, b):
+    """The higher of two nominal voltages, NaN-aware (NaN if both NaN)."""
+    if pd.isna(a):
+        return b
+    if pd.isna(b):
+        return a
+    return max(a, b)
+
+
+def element_nominal_voltage(
+    element_type, element_row, voltage_by_level, voltage_by_converter_station=None
+):
+    """Nominal voltage used to classify one element row (kV), NaN if unresolvable.
+
+    Two-sided elements (line, two_windings_transformer) take the higher side so a
+    mixed-voltage asset stays visible in a high-voltage band; HVDC lines resolve
+    via their converter stations' voltage levels (the AC side); injections take
+    their single voltage level. ``element_row`` may be a Series or a plain dict.
+    Returns NaN (not 0) when the voltage cannot be resolved, so a band filter
+    excludes the element symmetrically instead of bucketing it at 0 kV.
+    """
+    nan = float("nan")
+    if element_row is None:
+        return nan
+
+    def nominal(mapping, key):
+        return mapping.get(key, nan) if key is not None else nan
+
+    if element_type in ("line", "two_windings_transformer"):
+        return _higher_side(
+            nominal(voltage_by_level, element_row.get("voltage_level1_id")),
+            nominal(voltage_by_level, element_row.get("voltage_level2_id")),
+        )
+    if element_type == "hvdc_line":
+        stations = voltage_by_converter_station or {}
+        return _higher_side(
+            nominal(stations, element_row.get("converter_station1_id")),
+            nominal(stations, element_row.get("converter_station2_id")),
+        )
+    return nominal(voltage_by_level, element_row.get("voltage_level_id"))
+
+
+def attach_voltage_limits(df, network, element_type):
+    """Attach the voltage level's low/high_voltage_limit (kV) to bus rows.
+
+    The same voltage_levels join check_voltage_violations uses, exposed as
+    columns so a conditions query can compare a bus v_mag against its declared
+    limits. Only the network-declared limits (no pu fallback) — not a substitute
+    for check_voltage_violations.
+    """
+    if element_type != "bus" or df is None or df.empty:
+        return df
+    if "voltage_level_id" not in df.columns:
+        return df
+    vls = network.get_voltage_levels()
+    if not isinstance(vls, pd.DataFrame):
+        return df
+    out = df.copy()
+    for col in ("low_voltage_limit", "high_voltage_limit"):
+        if col in vls.columns:
+            out[col] = out["voltage_level_id"].map(vls[col])
+    return out
+
+
 # pypowsybl side names to the leg number used in 3-winding transformer columns
 # (rated_u1, ratio_tap_position1, ...). ONE -> leg 1, TWO -> leg 2, THREE -> leg 3.
 _SIDE_TO_LEG = {"ONE": 1, "TWO": 2, "THREE": 3}
@@ -258,15 +594,24 @@ def attach_tap_changer_data(elements_df, ratio_df, phase_df, element_type):
     return out
 
 
-def _loading_percent(df, element_type):
+# Limit columns tried, in order, for the permanent and temporary denominators.
+# Temporary falls back to the permanent rating where no temporary one exists, so
+# loading_percent_temporary is never silently NaN on a type with only permanent
+# ratings.
+_PERMANENT_LIMIT_COLUMNS = ("current_limit1", "permanent_limit1", "rated1", "permanent_limit")
+_TEMPORARY_LIMIT_COLUMNS = ("temporary_limit1",) + _PERMANENT_LIMIT_COLUMNS
+
+
+def _loading_percent(df, element_type, limit_columns=_PERMANENT_LIMIT_COLUMNS):
     """Loading in percent: measured value divided by limit, times 100.
 
     Lines: max(|i1|, |i2|) / Imax * 100  (both in amperes, no unit conversion).
-    Generators/loads: |p| / max_p * 100.
+    Generators/loads: |p| / max_p * 100. ``limit_columns`` picks which ampacity
+    column backs the denominator (permanent vs temporary), first present wins.
     """
     if element_type in TWO_SIDED_TYPES:
         current = _max_abs(df, ["i1", "i2"])
-        for col in ("current_limit1", "permanent_limit1", "rated1", "permanent_limit"):
+        for col in limit_columns:
             if col in df.columns:
                 limit = df[col].astype(float).replace(0, float("nan"))
                 return current / limit * 100
@@ -285,6 +630,9 @@ def compute_metric(df, metric, element_type):
 
     if metric == "loading_percent":
         return _loading_percent(df, element_type)
+
+    if metric == "loading_percent_temporary":
+        return _loading_percent(df, element_type, limit_columns=_TEMPORARY_LIMIT_COLUMNS)
 
     if metric == "p_abs":
         if element_type in TWO_SIDED_TYPES:
@@ -307,38 +655,251 @@ def compute_metric(df, metric, element_type):
     )
 
 
-def apply_element_filter(
-    df, *, element_type, metric, filter_op, filter_value, sort="desc"
-):
-    """Keep rows where metric filter_op filter_value, then sort the result.
+def _coerce_operand(value, op):
+    """Type the right-hand side of a leaf according to its op.
 
-    Example: metric="loading_percent", filter_op=">", filter_value=90
-    keeps lines loaded above 90% and sorts them by loading (desc by default).
-    Rows with a missing metric (NaN) are dropped because we cannot compare them.
+    Membership ops need a list; ordered ops need a number; equality/inequality
+    pass strings and bools through unchanged (no float coercion, so
+    ``country == "FR"`` works).
     """
-    if not metric or str(metric).strip() == "":
-        raise ValueError("metric is required when mode='filter'")
+    if op in MEMBERSHIP:
+        if not isinstance(value, (list, tuple)):
+            raise FilterError(f"value must be a list for op '{op}', got {value!r}")
+        return list(value)
+    if op in _ORDERED_OPS:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            raise FilterError(f"value must be a number for op '{op}', got {value!r}")
+    return value
 
-    op = str(filter_op).strip().lower()
-    compare = COMPARISONS.get(op)
-    if compare is None:
-        raise ValueError(f"Unknown filter_op '{filter_op}'")
+
+def _eval_leaf(df, cond, element_type):
+    """Evaluate one ``{field, op, value|ref}`` leaf to a boolean mask Series."""
+    if not isinstance(cond, dict):
+        raise FilterError(
+            f"each condition must be an object with 'field' and 'op', got {cond!r}"
+        )
+    field = cond.get("field")
+    op = cond.get("op")
+    if not isinstance(field, str) or not field.strip():
+        raise FilterError(f"condition is missing a 'field': {cond!r}")
+    if not isinstance(op, str) or not op.strip():
+        raise FilterError(f"condition on '{field}' is missing an 'op'")
+
+    op = op.strip()
+    op_key = op.lower()
+    compare = COMPARISONS.get(op) or COMPARISONS.get(op_key)
+    membership = MEMBERSHIP.get(op_key)
+    if compare is None and membership is None:
+        valid = ", ".join(list(COMPARISONS) + list(MEMBERSHIP))
+        raise FilterError(f"Unknown op '{op}' on '{field}'. Valid ops: {valid}")
+
+    has_value = "value" in cond
+    has_ref = "ref" in cond
+    if has_value == has_ref:
+        raise FilterError(
+            f"condition on '{field}' needs exactly one of 'value' or 'ref'"
+        )
 
     try:
-        threshold = float(filter_value)
-    except (TypeError, ValueError):
-        raise ValueError(f"filter_value must be a number, got {filter_value!r}")
+        lhs = compute_metric(df, field, element_type)
+    except ValueError as exc:
+        raise FilterError(f"condition on '{field}': {exc}")
 
-    values = compute_metric(df, metric, element_type)
-    mask = compare(values, threshold) & values.notna()
+    if has_ref:
+        if membership is not None:
+            raise FilterError(f"op '{op}' needs a 'value' list, not a 'ref'")
+        ref = cond["ref"]
+        if not isinstance(ref, str) or not ref.strip():
+            raise FilterError(f"condition on '{field}' has an invalid 'ref': {ref!r}")
+        try:
+            rhs = compute_metric(df, ref, element_type)
+        except ValueError as exc:
+            raise FilterError(f"condition ref '{ref}': {exc}")
+        try:
+            mask = compare(lhs, rhs)
+        except TypeError:
+            raise FilterError(
+                f"cannot compare '{field}' with '{ref}' using '{op}' "
+                "(non-numeric column?)"
+            )
+        return mask & lhs.notna() & rhs.notna()
+
+    operand = _coerce_operand(cond["value"], op_key)
+    if membership is not None:
+        return membership(lhs, operand) & lhs.notna()
+    try:
+        mask = compare(lhs, operand)
+    except TypeError:
+        raise FilterError(
+            f"cannot order-compare non-numeric column '{field}' with {operand!r}"
+        )
+    return mask & lhs.notna()
+
+
+def _group_key(node):
+    """Return 'all'/'any' if node is a group dict, else None."""
+    if isinstance(node, dict):
+        if "all" in node:
+            return "all"
+        if "any" in node:
+            return "any"
+    return None
+
+
+def _validate_conditions_size(node, depth=0):
+    """Enforce the depth/non-empty guards; return the total leaf count."""
+    if depth > _MAX_CONDITION_DEPTH:
+        raise FilterError(f"conditions nested too deep (max {_MAX_CONDITION_DEPTH})")
+    if isinstance(node, list):
+        if not node:
+            raise FilterError("a conditions group is empty")
+        return sum(_validate_conditions_size(c, depth + 1) for c in node)
+    key = _group_key(node)
+    if key is not None:
+        children = node[key]
+        if not isinstance(children, list) or not children:
+            raise FilterError(f"'{key}' must be a non-empty list of conditions")
+        return sum(_validate_conditions_size(c, depth + 1) for c in children)
+    return 1  # a leaf
+
+
+def _eval_node(df, node, element_type):
+    """Evaluate a leaf, a bare list (AND), or an all/any group to a mask."""
+    if isinstance(node, list):
+        node = {"all": node}
+    key = _group_key(node)
+    if key is not None:
+        reducer = operator.and_ if key == "all" else operator.or_
+        masks = [_eval_node(df, child, element_type) for child in node[key]]
+        result = masks[0]
+        for mask in masks[1:]:
+            result = reducer(result, mask)
+        return result
+    return _eval_leaf(df, node, element_type)
+
+
+def _collect_fields(node, acc):
+    """Gather every ``field``/``ref`` name referenced anywhere in the tree."""
+    if isinstance(node, list):
+        for child in node:
+            _collect_fields(child, acc)
+        return acc
+    key = _group_key(node)
+    if key is not None:
+        for child in node[key]:
+            _collect_fields(child, acc)
+        return acc
+    if isinstance(node, dict):
+        for name in (node.get("field"), node.get("ref")):
+            if isinstance(name, str):
+                acc.add(name)
+    return acc
+
+
+def collect_condition_fields(conditions):
+    """Public: the set of every field/ref name a conditions tree references.
+
+    Accepts a JSON string (parsed) like apply_element_filter. Used to validate a
+    predicate against a field allowlist before evaluating it (e.g. compare_variants
+    rejecting state/derived fields).
+    """
+    if isinstance(conditions, str):
+        try:
+            conditions = json.loads(conditions)
+        except (ValueError, TypeError) as exc:
+            raise FilterError(f"conditions is not valid JSON: {exc}")
+    if conditions is None:
+        return set()
+    return _collect_fields(conditions, set())
+
+
+def _first_leaf_field(node):
+    """The ``field`` of the first leaf in document order, for the default sort."""
+    if isinstance(node, list):
+        for child in node:
+            found = _first_leaf_field(child)
+            if found:
+                return found
+        return None
+    key = _group_key(node)
+    if key is not None:
+        for child in node[key]:
+            found = _first_leaf_field(child)
+            if found:
+                return found
+        return None
+    if isinstance(node, dict):
+        return node.get("field")
+    return None
+
+
+def _parse_order_by(order_by, conditions):
+    """Resolve order_by to (column, ascending).
+
+    ``"-field"``=desc, ``"field"``=asc, bare ``"asc"``/``"desc"`` sort the default
+    (first-leaf) field, and None => first-leaf field descending (today's default).
+    Returns (None, _) when there is no field to sort on.
+    """
+    default_field = _first_leaf_field(conditions)
+    if order_by is None:
+        return default_field, False
+    text = str(order_by).strip()
+    lowered = text.lower()
+    if lowered in ("desc", "descending"):
+        return default_field, False
+    if lowered in ("asc", "ascending"):
+        return default_field, True
+    if text.startswith("-"):
+        return text[1:].strip() or default_field, False
+    if text.startswith("+"):
+        return text[1:].strip() or default_field, True
+    return text, True
+
+
+def apply_element_filter(df, *, element_type, conditions, order_by=None):
+    """Keep the rows matching ``conditions``, then sort the result.
+
+    ``conditions`` is a leaf ``{field, op, value|ref}``, a flat list (implicit
+    AND), or an ``{"all"|"any": [...]}`` group; a JSON string is accepted and
+    parsed (LLM callers often stringify). Rows whose operands are NaN are dropped
+    because they cannot be compared. Referenced derived metrics (loading_percent,
+    p_abs, ...) are re-attached to the output so the client sees them.
+    """
+    if isinstance(conditions, str):
+        try:
+            conditions = json.loads(conditions)
+        except (ValueError, TypeError) as exc:
+            raise FilterError(f"conditions is not valid JSON: {exc}")
+
+    if conditions is None or (isinstance(conditions, (list, dict)) and not conditions):
+        raise FilterError("conditions is required")
+
+    total_leaves = _validate_conditions_size(conditions)
+    if total_leaves > _MAX_CONDITION_LEAVES:
+        raise FilterError(
+            f"too many conditions ({total_leaves}; max {_MAX_CONDITION_LEAVES})"
+        )
+
+    mask = _eval_node(df, conditions, element_type)
     result = df[mask].copy()
 
-    # If loading_percent was computed, add it to the output so the client sees it.
-    if metric not in result.columns:
-        result[metric] = values[mask]
+    # Re-attach referenced derived metrics so the client sees them in the output
+    # (generalises the single result[metric] = values[mask] of the old filter).
+    for name in _collect_fields(conditions, set()):
+        if name not in result.columns:
+            result[name] = compute_metric(df, name, element_type)[mask]
 
     if result.empty:
         return result
 
-    ascending = str(sort).strip().lower() in ("asc", "ascending")
-    return result.sort_values(metric, ascending=ascending)
+    column, ascending = _parse_order_by(order_by, conditions)
+    if column and column not in result.columns:
+        try:
+            result[column] = compute_metric(df, column, element_type)[mask]
+        except ValueError as exc:
+            raise FilterError(f"cannot order_by '{column}': {exc}")
+    if column:
+        result = result.sort_values(column, ascending=ascending)
+    return result
