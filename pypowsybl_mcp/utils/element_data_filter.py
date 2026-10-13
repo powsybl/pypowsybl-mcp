@@ -926,7 +926,9 @@ def collect_condition_fields(conditions):
 
     Accepts a JSON string (parsed) like apply_element_filter. Used to validate a
     predicate against a field allowlist before evaluating it (e.g. compare_variants
-    rejecting state/derived fields).
+    rejecting state/derived fields). Enforces the §6 depth/leaf-count caps before
+    recursing, so a caller that collects fields before apply_element_filter (which
+    caps them too) is still protected from a RecursionError DoS.
     """
     if isinstance(conditions, str):
         try:
@@ -935,6 +937,11 @@ def collect_condition_fields(conditions):
             raise FilterError(f"conditions is not valid JSON: {exc}")
     if conditions is None:
         return set()
+    total_leaves = _validate_conditions_size(conditions)
+    if total_leaves > _MAX_CONDITION_LEAVES:
+        raise FilterError(
+            f"too many conditions ({total_leaves}; max {_MAX_CONDITION_LEAVES})"
+        )
     return _collect_fields(conditions, set())
 
 

@@ -2369,6 +2369,31 @@ async def test_compare_variants_rejects_state_scope_field(network_tools, mock_ct
 
 
 @pytest.mark.asyncio
+async def test_compare_variants_rejects_too_deep_conditions(network_tools, mock_ctx):
+    """A pathologically nested predicate is a friendly error, not a RecursionError."""
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_variant_ids.return_value = ["InitialState", "v2"]
+    proxy.networks["net1"] = mock_net
+
+    node = {"field": "nominal_v", "op": ">", "value": 0}
+    for _ in range(2000):
+        node = {"all": [node]}
+
+    result = await network_tools.compare_variants(
+        network_id="net1",
+        element_type="line",
+        variant_b="v2",
+        conditions=node,
+        ctx=mock_ctx,
+    )
+
+    data = json.loads(result)
+    assert data["success"] is False
+    assert "nested too deep" in data["error"]
+
+
+@pytest.mark.asyncio
 async def test_compare_variants_outage_is_changed_not_removed(network_tools, mock_ctx):
     """Disconnecting an element in B shows in `changed`, never as `removed`."""
     proxy = network_tools.get_proxy("test-session")
