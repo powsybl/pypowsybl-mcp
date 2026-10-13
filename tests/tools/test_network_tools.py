@@ -2154,7 +2154,9 @@ async def test_get_network_element_data_element_type_required(network_tools, moc
         network_id="net1", ctx=mock_ctx
     )
 
-    assert result == "Element type is required"
+    data = json.loads(result)
+    assert data["success"] is False
+    assert data["error"] == "Element type is required"
 
 
 @pytest.mark.asyncio
@@ -2555,7 +2557,9 @@ async def test_get_only_ids_element_type_required(network_tools, mock_ctx):
         network_id="net1", get_only_ids=True, ctx=mock_ctx
     )
 
-    assert result == "Element type is required"
+    data = json.loads(result)
+    assert data["success"] is False
+    assert data["error"] == "Element type is required"
 
 
 @pytest.mark.asyncio
@@ -3136,3 +3140,20 @@ async def test_check_current_violations_rejects_bad_limit_kind(network_tools, mo
     )
     assert data["success"] is False
     assert "limit_kind" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_check_current_violations_invalid_element_type(network_tools, mock_ctx):
+    # The delegated get_network_element_data now envelopes its element-type error,
+    # so the friendly message reaches the caller instead of a json.loads crash.
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = _current_network()
+    proxy.loadflow_results["net1"] = {"converged": True}
+
+    data = json.loads(
+        await network_tools.check_current_violations(
+            network_id="net1", element_type="transfarmer", ctx=mock_ctx
+        )
+    )
+    assert data["success"] is False
+    assert "Invalid element type 'transfarmer'" in data["error"]

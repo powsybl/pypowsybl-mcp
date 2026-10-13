@@ -1924,14 +1924,14 @@ class NetworkTools(PyPowsyblTool):
             _, network_id, network = self.resolve_network(ctx, network_id)
         except NetworkNotFoundError as e:
             logger.warning(str(e))
-            return str(e)
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
 
         logger.debug(f"Getting {element_type} data for network '{network_id}'")
 
         if element_type is None:
             msg = "Element type is required"
             logger.warning(msg)
-            return msg
+            return json.dumps({"success": False, "error": msg}, indent=2)
 
         try:
             # artifact_format is folded into return_as now ({inline, artifact_json,
@@ -1960,7 +1960,7 @@ class NetworkTools(PyPowsyblTool):
             if variant_id not in network.get_variant_ids():
                 msg = f"Variant '{variant_id}' not found in network '{network_id}'"
                 logger.warning(msg)
-                return msg
+                return json.dumps({"success": False, "error": msg}, indent=2)
 
             network.set_working_variant(variant_id)
 
@@ -1973,13 +1973,13 @@ class NetworkTools(PyPowsyblTool):
                     f"{element_type_hint(element_type, element_methods)}"
                 )
                 logger.warning(msg)
-                return msg
+                return json.dumps({"success": False, "error": msg}, indent=2)
 
             method_name = element_methods[element_type]
             if not hasattr(network, method_name):
                 msg = f"Method '{method_name}' not available for this network"
                 logger.warning(msg)
-                return msg
+                return json.dumps({"success": False, "error": msg}, indent=2)
 
             method = getattr(network, method_name)
 
@@ -2222,7 +2222,10 @@ class NetworkTools(PyPowsyblTool):
 
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.error(f"Failed to get network element data: {e}")
-            return f"Failed to get network element data: {e!s}"
+            return json.dumps(
+                {"success": False, "error": f"Failed to get network element data: {e!s}"},
+                indent=2,
+            )
         finally:
             # Restore the caller's working variant so a read never leaks the
             # variant switches done above into the shared/cached network.
