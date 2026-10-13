@@ -770,6 +770,33 @@ def _coerce_operand(value, op):
     return value
 
 
+def _coerce_to_number(value):
+    """A numeric string -> float; anything else is returned unchanged."""
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return value
+    return value
+
+
+def _match_operand_dtype(series, operand):
+    """Coerce a stringified-number operand to match a numeric column.
+
+    LLM/JSON callers often send numbers as strings; against a numeric column
+    ``nominal_v == "225"`` would otherwise compare float-vs-str and silently never
+    match (and ``!=`` match everything). We coerce the operand to a number only
+    when the column is numeric, so a categorical column (``country``, ``regionCvg``)
+    keeps comparing its values as strings. A genuinely non-numeric operand on a
+    numeric column is left as-is (it simply matches nothing).
+    """
+    if not pd.api.types.is_numeric_dtype(series):
+        return operand
+    if isinstance(operand, list):
+        return [_coerce_to_number(item) for item in operand]
+    return _coerce_to_number(operand)
+
+
 def _eval_leaf(df, cond, element_type):
     """Evaluate one ``{field, op, value|ref}`` leaf to a boolean mask Series."""
     if not isinstance(cond, dict):
@@ -822,7 +849,7 @@ def _eval_leaf(df, cond, element_type):
             )
         return mask & lhs.notna() & rhs.notna()
 
-    operand = _coerce_operand(cond["value"], op_key)
+    operand = _match_operand_dtype(lhs, _coerce_operand(cond["value"], op_key))
     if membership is not None:
         return membership(lhs, operand) & lhs.notna()
     try:

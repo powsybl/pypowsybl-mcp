@@ -197,6 +197,50 @@ def test_membership_op_requires_a_list_value():
         )
 
 
+def test_equality_coerces_a_stringified_number_on_a_numeric_column():
+    # An LLM/JSON caller sends 225 as the string "225" against a numeric column.
+    df = pd.DataFrame({"nominal_v": [225.0, 400.0, 225.0]}, index=["a", "b", "c"])
+
+    kept = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "nominal_v", "op": "==", "value": "225"}],
+    )
+    dropped = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "nominal_v", "op": "!=", "value": "225"}],
+    )
+
+    assert sorted(kept.index) == ["a", "c"]
+    assert sorted(dropped.index) == ["b"]
+
+
+def test_membership_coerces_stringified_numbers_on_a_numeric_column():
+    df = pd.DataFrame({"nominal_v": [225.0, 400.0, 63.0]}, index=["a", "b", "c"])
+
+    out = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "nominal_v", "op": "in", "value": ["225", "400"]}],
+    )
+
+    assert sorted(out.index) == ["a", "b"]
+
+
+def test_equality_on_a_string_column_keeps_numeric_looking_strings():
+    # A categorical column must still compare as strings, not coerce to numbers.
+    df = pd.DataFrame({"regionCvg": ["225", "PARIS", "225"]}, index=["a", "b", "c"])
+
+    out = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "regionCvg", "op": "==", "value": "225"}],
+    )
+
+    assert sorted(out.index) == ["a", "c"]
+
+
 def test_flat_list_is_implicit_and():
     df = pd.DataFrame(
         {"p": [10.0, 60.0, 80.0], "q": [5.0, 5.0, 50.0]},
