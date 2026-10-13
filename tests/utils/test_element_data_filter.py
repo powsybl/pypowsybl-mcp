@@ -17,6 +17,7 @@ from pypowsybl_mcp.utils.element_data_filter import (
     attach_tap_changer_data,
     attach_voltage_limits,
     compute_metric,
+    dimensioning_terminal,
 )
 
 
@@ -490,6 +491,98 @@ def test_leaf_needs_exactly_one_of_value_or_ref():
             element_type="generator",
             conditions=[{"field": "p", "op": ">", "value": 1, "ref": "max_p"}],
         )
+
+
+def test_loading_percent_two_sided_rates_each_side_against_its_own_limit():
+    # A transformer: side 1 at 100 A / 200 A = 50%, side 2 at 300 A / 400 A = 75%.
+    # The worst side is 75%, NOT max(100, 300) / 200 = 150% (the old single-limit bug).
+    df = pd.DataFrame(
+        {
+            "i1": [100.0],
+            "i2": [300.0],
+            "permanent_limit1": [200.0],
+            "permanent_limit2": [400.0],
+        },
+        index=["t1"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="two_windings_transformer",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
+    )
+
+    assert out.loc["t1", "loading_percent"] == pytest.approx(75.0)
+
+
+def test_loading_percent_three_terminals_uses_worst_winding():
+    # A 3-winding transformer: terminal count is read from i1/i2/i3, and the worst
+    # winding (i3 300 A / 300 A = 100%) wins over the other two.
+    df = pd.DataFrame(
+        {
+            "i1": [100.0],
+            "i2": [150.0],
+            "i3": [300.0],
+            "permanent_limit1": [400.0],
+            "permanent_limit2": [400.0],
+            "permanent_limit3": [300.0],
+        },
+        index=["t3"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="three_windings_transformer",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
+    )
+
+    assert out.loc["t3", "loading_percent"] == pytest.approx(100.0)
+
+
+def test_loading_percent_single_limit_falls_back_to_worst_current():
+    # Only a side-1 rating (a line's single conductor Imax): the worst-end current
+    # is divided by that shared limit -> 180/200 = 90%, side 2 borrowing limit1.
+    df = pd.DataFrame(
+        {"i1": [100.0], "i2": [180.0], "permanent_limit1": [200.0]},
+        index=["l1"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
+    )
+
+    assert out.loc["l1", "loading_percent"] == pytest.approx(90.0)
+
+
+def test_dimensioning_terminal_picks_the_worst_side():
+    # side 1: 100/200 = 50%, side 2: 300/400 = 75% -> side 2 dimensions the row.
+    row = {
+        "i1": 100.0,
+        "i2": 300.0,
+        "permanent_limit1": 200.0,
+        "permanent_limit2": 400.0,
+    }
+
+    i_a, limit_a = dimensioning_terminal(row, "permanent")
+
+    assert i_a == pytest.approx(300.0)
+    assert limit_a == pytest.approx(400.0)
+
+
+def test_dimensioning_terminal_single_limit_is_shared():
+    # Only a side-1 rating (a line's Imax): worst current over the shared limit.
+    row = {"i1": 100.0, "i2": 180.0, "permanent_limit1": 200.0}
+
+    i_a, limit_a = dimensioning_terminal(row, "permanent")
+
+    assert i_a == pytest.approx(180.0)
+    assert limit_a == pytest.approx(200.0)
+
+
+def test_dimensioning_terminal_none_without_a_resolvable_limit():
+    assert dimensioning_terminal({"i1": 100.0, "i2": 100.0}, "permanent") == (None, None)
 
 
 def test_loading_percent_temporary_is_referenceable():

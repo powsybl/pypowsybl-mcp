@@ -3037,9 +3037,15 @@ async def test_check_current_violations_sweeps_line_and_2wt(network_tools, mock_
     assert ("T1", "two_windings_transformer") in ids
     assert ("L2", "line") not in ids  # only 50% loaded
     # worst-first, with excess over 100%
-    assert data["violations"][0]["loading_percent"] == 150.0
-    assert data["violations"][0]["excess_percent"] == 50.0
-    assert data["violations"][0]["violation_type"] == "CURRENT"
+    worst = data["violations"][0]
+    assert worst["loading_percent"] == 150.0
+    assert worst["excess_percent"] == 50.0
+    assert worst["violation_type"] == "CURRENT"
+    # nominal_v is populated without a band, and i_a / limit_a match the loading.
+    assert worst["nominal_v"] == 400.0
+    assert worst["i_a"] / worst["limit_a"] * 100 == pytest.approx(
+        worst["loading_percent"]
+    )
 
 
 @pytest.mark.asyncio

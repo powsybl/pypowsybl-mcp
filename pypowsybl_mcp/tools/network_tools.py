@@ -29,6 +29,7 @@ from pypowsybl_mcp.utils.element_data_filter import (
     attach_tap_changer_data,
     attach_voltage_limits,
     collect_condition_fields,
+    dimensioning_terminal,
     element_nominal_voltage,
     filter_elements_to_main_area,
     main_area_bus_ids,
@@ -1654,7 +1655,6 @@ class NetworkTools(PyPowsyblTool):
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
         metric = "loading_percent" if kind == "permanent" else "loading_percent_temporary"
-        limit_column = "permanent_limit1" if kind == "permanent" else "temporary_limit1"
 
         try:
             loadflow_executed = False
@@ -1746,12 +1746,10 @@ class NetworkTools(PyPowsyblTool):
                             ):
                                 continue
                         loading = fields.get(metric)
-                        i1 = fields.get("i1")
-                        i2 = fields.get("i2")
-                        currents = [
-                            abs(v) for v in (i1, i2) if v is not None and not pd.isna(v)
-                        ]
-                        limit_a = fields.get(limit_column)
+                        # i_a / limit_a describe the dimensioning terminal — the
+                        # side whose |i| / limit drives loading_percent — so they
+                        # match the reported loading on an asymmetric transformer.
+                        i_a, limit_a = dimensioning_terminal(fields, kind)
                         name = fields.get("name") or ""
                         violations.append(
                             {
@@ -1763,10 +1761,8 @@ class NetworkTools(PyPowsyblTool):
                                 "nominal_v": None
                                 if pd.isna(nominal_v)
                                 else round(float(nominal_v), 3),
-                                "i_a": round(max(currents), 3) if currents else None,
-                                "limit_a": None
-                                if limit_a is None or pd.isna(limit_a)
-                                else round(float(limit_a), 3),
+                                "i_a": None if i_a is None else round(i_a, 3),
+                                "limit_a": None if limit_a is None else round(limit_a, 3),
                                 "loading_percent": None
                                 if loading is None or pd.isna(loading)
                                 else round(float(loading), 2),

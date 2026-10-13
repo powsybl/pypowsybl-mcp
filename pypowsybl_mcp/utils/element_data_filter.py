@@ -249,16 +249,22 @@ def attach_current_limits(df, limits_df, limit_kind="permanent"):
     return out
 
 
+# pypowsybl names a terminal by an ordinal side; the column suffix is its index.
+# THREE covers three-winding transformers (empty, hence skipped, on 2-terminal types).
+_SIDE_NAME_TO_INDEX = (("ONE", "1"), ("TWO", "2"), ("THREE", "3"))
+
+
 def _select_per_side_limits(limits):
     """Per-side permanent and temporary ampacity from get_operational_limits().
 
     Returns a dict of Series keyed by element id, one per materialised column
-    (permanent_limit1/2, temporary_limit1/2). Temporary falls back to the
-    permanent rating for a side where no temporary row exists.
+    (permanent_limit{1,2,3}, temporary_limit{1,2,3}). Temporary falls back to the
+    permanent rating for a side where no temporary row exists; a side with no
+    CURRENT rows yields an empty Series (skipped by attach_full_current_limits).
     """
     current = limits[limits["type"] == "CURRENT"]
     out = {}
-    for side, suffix in (("ONE", "1"), ("TWO", "2")):
+    for side, suffix in _SIDE_NAME_TO_INDEX:
         side_rows = current[current["side"] == side]
         permanent = (
             side_rows[side_rows["acceptable_duration"] == -1]
@@ -278,7 +284,7 @@ def _select_per_side_limits(limits):
 
 def attach_full_current_limits(df, limits_df):
     """Materialise the full ampacity rating set as columns (the current_limits
-    attach token): permanent_limit1/2 and temporary_limit1/2, in amperes.
+    attach token): permanent_limit{1,2,3} and temporary_limit{1,2,3}, in amperes.
 
     Generalises attach_current_limits (which adds only current_limit1) so the
     derived metrics loading_percent (permanent) and loading_percent_temporary
@@ -594,28 +600,69 @@ def attach_tap_changer_data(elements_df, ratio_df, phase_df, element_type):
     return out
 
 
-# Limit columns tried, in order, for the permanent and temporary denominators.
-# Temporary falls back to the permanent rating where no temporary one exists, so
-# loading_percent_temporary is never silently NaN on a type with only permanent
-# ratings.
-_PERMANENT_LIMIT_COLUMNS = ("current_limit1", "permanent_limit1", "rated1", "permanent_limit")
-_TEMPORARY_LIMIT_COLUMNS = ("temporary_limit1",) + _PERMANENT_LIMIT_COLUMNS
+def _side_limit_columns(side, kind):
+    """Ordered limit-column preferences for one terminal (1-based `side`).
 
-
-def _loading_percent(df, element_type, limit_columns=_PERMANENT_LIMIT_COLUMNS):
-    """Loading in percent: measured value divided by limit, times 100.
-
-    Lines: max(|i1|, |i2|) / Imax * 100  (both in amperes, no unit conversion).
-    Generators/loads: |p| / max_p * 100. ``limit_columns`` picks which ampacity
-    column backs the denominator (permanent vs temporary), first present wins.
+    Side 1 keeps the legacy fallbacks (current_limit1 / rated1 / permanent_limit)
+    for compatibility; every side also accepts permanent_limit{n} / rated{n}. The
+    temporary set prepends temporary_limit{n} and otherwise falls back to the
+    permanent columns, so loading_percent_temporary is never silently NaN.
     """
-    if element_type in TWO_SIDED_TYPES:
-        current = _max_abs(df, ["i1", "i2"])
-        for col in limit_columns:
-            if col in df.columns:
-                limit = df[col].astype(float).replace(0, float("nan"))
-                return current / limit * 100
-        return pd.Series(float("nan"), index=df.index)
+    if side == 1:
+        permanent = ("current_limit1", "permanent_limit1", "rated1", "permanent_limit")
+    else:
+        permanent = (f"permanent_limit{side}", f"rated{side}")
+    if kind == "temporary":
+        return (f"temporary_limit{side}", *permanent)
+    return permanent
+
+
+def _first_present_limit(df, columns):
+    """The first present limit column as a float Series (0 -> NaN), else None."""
+    for col in columns:
+        if col in df.columns:
+            return df[col].astype(float).replace(0, float("nan"))
+    return None
+
+
+def _branch_terminals(df):
+    """The terminal indices a branch table exposes, by its i1, i2, i3... columns."""
+    terminals = []
+    side = 1
+    while f"i{side}" in df.columns:
+        terminals.append(side)
+        side += 1
+    return terminals
+
+
+def _loading_percent(df, kind="permanent"):
+    """Loading in percent: each terminal's current over its own rating, worst wins.
+
+    The number of terminals is read from the i1, i2, i3... columns present, so the
+    rule is uniform across 2-terminal (line, two_windings_transformer) and
+    3-terminal (three_windings_transformer) elements: loading =
+    max_k(|i_k| / limit_k) * 100. A terminal with no rating of its own borrows a
+    declared one, which recovers a line's single conductor Imax
+    (max(|i1|, |i2|) / Imax). Injections with no terminal currents use |p| / max_p.
+    """
+    terminals = _branch_terminals(df)
+    if terminals:
+        limits = {
+            side: _first_present_limit(df, _side_limit_columns(side, kind))
+            for side in terminals
+        }
+        declared = [series for series in limits.values() if series is not None]
+        if not declared:
+            return pd.Series(float("nan"), index=df.index)
+        shared = declared[0]  # a single declared rating is shared (a line's Imax)
+        loadings = [
+            df[f"i{side}"].abs()
+            / (limits[side] if limits[side] is not None else shared)
+            * 100
+            for side in terminals
+        ]
+        # Worst terminal wins; a NaN terminal (missing current/limit) is skipped.
+        return pd.concat(loadings, axis=1).max(axis=1)
 
     if "p" in df.columns and "max_p" in df.columns:
         limit = df["max_p"].astype(float).replace(0, float("nan"))
@@ -629,10 +676,10 @@ def compute_metric(df, metric, element_type):
         return df[metric]
 
     if metric == "loading_percent":
-        return _loading_percent(df, element_type)
+        return _loading_percent(df)
 
     if metric == "loading_percent_temporary":
-        return _loading_percent(df, element_type, limit_columns=_TEMPORARY_LIMIT_COLUMNS)
+        return _loading_percent(df, kind="temporary")
 
     if metric == "p_abs":
         if element_type in TWO_SIDED_TYPES:
@@ -653,6 +700,55 @@ def compute_metric(df, metric, element_type):
         f"Unknown metric '{metric}' for '{element_type}'. "
         f"Try loading_percent, p_abs, q_abs, or a column name ({cols})"
     )
+
+
+def dimensioning_terminal(row, kind="permanent"):
+    """Current and limit of the worst-loaded terminal of one branch row.
+
+    Returns ``(i_a, limit_a)`` for the terminal maximising ``|i_k| / limit_k`` —
+    the one that dimensions the row's loading_percent — or ``(None, None)`` when
+    no terminal has both a current and a resolvable limit. ``row`` is a mapping
+    (dict or Series) carrying i1/i2/... and the attached permanent_limit{k} /
+    temporary_limit{k} columns. Mirrors _loading_percent's per-terminal rule, so
+    the reported i_a / limit_a are consistent with loading_percent.
+    """
+
+    def value(key):
+        if key in row:
+            candidate = row[key]
+            if candidate is not None and not pd.isna(candidate):
+                return float(candidate)
+        return None
+
+    terminals = []
+    side = 1
+    while f"i{side}" in row:
+        terminals.append(side)
+        side += 1
+
+    declared = {}
+    for side in terminals:
+        for col in _side_limit_columns(side, kind):
+            limit = value(col)
+            if limit is not None and limit != 0:
+                declared[side] = limit
+                break
+    if not declared:
+        return None, None
+    shared = next(iter(declared.values()))  # a single rating is shared (line Imax)
+
+    best = None  # (loading, i_a, limit_a)
+    for side in terminals:
+        current = value(f"i{side}")
+        if current is None:
+            continue
+        limit = declared.get(side, shared)
+        loading = abs(current) / limit
+        if best is None or loading > best[0]:
+            best = (loading, abs(current), limit)
+    if best is None:
+        return None, None
+    return best[1], best[2]
 
 
 def _coerce_operand(value, op):
