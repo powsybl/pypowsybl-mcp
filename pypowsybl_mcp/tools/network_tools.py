@@ -1692,18 +1692,18 @@ class NetworkTools(PyPowsyblTool):
             )
             working_variant = network.get_working_variant_id()
 
-            # Nominal voltage per voltage level, for the optional band filter.
+            # Nominal voltage per voltage level — used to label every violation's
+            # nominal_v and, when set, for the optional band filter.
             band_active = (
                 min_nominal_voltage is not None or max_nominal_voltage is not None
             )
             vl_nominal = {}
-            if band_active:
-                try:
-                    vls = network.get_voltage_levels()
-                    if isinstance(vls, pd.DataFrame) and "nominal_v" in vls.columns:
-                        vl_nominal = vls["nominal_v"].to_dict()
-                except (pp.PyPowsyblError, ValueError, KeyError):
-                    vl_nominal = {}
+            try:
+                vls = network.get_voltage_levels()
+                if isinstance(vls, pd.DataFrame) and "nominal_v" in vls.columns:
+                    vl_nominal = vls["nominal_v"].to_dict()
+            except (pp.PyPowsyblError, ValueError, KeyError):
+                vl_nominal = {}
 
             violations = []
             total_elements = 0
