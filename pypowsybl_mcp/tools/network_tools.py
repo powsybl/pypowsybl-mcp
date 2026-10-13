@@ -1727,7 +1727,10 @@ class NetworkTools(PyPowsyblTool):
                     data = json.loads(raw)
                     if not data.get("success"):
                         return raw
-                    total_elements += data.get("total_elements", 0)
+                    # total_elements is the full table size, repeated on every
+                    # page; count it once per type (on the first page).
+                    if cursor_t is None:
+                        total_elements += data.get("total_elements", 0)
                     for element_id, fields in data.get("elements", {}).items():
                         nominal_v = element_nominal_voltage(
                             element_t, fields, vl_nominal
