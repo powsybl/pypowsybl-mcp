@@ -635,32 +635,62 @@ def _branch_terminals(df):
     return terminals
 
 
+def _resolve_effective_limits(limit_by_side):
+    """Map the declared per-side limits onto every terminal, per row.
+
+    The single place the "count the limits, map them onto the sides" rule lives:
+    a terminal uses its own rating; a terminal with none borrows the single
+    declared rating — a line's shared conductor Imax — resolved PER ROW, so a
+    branch whose own-side column is NaN on this row (the mixed-table case where
+    another branch defines that side's limit) still borrows one. One declared
+    limit => shared across sides (a line); one per side => per-side (a transformer).
+    Returns ``{side: Series}``, or None when no side declares a rating. Both
+    _loading_percent and dimensioning_terminal go through here, so they cannot
+    disagree.
+    """
+    declared = [series for series in limit_by_side.values() if series is not None]
+    if not declared:
+        return None
+    shared = declared[0]
+    for series in declared[1:]:
+        shared = shared.fillna(series)
+    return {
+        side: shared if series is None else series.fillna(shared)
+        for side, series in limit_by_side.items()
+    }
+
+
+def _scalar_float(value):
+    """A finite float, or None for None / NaN / non-numeric."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if pd.isna(number) else number
+
+
 def _loading_percent(df, kind="permanent"):
-    """Loading in percent: each terminal's current over its own rating, worst wins.
+    """Loading in percent: each terminal's current over its effective rating.
 
     The number of terminals is read from the i1, i2, i3... columns present, so the
     rule is uniform across 2-terminal (line, two_windings_transformer) and
-    3-terminal (three_windings_transformer) elements: loading =
-    max_k(|i_k| / limit_k) * 100. A terminal with no rating of its own borrows a
-    declared one, which recovers a line's single conductor Imax
-    (max(|i1|, |i2|) / Imax). Injections with no terminal currents use |p| / max_p.
+    3-terminal (three_windings_transformer) elements:
+    ``max_k(|i_k| / effective_limit_k) * 100``, where the effective per-terminal
+    limit comes from _resolve_effective_limits (one shared limit = a line's Imax;
+    one per side = a transformer). Injections with no terminal currents use
+    |p| / max_p.
     """
     terminals = _branch_terminals(df)
     if terminals:
-        limits = {
-            side: _first_present_limit(df, _side_limit_columns(side, kind))
-            for side in terminals
-        }
-        declared = [series for series in limits.values() if series is not None]
-        if not declared:
+        effective = _resolve_effective_limits(
+            {
+                side: _first_present_limit(df, _side_limit_columns(side, kind))
+                for side in terminals
+            }
+        )
+        if effective is None:
             return pd.Series(float("nan"), index=df.index)
-        shared = declared[0]  # a single declared rating is shared (a line's Imax)
-        loadings = [
-            df[f"i{side}"].abs()
-            / (limits[side] if limits[side] is not None else shared)
-            * 100
-            for side in terminals
-        ]
+        loadings = [df[f"i{side}"].abs() / effective[side] * 100 for side in terminals]
         # Worst terminal wins; a NaN terminal (missing current/limit) is skipped.
         return pd.concat(loadings, axis=1).max(axis=1)
 
@@ -709,46 +739,33 @@ def dimensioning_terminal(row, kind="permanent"):
     the one that dimensions the row's loading_percent — or ``(None, None)`` when
     no terminal has both a current and a resolvable limit. ``row`` is a mapping
     (dict or Series) carrying i1/i2/... and the attached permanent_limit{k} /
-    temporary_limit{k} columns. Mirrors _loading_percent's per-terminal rule, so
-    the reported i_a / limit_a are consistent with loading_percent.
+    temporary_limit{k} columns. The effective per-terminal limit is resolved by
+    the SAME _resolve_effective_limits that backs loading_percent, so i_a / limit_a
+    are consistent with it by construction.
     """
-
-    def value(key):
-        if key in row:
-            candidate = row[key]
-            if candidate is not None and not pd.isna(candidate):
-                return float(candidate)
-        return None
-
-    terminals = []
-    side = 1
-    while f"i{side}" in row:
-        terminals.append(side)
-        side += 1
-
-    declared = {}
-    for side in terminals:
-        for col in _side_limit_columns(side, kind):
-            limit = value(col)
-            if limit is not None and limit != 0:
-                declared[side] = limit
-                break
-    if not declared:
+    frame = pd.DataFrame([dict(row)])
+    terminals = _branch_terminals(frame)
+    if not terminals:
         return None, None
-    shared = next(iter(declared.values()))  # a single rating is shared (line Imax)
+    effective = _resolve_effective_limits(
+        {
+            side: _first_present_limit(frame, _side_limit_columns(side, kind))
+            for side in terminals
+        }
+    )
+    if effective is None:
+        return None, None
 
     best = None  # (loading, i_a, limit_a)
     for side in terminals:
-        current = value(f"i{side}")
-        if current is None:
+        current = _scalar_float(row.get(f"i{side}"))
+        limit = _scalar_float(effective[side].iloc[0])
+        if current is None or limit is None:
             continue
-        limit = declared.get(side, shared)
         loading = abs(current) / limit
         if best is None or loading > best[0]:
             best = (loading, abs(current), limit)
-    if best is None:
-        return None, None
-    return best[1], best[2]
+    return (best[1], best[2]) if best else (None, None)
 
 
 def _coerce_operand(value, op):
@@ -788,9 +805,11 @@ def _match_operand_dtype(series, operand):
     match (and ``!=`` match everything). We coerce the operand to a number only
     when the column is numeric, so a categorical column (``country``, ``regionCvg``)
     keeps comparing its values as strings. A genuinely non-numeric operand on a
-    numeric column is left as-is (it simply matches nothing).
+    numeric column is left as-is (it simply matches nothing). Bool columns are
+    excluded (bool is a numeric dtype in pandas) so ``connected == true`` stays a
+    boolean comparison rather than coercing to ``1``.
     """
-    if not pd.api.types.is_numeric_dtype(series):
+    if not pd.api.types.is_numeric_dtype(series) or pd.api.types.is_bool_dtype(series):
         return operand
     if isinstance(operand, list):
         return [_coerce_to_number(item) for item in operand]

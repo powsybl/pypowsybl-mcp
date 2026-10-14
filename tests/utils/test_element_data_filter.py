@@ -241,6 +241,27 @@ def test_equality_on_a_string_column_keeps_numeric_looking_strings():
     assert sorted(out.index) == ["a", "c"]
 
 
+def test_equality_on_bool_column_is_not_numeric_coerced():
+    # bool is a numeric dtype in pandas; it must NOT trigger number coercion.
+    df = pd.DataFrame({"connected": [True, False, True]}, index=["a", "b", "c"])
+
+    # Actual booleans compare correctly.
+    on = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "connected", "op": "==", "value": True}],
+    )
+    # A stringified "0" is not coerced into a numeric that matches the False rows.
+    stringy = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "connected", "op": "==", "value": "0"}],
+    )
+
+    assert sorted(on.index) == ["a", "c"]
+    assert list(stringy.index) == []
+
+
 def test_flat_list_is_implicit_and():
     df = pd.DataFrame(
         {"p": [10.0, 60.0, 80.0], "q": [5.0, 5.0, 50.0]},
@@ -598,6 +619,49 @@ def test_loading_percent_single_limit_falls_back_to_worst_current():
     )
 
     assert out.loc["l1", "loading_percent"] == pytest.approx(90.0)
+
+
+def test_loading_percent_borrows_shared_limit_per_row_in_mixed_table():
+    # The regression: L has only a side-1 rating, but line M defines a side-2
+    # rating, so the permanent_limit2 column EXISTS and is NaN for L. L's worst
+    # current is on side 2 (1120 > 1050); it must still be rated against L's shared
+    # Imax (1000) -> 112%, not dropped as |i2|/NaN. A per-column borrow would miss it.
+    df = pd.DataFrame(
+        {
+            "i1": [1050.0, 500.0],
+            "i2": [1120.0, 400.0],
+            "permanent_limit1": [1000.0, float("nan")],
+            "permanent_limit2": [float("nan"), 900.0],
+        },
+        index=["L", "M"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 100}],
+    )
+
+    assert list(out.index) == ["L"]
+    assert out.loc["L", "loading_percent"] == pytest.approx(112.0)
+
+
+def test_loading_percent_and_dimensioning_terminal_agree_on_mixed_table():
+    # loading_percent (vectorised) and dimensioning_terminal (row-wise) must pick
+    # the same denominator, so i_a / limit_a * 100 == loading_percent.
+    row = {
+        "i1": 1050.0,
+        "i2": 1120.0,
+        "permanent_limit1": 1000.0,
+        "permanent_limit2": float("nan"),
+    }
+    df = pd.DataFrame([row], index=["L"])
+
+    loading = compute_metric(df, "loading_percent", "line").loc["L"]
+    i_a, limit_a = dimensioning_terminal(row, "permanent")
+
+    assert i_a / limit_a * 100 == pytest.approx(loading)
+    assert loading == pytest.approx(112.0)
 
 
 def test_dimensioning_terminal_picks_the_worst_side():
