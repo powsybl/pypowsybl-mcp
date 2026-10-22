@@ -120,7 +120,7 @@ def _max_abs(df, columns):
 
 
 def _select_current_limit(limits, limit_kind):
-    """Pick one ampacity per element from get_operational_limits().
+    """Pick one ampacity per element from get_loading_limits().
 
     Both permanent and temporary limits live in the same table. We read
     type CURRENT, side ONE, and choose by acceptable_duration:
@@ -262,7 +262,7 @@ def filter_elements_to_main_area(elements_df, network, element_type, main_bus_id
 
 
 def attach_current_limits(df, limits_df, limit_kind="permanent"):
-    """Copy the chosen ampacity from operational limits onto each line row.
+    """Copy the chosen ampacity from loading limits onto each line row.
 
     get_lines() has i1/i2 but not the thermal limit. We add current_limit1 so
     loading_percent can divide current by the right rating (permanent or
@@ -293,7 +293,7 @@ _SIDE_NAME_TO_INDEX = (("ONE", "1"), ("TWO", "2"), ("THREE", "3"))
 
 
 def _select_per_side_limits(limits):
-    """Per-side permanent and temporary ampacity from get_operational_limits().
+    """Per-side permanent and temporary ampacity from get_loading_limits().
 
     Returns a dict of Series keyed by element id, one per materialised column
     (permanent_limit{1,2,3}, temporary_limit{1,2,3}). Temporary falls back to the
