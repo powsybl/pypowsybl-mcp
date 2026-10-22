@@ -43,6 +43,10 @@ marked **required**.
 These are the default load flow parameters loaded at server startup. They can be overridden per session with
 `update_loadflow_params` and reset with `restore_default_loadflow_param`.
 
+The server checks this file before it starts and refuses to start, naming the file and the faulty entry, if it holds
+an unknown `voltage_init_mode` or `balance_type`, a key that is not a load flow parameter, a value of the wrong type,
+a provider that is not installed, or parameters that provider rejects. Provider warnings (see below) are only logged.
+
 | Parameter           | Default                            | Description                                                                                                                                                                                                                                                                     |
 |---------------------|------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `provider`          | `OpenLoadFlow`                     | Load flow provider of new sessions. Changed per session with `set_loadflow_provider`; `get_loadflow_provider_info` lists the installed providers (e.g. `OpenLoadFlow`, `DynaFlow`).                                                                                             |
