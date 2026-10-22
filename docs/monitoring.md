@@ -50,7 +50,7 @@ back a container health check or an uptime probe. Neither route should be expose
 {
   "status": "ok",
   "server": {
-    "name": "pypowsybl-mcp", "version": "0.1.0.dev1", "pypowsybl_version": "1.15.0",
+    "name": "pypowsybl-mcp", "version": "0.1.0.dev1", "pypowsybl_version": "1.16.1",
     "uptime_s": 48213.0, "started_at": "2026-09-04T08:12:31+00:00", "rss_mb": 1842.5,
     "sessions": 7, "max_sessions": 100, "session_ttl_s": 86400,
     "evictions": {"expired": 3, "capacity": 0}

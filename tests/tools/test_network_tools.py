@@ -799,7 +799,7 @@ async def test_get_network_element_data_filter_errors(network_tools, mock_ctx):
 
 
 @pytest.mark.asyncio
-async def test_filter_lines_loading_from_operational_limits(network_tools, mock_ctx):
+async def test_filter_lines_loading_from_loading_limits(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
     # get_lines() has flows but no Imax column (real pypowsybl behavior).
@@ -807,7 +807,7 @@ async def test_filter_lines_loading_from_operational_limits(network_tools, mock_
         {"i1": [100.0, 50.0], "i2": [-100.0, -50.0]},
         index=["l1", "l2"],
     )
-    mock_net.get_operational_limits.return_value = pd.DataFrame(
+    mock_net.get_loading_limits.return_value = pd.DataFrame(
         {
             "element_id": ["l1", "l2"],
             "side": ["ONE", "ONE"],
@@ -841,7 +841,7 @@ async def test_filter_lines_loading_from_operational_limits(network_tools, mock_
 async def test_get_network_element_data_filter_temporary_limit(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    mock_net.get_operational_limits.return_value = pd.DataFrame(
+    mock_net.get_loading_limits.return_value = pd.DataFrame(
         {
             "element_id": ["l1", "l1"],
             "side": ["ONE", "ONE"],
@@ -903,7 +903,7 @@ async def test_get_network_element_data_filter_temporary_limit_still_overloaded(
         {"i1": [220.0], "i2": [-220.0]},
         index=["l1"],
     )
-    mock_net.get_operational_limits.return_value = pd.DataFrame(
+    mock_net.get_loading_limits.return_value = pd.DataFrame(
         {
             "element_id": ["l1", "l1"],
             "side": ["ONE", "ONE"],
@@ -2209,7 +2209,7 @@ async def test_get_network_element_data_method_not_available(network_tools, mock
 
 
 @pytest.mark.asyncio
-async def test_get_network_element_data_operational_limits_failure_is_tolerated(
+async def test_get_network_element_data_loading_limits_failure_is_tolerated(
     network_tools, mock_ctx
 ):
     proxy = network_tools.get_proxy("test-session")
@@ -2217,7 +2217,7 @@ async def test_get_network_element_data_operational_limits_failure_is_tolerated(
     mock_net.get_lines.return_value = pd.DataFrame(
         {"i1": [10.0], "i2": [-10.0]}, index=["l1"]
     )
-    mock_net.get_operational_limits.side_effect = pp.PyPowsyblError("limits boom")
+    mock_net.get_loading_limits.side_effect = pp.PyPowsyblError("limits boom")
     mock_net.get_variant_ids.return_value = ["InitialState"]
     proxy.networks["net1"] = mock_net
 

@@ -75,14 +75,18 @@ def test_pluralised_getter_names_are_the_values_not_the_keys():
     )
 
 
-def test_operational_limits_resolves_to_default_selected_variant():
-    # get_operational_limits() with defaults returns the SELECTED limits, so the
-    # runtime-observed key is "selected_operational_limits".
-    assert "selected_operational_limits" in ELEMENT_TYPE_TO_GETTER
-    assert (
-        ELEMENT_TYPE_TO_GETTER["selected_operational_limits"]
-        == "get_operational_limits"
-    )
+def test_loading_limits_resolves_to_default_selected_variant():
+    # get_loading_limits() with defaults returns the SELECTED limits, so the
+    # runtime-observed key is "selected_loading_limits".
+    assert "selected_loading_limits" in ELEMENT_TYPE_TO_GETTER
+    assert ELEMENT_TYPE_TO_GETTER["selected_loading_limits"] == "get_loading_limits"
+
+
+def test_deprecated_operational_limits_getter_is_not_exposed():
+    # pypowsybl 1.16 deprecated get_operational_limits in favor of
+    # get_loading_limits; the deprecated wrapper must not add a second entry.
+    assert "get_operational_limits" not in ELEMENT_TYPE_TO_GETTER.values()
+    assert "selected_operational_limits" not in ELEMENT_TYPE_TO_GETTER
 
 
 def test_excludes_getters_that_are_not_element_tables():
@@ -91,7 +95,7 @@ def test_excludes_getters_that_are_not_element_tables():
     for name in (
         "internal_connection",
         "minmax_reactive_limits",
-        "operational_limits",
+        "loading_limits",
     ):
         assert name not in ELEMENT_TYPE_TO_GETTER
 

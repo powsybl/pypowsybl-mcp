@@ -1581,7 +1581,7 @@ class NetworkTools(PyPowsyblTool):
             sort (str, optional): Order of the filtered rows: "desc" (default) or "asc".
             limit_kind (str, optional): For lines and 2-winding transformers only,
                 when metric is loading_percent: which ampacity rating from
-                get_operational_limits() to use as the denominator.
+                get_loading_limits() to use as the denominator.
 
                 pypowsybl stores both ratings in the same table (type CURRENT,
                 value in amperes). They are distinguished by acceptable_duration:
@@ -1670,7 +1670,7 @@ class NetworkTools(PyPowsyblTool):
             - loading_percent on lines/transformers: max(|i1|, |i2|) in amperes,
               divided by the current limit picked via limit_kind (see above).
               get_lines() does not include that limit; we read it from
-              get_operational_limits() and attach it as current_limit1 before
+              get_loading_limits() and attach it as current_limit1 before
               filtering. Generators use |p| / max_p instead.
 
         Related Tools:
@@ -1821,16 +1821,16 @@ class NetworkTools(PyPowsyblTool):
             )
 
             # get_lines() returns i1/i2 (current in A) but not Imax. Imax is in
-            # get_operational_limits(). We join it here so loading_percent works.
+            # get_loading_limits(). We join it here so loading_percent works.
             if compare_with_variant_id is None and element_type in (
                 "line",
                 "two_windings_transformer",
             ):
                 limits_df = None
                 try:
-                    limits_df = network.get_operational_limits()
+                    limits_df = network.get_loading_limits()
                 except (pp.PyPowsyblError, ValueError, KeyError) as e:
-                    logger.debug(f"get_operational_limits failed: {e}")
+                    logger.debug(f"get_loading_limits failed: {e}")
                 kind = (limit_kind or "permanent").strip().lower()
                 elements_df = attach_current_limits(elements_df, limits_df, kind)
 
