@@ -43,16 +43,28 @@ marked **required**.
 These are the default load flow parameters loaded at server startup. They can be overridden per session with
 `update_loadflow_params` and reset with `restore_default_loadflow_param`.
 
-`update_loadflow_params` has the session's load flow provider check the new values first (pypowsybl's
-`check_loadflow_parameters`). If the provider rejects them, the session keeps its previous parameters and the tool
-returns the provider's messages. If the provider accepts them but will ignore a parameter or replace a value (DynaFlow
-does this for several settings), the update is applied and the warnings come back in `provider_warnings`.
+| Parameter           | Default                            | Description                                                                                                                                                                                                                                                                     |
+|---------------------|------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `provider`          | `OpenLoadFlow`                     | Load flow provider of new sessions. Changed per session with `set_loadflow_provider`; `get_loadflow_provider_info` lists the installed providers (e.g. `OpenLoadFlow`, `DynaFlow`).                                                                                             |
+| `voltage_init_mode` | `UNIFORM_VALUES`                   | Initial voltage values for the iterative solver. Options: `UNIFORM_VALUES`, `PREVIOUS_VALUES`, `DC_VALUES`.                                                                                                                                                                     |
+| `balance_type`      | `PROPORTIONAL_TO_GENERATION_P_MAX` | Method for distributing the slack power. Options: `PROPORTIONAL_TO_GENERATION_P_MAX`, `PROPORTIONAL_TO_GENERATION_P`, `PROPORTIONAL_TO_GENERATION_PARTICIPATION_FACTOR`, `PROPORTIONAL_TO_GENERATION_REMAINING_MARGIN`, `PROPORTIONAL_TO_LOAD`, `PROPORTIONAL_TO_CONFORM_LOAD`. |
+| `distributed_slack` | `true`                             | Whether to distribute the slack power over several elements, as set by `balance_type`, instead of leaving it all on the slack bus.                                                                                                                                              |
 
-| Parameter           | Default                            | Description                                                                                                                                                                          |
-|---------------------|------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `voltage_init_mode` | `UNIFORM_VALUES`                   | Initial voltage values for the iterative solver. Options: `UNIFORM_VALUES`, `PREVIOUS_VALUES`, `DC_VALUES`.                                                                          |
-| `balance_type`      | `PROPORTIONAL_TO_GENERATION_P_MAX` | Method for distributing the slack power. Options: `PROPORTIONAL_TO_GENERATION_P_MAX`, `PROPORTIONAL_TO_GENERATION_P`, `PROPORTIONAL_TO_LOAD`, `PROPORTIONAL_TO_GENERATION_AND_LOAD`. |
-| `distributed_slack` | `true`                             | Whether to distribute the slack across generators instead of concentrating it on a single slack bus.                                                                                 |
+##### Provider check
+
+Not every provider supports every parameter. The session's provider checks the parameters with pypowsybl's
+`check_loadflow_parameters` at three points:
+
+| Tool                     | Checked                                                       | If the provider rejects them               |
+|--------------------------|---------------------------------------------------------------|--------------------------------------------|
+| `update_loadflow_params` | The new parameters, for an AC run.                            | The session keeps its previous parameters. |
+| `set_loadflow_provider`  | The session's parameters, by the new provider, for an AC run. | The session keeps its previous provider.   |
+| `run_loadflow`           | The session's parameters, for the requested AC or DC run.     | The load flow is not run.                  |
+
+A rejection returns `"success": false` with the provider's explanation in `provider_messages`; for example, DynaFlow
+rejects every DC load flow. A provider may also accept parameters but ignore one or replace a value (DynaFlow
+ignores `write_slack_bus` and runs `MAIN_CONNECTED` as `MAIN_SYNCHRONOUS`, among others): the tool then succeeds and
+lists these warnings in `provider_warnings`.
 
 ---
 

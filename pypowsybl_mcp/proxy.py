@@ -112,14 +112,11 @@ class PyPowsyblMCPServerProxy:
         """Update PyPowsybl loadflow parameters with new values.
 
         The changes are applied to a copy first, which the session's provider
-        checks with pp.loadflow.check_loadflow_parameters(). The session keeps
-        its current parameters when the provider rejects the copy (raises
-        UnsupportedLoadflowParametersError), when the check fails on an invalid
-        value (raises PyPowsyblError) and when an enum-valued parameter is given
-        an unknown name (raises ValueError).
+        checks for an AC run (see check_lf_params). The session keeps its
+        current parameters when the check fails, and when an enum-valued
+        parameter is given an unknown name (raises ValueError).
 
-        Returns the provider's warnings about the accepted parameters, e.g. a
-        parameter it ignores or a value it replaces. Empty when there are none.
+        Returns the provider's warnings about the accepted parameters.
         """
         # Convert enum-valued parameters given by name. An unknown name is
         # rejected here rather than stored as None, which pypowsybl cannot
@@ -152,14 +149,51 @@ class PyPowsyblMCPServerProxy:
             if hasattr(candidate, key):
                 setattr(candidate, key, value)
 
+        messages = self.check_lf_params(params=candidate)
+        self.lf_params = candidate
+        return messages
+
+    def set_lf_provider(self, provider: str) -> list[str]:
+        """Switch the session to another load flow provider.
+
+        The new provider first checks the session's parameters for an AC run
+        (see check_lf_params); the session keeps its current provider when the
+        check fails. An empty string selects pypowsybl's default provider.
+
+        Returns the new provider's warnings about the session's parameters.
+        """
+        messages = self.check_lf_params(provider=provider)
+        self.lf_provider = provider
+        return messages
+
+    def check_lf_params(
+        self,
+        params: pp.loadflow.Parameters | None = None,
+        provider: str | None = None,
+        dc: bool = False,
+    ) -> list[str]:
+        """Have a provider check load flow parameters with check_loadflow_parameters().
+
+        params and provider default to the session's own. pypowsybl's run_ac()
+        and run_dc() force the dc attribute of the parameters, so the check
+        does the same: dc selects the kind of run being checked, AC by default.
+
+        Returns the provider's warnings, e.g. a parameter it ignores or a value
+        it replaces; empty when there are none. Raises
+        UnsupportedLoadflowParametersError when the provider rejects the
+        parameters, and PyPowsyblError when a value is invalid.
+        """
+        candidate = copy.deepcopy(self.lf_params if params is None else params)
+        candidate.dc = dc
+        provider = self.lf_provider if provider is None else provider
+
         report_node = pp.report.ReportNode()
         supported = pp.loadflow.check_loadflow_parameters(
-            candidate, provider=self.lf_provider, report_node=report_node
+            candidate, provider=provider, report_node=report_node
         )
         messages = report_messages(report_node)
         if not supported:
-            raise UnsupportedLoadflowParametersError(self.lf_provider, messages)
-        self.lf_params = candidate
+            raise UnsupportedLoadflowParametersError(provider, messages)
         return messages
 
     def get_network(self, network_id: str) -> Network | None:

@@ -4,7 +4,7 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pandas as pd
 import pypowsybl as pp
@@ -311,17 +311,76 @@ class TestUpdateLfParams:
         assert all(w.startswith("WARN: ") for w in warnings)
 
     def test_update_lf_params_keeps_params_when_provider_rejects_them(self, proxy):
-        # DynaFlow cannot run a DC load flow: the check fails as a whole, so
-        # the accompanying change must not be applied either.
+        with (
+            patch.object(pp.loadflow, "check_loadflow_parameters", return_value=False),
+            pytest.raises(UnsupportedLoadflowParametersError) as exc_info,
+        ):
+            proxy.update_lf_params(use_reactive_limits=False)
+
+        assert exc_info.value.provider == "OpenLoadFlow"
+        assert proxy.lf_params.use_reactive_limits is True
+
+
+class TestCheckLfParams:
+    """Test the provider check shared by the load flow tools."""
+
+    @pytest.fixture
+    def proxy(self):
+        return PyPowsyblMCPServerProxy()
+
+    def test_check_lf_params_rejects_a_dc_run_the_provider_cannot_do(self, proxy):
+        proxy.lf_provider = "DynaFlow"
+
+        with pytest.raises(UnsupportedLoadflowParametersError) as exc_info:
+            proxy.check_lf_params(dc=True)
+
+        assert exc_info.value.provider == "DynaFlow"
+        assert any(
+            m.startswith("ERROR: ") and "DC power flow" in m
+            for m in exc_info.value.messages
+        )
+
+    def test_check_lf_params_ignores_the_stored_dc_flag(self, proxy):
+        # run_ac() forces dc to false whatever the parameters say, so an AC
+        # check must not fail because of the stored flag.
         proxy.lf_provider = "DynaFlow"
         proxy.lf_params.dc = True
 
-        with pytest.raises(UnsupportedLoadflowParametersError) as exc_info:
-            proxy.update_lf_params(use_reactive_limits=False)
+        warnings = proxy.check_lf_params()
 
-        assert exc_info.value.provider == "DynaFlow"
-        assert any(m.startswith("ERROR: ") for m in exc_info.value.messages)
-        assert proxy.lf_params.use_reactive_limits is True
+        assert all(w.startswith("WARN: ") for w in warnings)
+        assert proxy.lf_params.dc is True
+
+    def test_check_lf_params_uses_the_given_params_and_provider(self, proxy):
+        params = pp.loadflow.Parameters(twt_split_shunt_admittance=True)
+
+        assert proxy.check_lf_params(params=params) == []
+        assert any(
+            "TwtSplitShuntAdmittance" in w
+            for w in proxy.check_lf_params(params=params, provider="DynaFlow")
+        )
+        assert proxy.lf_provider == "OpenLoadFlow"
+
+    def test_set_lf_provider_returns_the_new_provider_warnings(self, proxy):
+        warnings = proxy.set_lf_provider("DynaFlow")
+
+        assert proxy.lf_provider == "DynaFlow"
+        assert any("WriteSlackBus" in w for w in warnings)
+
+    def test_set_lf_provider_keeps_provider_when_rejected(self, proxy):
+        with (
+            patch.object(pp.loadflow, "check_loadflow_parameters", return_value=False),
+            pytest.raises(UnsupportedLoadflowParametersError),
+        ):
+            proxy.set_lf_provider("DynaFlow")
+
+        assert proxy.lf_provider == "OpenLoadFlow"
+
+    def test_set_lf_provider_keeps_provider_when_unknown(self, proxy):
+        with pytest.raises(pp.PyPowsyblError):
+            proxy.set_lf_provider("Nope")
+
+        assert proxy.lf_provider == "OpenLoadFlow"
 
 
 class TestNetworkAccessors:
