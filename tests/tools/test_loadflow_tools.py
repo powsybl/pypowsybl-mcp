@@ -12,6 +12,7 @@ import pypowsybl as pp
 import pytest
 from cachetools import TTLCache
 
+from pypowsybl_mcp.proxy import UnsupportedLoadflowParametersError
 from pypowsybl_mcp.tools.loadflow_tools import LoadflowTools, register_loadflow_tools
 
 
@@ -368,6 +369,71 @@ async def test_update_loadflow_params_exception(lf_tools, mock_ctx):
     data = json.loads(result)
     assert data["success"] is False
     assert "cannot update" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_update_loadflow_params_has_no_provider_warnings_by_default(
+    lf_tools, mock_ctx
+):
+    result = await lf_tools.update_loadflow_params(
+        distributed_slack=False, ctx=mock_ctx
+    )
+
+    data = json.loads(result)
+    assert data["success"] is True
+    assert "provider_warnings" not in data
+
+
+@pytest.mark.asyncio
+async def test_update_loadflow_params_reports_provider_warnings(lf_tools, mock_ctx):
+    proxy = lf_tools.get_proxy("test-session")
+    proxy.update_lf_params = MagicMock(
+        return_value=["WARN: Load flow parameter 'WriteSlackBus' is ignored"]
+    )
+
+    result = await lf_tools.update_loadflow_params(write_slack_bus=True, ctx=mock_ctx)
+
+    data = json.loads(result)
+    assert data["success"] is True
+    assert data["provider_warnings"] == [
+        "WARN: Load flow parameter 'WriteSlackBus' is ignored"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_loadflow_params_unsupported_by_provider(lf_tools, mock_ctx):
+    proxy = lf_tools.get_proxy("test-session")
+    proxy.update_lf_params = MagicMock(
+        side_effect=UnsupportedLoadflowParametersError(
+            "DynaFlow", ["ERROR: Load flow parameter 'DC power flow' is not supported"]
+        )
+    )
+
+    result = await lf_tools.update_loadflow_params(
+        use_reactive_limits=False, ctx=mock_ctx
+    )
+
+    data = json.loads(result)
+    assert data["success"] is False
+    assert "'DynaFlow'" in data["error"]
+    assert "previous parameters are kept" in data["error"]
+    assert data["provider"] == "DynaFlow"
+    assert data["provider_messages"] == [
+        "ERROR: Load flow parameter 'DC power flow' is not supported"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_loadflow_params_unknown_enum_name(lf_tools, mock_ctx):
+    result = await lf_tools.update_loadflow_params(
+        voltage_init_mode="NOPE", ctx=mock_ctx
+    )
+
+    data = json.loads(result)
+    assert data["success"] is False
+    assert "UNIFORM_VALUES" in data["error"]
+    proxy = lf_tools.get_proxy("test-session")
+    assert proxy.lf_params.voltage_init_mode.name == "UNIFORM_VALUES"
 
 
 @pytest.mark.asyncio

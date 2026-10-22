@@ -10,7 +10,10 @@ import pandas as pd
 import pypowsybl as pp
 import pytest
 
-from pypowsybl_mcp.proxy import PyPowsyblMCPServerProxy
+from pypowsybl_mcp.proxy import (
+    PyPowsyblMCPServerProxy,
+    UnsupportedLoadflowParametersError,
+)
 
 
 class TestPyPowsyblMCPServerProxyInit:
@@ -268,6 +271,57 @@ class TestUpdateLfParams:
         from pypowsybl_mcp import COMPONENT_MODES
 
         assert proxy.lf_params.component_mode == COMPONENT_MODES["ALL_CONNECTED"]
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "voltage_init_mode",
+            "balance_type",
+            "component_mode",
+            "connected_component_mode",
+        ],
+    )
+    def test_update_lf_params_rejects_unknown_enum_name(self, proxy, key):
+        # An unknown name used to be stored as None, which pypowsybl cannot
+        # convert, so every later load flow of the session failed.
+        before = proxy.lf_params.to_json()
+
+        with pytest.raises(ValueError, match="Accepted values"):
+            proxy.update_lf_params(**{key: "NOPE"})
+
+        assert proxy.lf_params.to_json() == before
+
+    def test_update_lf_params_returns_no_warning_when_supported(self, proxy):
+        assert proxy.update_lf_params(distributed_slack=False) == []
+        assert proxy.lf_params.distributed_slack is False
+
+    def test_update_lf_params_keeps_params_on_invalid_value(self, proxy):
+        with pytest.raises(pp.PyPowsyblError):
+            proxy.update_lf_params(countries_to_balance=["XX"])
+
+        assert proxy.lf_params.countries_to_balance == []
+
+    def test_update_lf_params_returns_provider_warnings(self, proxy):
+        proxy.lf_provider = "DynaFlow"
+
+        warnings = proxy.update_lf_params(twt_split_shunt_admittance=True)
+
+        assert proxy.lf_params.twt_split_shunt_admittance is True
+        assert any("TwtSplitShuntAdmittance" in w for w in warnings)
+        assert all(w.startswith("WARN: ") for w in warnings)
+
+    def test_update_lf_params_keeps_params_when_provider_rejects_them(self, proxy):
+        # DynaFlow cannot run a DC load flow: the check fails as a whole, so
+        # the accompanying change must not be applied either.
+        proxy.lf_provider = "DynaFlow"
+        proxy.lf_params.dc = True
+
+        with pytest.raises(UnsupportedLoadflowParametersError) as exc_info:
+            proxy.update_lf_params(use_reactive_limits=False)
+
+        assert exc_info.value.provider == "DynaFlow"
+        assert any(m.startswith("ERROR: ") for m in exc_info.value.messages)
+        assert proxy.lf_params.use_reactive_limits is True
 
 
 class TestNetworkAccessors:

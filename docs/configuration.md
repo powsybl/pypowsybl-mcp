@@ -43,6 +43,11 @@ marked **required**.
 These are the default load flow parameters loaded at server startup. They can be overridden per session with
 `update_loadflow_params` and reset with `restore_default_loadflow_param`.
 
+`update_loadflow_params` has the session's load flow provider check the new values first (pypowsybl's
+`check_loadflow_parameters`). If the provider rejects them, the session keeps its previous parameters and the tool
+returns the provider's messages. If the provider accepts them but will ignore a parameter or replace a value (DynaFlow
+does this for several settings), the update is applied and the warnings come back in `provider_warnings`.
+
 | Parameter           | Default                            | Description                                                                                                                                                                          |
 |---------------------|------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `voltage_init_mode` | `UNIFORM_VALUES`                   | Initial voltage values for the iterative solver. Options: `UNIFORM_VALUES`, `PREVIOUS_VALUES`, `DC_VALUES`.                                                                          |

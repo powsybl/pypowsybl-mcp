@@ -21,6 +21,7 @@ from pypowsybl_mcp import (
     VOLTAGE_MODES,
 )
 from pypowsybl_mcp.utils.cachetools import ThreadSafeTTLCache
+from pypowsybl_mcp.utils.report_utils import report_messages
 
 MAX_NUMBER_OF_GRIDS = 10
 GRID_TTL = 3600 * 24  # in secs, 1 day
@@ -35,6 +36,27 @@ LF_DEFAULT_PARAMETERS_PATH = (
 VISUALIZATION_DEFAULT_PARAMETERS_PATH = (
     Path(__file__).resolve().parent / "config" / "visualization_default_parameters.toml"
 )
+
+
+def _enum_from_name(key: str, name: str, mapping: dict[str, Any]) -> Any:
+    """Return mapping[name], or raise a ValueError listing the accepted names."""
+    if name not in mapping:
+        raise ValueError(
+            f"Invalid {key} '{name}'. Accepted values: {', '.join(mapping)}"
+        )
+    return mapping[name]
+
+
+class UnsupportedLoadflowParametersError(ValueError):
+    """The session's load flow provider rejected a set of parameters."""
+
+    def __init__(self, provider: str, messages: list[str]):
+        self.provider = provider
+        self.messages = messages
+        super().__init__(
+            f"Load flow parameters are not supported by provider "
+            f"'{provider or 'default'}'"
+        )
 
 
 class PyPowsyblMCPServerProxy:
@@ -86,21 +108,30 @@ class PyPowsyblMCPServerProxy:
 
         self.lf_params = pp.loadflow.Parameters(**pp_lf_cfg)
 
-    def update_lf_params(self, **params):
-        """Update PyPowsybl loadflow parameters with new values."""
-        # Convert voltage_init_mode from string if provided
-        if "voltage_init_mode" in params and isinstance(
-            params["voltage_init_mode"], str
+    def update_lf_params(self, **params) -> list[str]:
+        """Update PyPowsybl loadflow parameters with new values.
+
+        The changes are applied to a copy first, which the session's provider
+        checks with pp.loadflow.check_loadflow_parameters(). The session keeps
+        its current parameters when the provider rejects the copy (raises
+        UnsupportedLoadflowParametersError), when the check fails on an invalid
+        value (raises PyPowsyblError) and when an enum-valued parameter is given
+        an unknown name (raises ValueError).
+
+        Returns the provider's warnings about the accepted parameters, e.g. a
+        parameter it ignores or a value it replaces. Empty when there are none.
+        """
+        # Convert enum-valued parameters given by name. An unknown name is
+        # rejected here rather than stored as None, which pypowsybl cannot
+        # convert and which would break every later load flow of the session.
+        for key, mapping in (
+            ("voltage_init_mode", VOLTAGE_MODES),
+            ("balance_type", BALANCE_TYPES),
+            ("component_mode", COMPONENT_MODES),
+            ("connected_component_mode", CONNECTED_COMPONENT_MODES),
         ):
-            params["voltage_init_mode"] = VOLTAGE_MODES.get(params["voltage_init_mode"])
-
-        # Convert balance_type from string if provided
-        if "balance_type" in params and isinstance(params["balance_type"], str):
-            params["balance_type"] = BALANCE_TYPES.get(params["balance_type"])
-
-        # Convert component_mode from string if provided
-        if "component_mode" in params and isinstance(params["component_mode"], str):
-            params["component_mode"] = COMPONENT_MODES.get(params["component_mode"])
+            if key in params and isinstance(params[key], str):
+                params[key] = _enum_from_name(key, params[key], mapping)
 
         # connected_component_mode is deprecated in pypowsybl in favor of
         # component_mode. Convert it ourselves instead of setting it on
@@ -108,10 +139,6 @@ class PyPowsyblMCPServerProxy:
         # don't override an explicitly provided component_mode.
         if "connected_component_mode" in params:
             connected_component_mode = params.pop("connected_component_mode")
-            if isinstance(connected_component_mode, str):
-                connected_component_mode = CONNECTED_COMPONENT_MODES.get(
-                    connected_component_mode
-                )
             if connected_component_mode is not None and "component_mode" not in params:
                 params["component_mode"] = (
                     pp.loadflow.ComponentMode.MAIN_CONNECTED
@@ -120,9 +147,20 @@ class PyPowsyblMCPServerProxy:
                     else pp.loadflow.ComponentMode.ALL_CONNECTED
                 )
 
+        candidate = copy.deepcopy(self.lf_params)
         for key, value in params.items():
-            if hasattr(self.lf_params, key):
-                setattr(self.lf_params, key, value)
+            if hasattr(candidate, key):
+                setattr(candidate, key, value)
+
+        report_node = pp.report.ReportNode()
+        supported = pp.loadflow.check_loadflow_parameters(
+            candidate, provider=self.lf_provider, report_node=report_node
+        )
+        messages = report_messages(report_node)
+        if not supported:
+            raise UnsupportedLoadflowParametersError(self.lf_provider, messages)
+        self.lf_params = candidate
+        return messages
 
     def get_network(self, network_id: str) -> Network | None:
         """Thread-safe retrieval of a network by id."""

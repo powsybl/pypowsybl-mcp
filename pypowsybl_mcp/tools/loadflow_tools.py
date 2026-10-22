@@ -13,6 +13,7 @@ from loguru import logger
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 
+from pypowsybl_mcp.proxy import UnsupportedLoadflowParametersError
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.utils.user_session_management import get_session_id
 
@@ -237,6 +238,12 @@ class LoadflowTools(PyPowsyblTool):
         This tool allows modifying parameters used for load flow calculations.
         The updated parameters will be used in subsequent run_loadflow calls.
 
+        The session's load flow provider checks the new parameters before they
+        are applied. If it rejects them, or a value is invalid, nothing changes
+        and "success" is false. If it accepts them but will ignore a parameter
+        or replace a value (DynaFlow does this for several settings), its
+        warnings come back in "provider_warnings".
+
         Args:
             voltage_init_mode (str, optional): The resolution starting point.
                 Possible values: "UNIFORM_VALUES", "PREVIOUS_VALUES", "DC_VALUES".
@@ -286,15 +293,25 @@ class LoadflowTools(PyPowsyblTool):
             }
             filtered_params = {k: v for k, v in params.items() if v is not None}
 
-            self.get_proxy(session_id).update_lf_params(**filtered_params)
+            proxy = self.get_proxy(session_id)
+            warnings = proxy.update_lf_params(**filtered_params)
 
+            result = {
+                "success": True,
+                "message": "Load flow parameters updated",
+                "current_params": json.loads(proxy.lf_params.to_json()),
+            }
+            if warnings:
+                result["provider_warnings"] = warnings
+            return json.dumps(result, indent=2)
+        except UnsupportedLoadflowParametersError as e:
+            logger.warning(f"{e}: {e.messages}")
             return json.dumps(
                 {
-                    "success": True,
-                    "message": "Load flow parameters updated",
-                    "current_params": json.loads(
-                        self.get_proxy(session_id).lf_params.to_json()
-                    ),
+                    "success": False,
+                    "error": f"{e}; the previous parameters are kept",
+                    "provider": e.provider,
+                    "provider_messages": e.messages,
                 },
                 indent=2,
             )
