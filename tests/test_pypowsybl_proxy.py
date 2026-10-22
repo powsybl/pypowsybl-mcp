@@ -11,8 +11,11 @@ import pypowsybl as pp
 import pytest
 
 from pypowsybl_mcp.proxy import (
+    LoadflowConfigError,
     PyPowsyblMCPServerProxy,
     UnsupportedLoadflowParametersError,
+    load_lf_config,
+    validate_lf_config,
 )
 
 
@@ -52,6 +55,106 @@ class TestPyPowsyblMCPServerProxyInit:
         proxy = PyPowsyblMCPServerProxy()
 
         assert proxy.lf_provider == "DynaFlow"
+
+
+class TestLoadflowConfig:
+    """Test reading and validating LF_default_parameters.toml."""
+
+    @pytest.fixture
+    def write_config(self, tmp_path):
+        def write(body: str):
+            path = tmp_path / "LF_default_parameters.toml"
+            path.write_text(body)
+            return path
+
+        return write
+
+    def test_shipped_config_is_valid(self):
+        validate_lf_config()
+
+    def test_load_lf_config_converts_names(self, write_config):
+        path = write_config(
+            'voltage_init_mode = "DC_VALUES"\n'
+            'balance_type = "PROPORTIONAL_TO_LOAD"\n'
+            "distributed_slack = false\n"
+            'provider = "DynaFlow"\n'
+        )
+
+        provider, params = load_lf_config(path)
+
+        assert provider == "DynaFlow"
+        assert params.voltage_init_mode == pp.loadflow.VoltageInitMode.DC_VALUES
+        assert params.balance_type == pp.loadflow.BalanceType.PROPORTIONAL_TO_LOAD
+        assert params.distributed_slack is False
+
+    def test_load_lf_config_defaults(self, write_config):
+        provider, params = load_lf_config(write_config(""))
+
+        assert provider == "OpenLoadFlow"
+        assert params.voltage_init_mode == pp.loadflow.VoltageInitMode.UNIFORM_VALUES
+
+    @pytest.mark.parametrize(
+        "body, expected",
+        [
+            ('voltage_init_mode = "NOPE"\n', "Accepted values: UNIFORM_VALUES"),
+            (
+                'balance_type = "PROPORTIONAL_TO_GENERATION_AND_LOAD"\n',
+                "Accepted values:",
+            ),
+            ("not_a_parameter = 1\n", "not_a_parameter"),
+        ],
+    )
+    def test_load_lf_config_rejects_bad_entries(self, write_config, body, expected):
+        path = write_config(body)
+
+        with pytest.raises(LoadflowConfigError) as exc_info:
+            load_lf_config(path)
+
+        assert str(path) in str(exc_info.value)
+        assert expected in str(exc_info.value)
+
+    def test_proxy_no_longer_stores_none_for_a_bad_name(
+        self, write_config, monkeypatch
+    ):
+        # A bad name used to become None in the session's parameters, which
+        # broke every load flow of that session.
+        path = write_config('voltage_init_mode = "NOPE"\n')
+        monkeypatch.setattr("pypowsybl_mcp.proxy.LF_DEFAULT_PARAMETERS_PATH", path)
+
+        with pytest.raises(LoadflowConfigError):
+            PyPowsyblMCPServerProxy()
+
+    def test_validate_lf_config_rejects_unknown_provider(self, write_config):
+        path = write_config('provider = "Nope"\n')
+
+        with pytest.raises(LoadflowConfigError, match="unknown provider 'Nope'"):
+            validate_lf_config(path)
+
+    def test_validate_lf_config_rejects_a_badly_typed_value(self, write_config):
+        path = write_config('distributed_slack = "yes"\n')
+
+        with pytest.raises(LoadflowConfigError, match=str(path)):
+            validate_lf_config(path)
+
+    def test_validate_lf_config_rejects_parameters_the_provider_refuses(
+        self, write_config
+    ):
+        path = write_config("")
+
+        with (
+            patch.object(pp.loadflow, "check_loadflow_parameters", return_value=False),
+            pytest.raises(LoadflowConfigError, match="not supported by provider"),
+        ):
+            validate_lf_config(path)
+
+    def test_validate_lf_config_logs_provider_warnings(self, write_config):
+        path = write_config('provider = "DynaFlow"\n')
+
+        with patch("pypowsybl_mcp.proxy.logger") as mock_logger:
+            validate_lf_config(path)
+
+        logged = [c.args[0] for c in mock_logger.warning.call_args_list]
+        assert any("WriteSlackBus" in m and str(path) in m for m in logged)
 
 
 class TestGetNetworkSummary:

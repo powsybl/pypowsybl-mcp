@@ -386,13 +386,14 @@ class LoadflowTools(PyPowsyblTool):
                 - network_id (str): Network identifier
                 - converged (bool): Convergence status
                 - dc (bool): Whether DC loadflow was run
-                - voltage_init_mode (str): Initialization mode used (for AC)
-                - distributed_slack (bool): Slack distribution setting
-                - balance_type (str): Power balance method
                 - components (int): Number of components analyzed
-                - total_buses (int): Total number of buses
-                - sample_bus_voltages (list): First 10 bus voltages with details
-                - failed_components (list): Components that failed (if any)
+                - total_buses (int): Total number of buses (if converged)
+                - sample_bus_voltages (list): The first 10 buses, each with its
+                  name, v_mag (kV) and v_angle (degrees) (if converged)
+                - remaining_buses (int): Number of buses left out of the sample
+                  (if converged)
+                - failed_components (list): Components that did not converge, each
+                  with its component_num and status (if not converged)
                 - provider_warnings (list[str]): Parameters the provider ignored or
                   replaced (only when there are some)
                 - provider_messages (list[str]): Why the provider rejected the
@@ -405,15 +406,14 @@ class LoadflowTools(PyPowsyblTool):
               "network_id": "ieee_14",
               "converged": true,
               "dc": false,
-              "voltage_init_mode": "UNIFORM_VALUES",
-              "distributed_slack": true,
-              "balance_type": "PROPORTIONAL_TO_GENERATION_P_MAX",
               "components": 1,
               "total_buses": 14,
               "sample_bus_voltages": [
-                {"name": "Bus 1", "v_mag": 1.060, "v_angle": 0.00},
-                {"name": "Bus 2", "v_mag": 1.045, "v_angle": -4.98}
-              ]
+                {"name": "", "v_mag": 143.1, "v_angle": 0.0},
+                {"name": "", "v_mag": 141.075, "v_angle": -4.98},
+                ...
+              ],
+              "remaining_buses": 4
             }
         """
         try:

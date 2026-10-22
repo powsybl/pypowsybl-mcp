@@ -59,6 +59,93 @@ class UnsupportedLoadflowParametersError(ValueError):
         )
 
 
+class LoadflowConfigError(ValueError):
+    """LF_default_parameters.toml cannot be turned into usable parameters."""
+
+
+def check_lf_params(
+    params: pp.loadflow.Parameters, provider: str, dc: bool = False
+) -> list[str]:
+    """Have a provider check load flow parameters with check_loadflow_parameters().
+
+    pypowsybl's run_ac() and run_dc() force the dc attribute of the parameters,
+    so the check does the same on a copy: dc selects the kind of run being
+    checked, AC by default.
+
+    Returns the provider's warnings, e.g. a parameter it ignores or a value it
+    replaces; empty when there are none. Raises UnsupportedLoadflowParametersError
+    when the provider rejects the parameters, and PyPowsyblError when a value is
+    invalid.
+    """
+    candidate = copy.deepcopy(params)
+    candidate.dc = dc
+
+    report_node = pp.report.ReportNode()
+    supported = pp.loadflow.check_loadflow_parameters(
+        candidate, provider=provider, report_node=report_node
+    )
+    messages = report_messages(report_node)
+    if not supported:
+        raise UnsupportedLoadflowParametersError(provider, messages)
+    return messages
+
+
+def load_lf_config(path: Path | None = None) -> tuple[str, pp.loadflow.Parameters]:
+    """Read the default load flow configuration file.
+
+    Returns the configured provider and the load flow parameters. Raises
+    LoadflowConfigError, naming the file, for an unknown voltage_init_mode or
+    balance_type name and for a key that pp.loadflow.Parameters does not take.
+    """
+    path = path or LF_DEFAULT_PARAMETERS_PATH
+    with path.open("rb") as f:
+        loadflow_config = tomllib.load(f)
+    # provider is not a parameter of pp.loadflow.Parameters
+    provider = loadflow_config.pop("provider", "OpenLoadFlow")
+    try:
+        loadflow_config["voltage_init_mode"] = _enum_from_name(
+            "voltage_init_mode",
+            loadflow_config.get("voltage_init_mode", "UNIFORM_VALUES"),
+            VOLTAGE_MODES,
+        )
+        loadflow_config["balance_type"] = _enum_from_name(
+            "balance_type",
+            loadflow_config.get("balance_type", "PROPORTIONAL_TO_GENERATION_P_MAX"),
+            BALANCE_TYPES,
+        )
+        params = pp.loadflow.Parameters(**loadflow_config)
+    except (ValueError, TypeError) as e:
+        raise LoadflowConfigError(f"{path}: {e}") from e
+    return provider, params
+
+
+def validate_lf_config(path: Path | None = None) -> None:
+    """Check the default load flow configuration file before the server starts.
+
+    Sessions read the file when they are created, on their first tool call, so
+    a bad value would otherwise only show up then, in every session. Besides
+    what load_lf_config() rejects, the provider must be installed and must
+    accept the parameters for an AC run; its warnings are logged. Raises
+    LoadflowConfigError.
+    """
+    path = path or LF_DEFAULT_PARAMETERS_PATH
+    provider, params = load_lf_config(path)
+    available_providers = pp.loadflow.get_provider_names()
+    if provider and provider not in available_providers:
+        raise LoadflowConfigError(
+            f"{path}: unknown provider '{provider}'. "
+            f"Available providers: {', '.join(available_providers)}"
+        )
+    try:
+        warnings = check_lf_params(params, provider)
+    except UnsupportedLoadflowParametersError as e:
+        raise LoadflowConfigError(f"{path}: {e}: {'; '.join(e.messages)}") from e
+    except (pp.PyPowsyblError, TypeError) as e:
+        raise LoadflowConfigError(f"{path}: {e}") from e
+    for warning in warnings:
+        logger.warning(f"{path}: {warning}")
+
+
 class PyPowsyblMCPServerProxy:
     """MCP server proxy for PyPowsybl integration with state management."""
 
@@ -89,24 +176,7 @@ class PyPowsyblMCPServerProxy:
 
     def init_lf_params_from_config(self):
         """Initialize PyPowsybl loadflow parameters from configuration file."""
-        with LF_DEFAULT_PARAMETERS_PATH.open("rb") as f:
-            loadflow_config = tomllib.load(f)
-        self.lf_provider = loadflow_config.get("provider", "OpenLoadFlow")
-        pp_lf_cfg = {
-            key: value
-            for key, value in loadflow_config.items()
-            if key
-            != "provider"  # Remove provider if it's there as it's not a parameter of pp.loadflow.Parameters
-        }
-        pp_lf_cfg["voltage_init_mode"] = VOLTAGE_MODES.get(
-            pp_lf_cfg.get("voltage_init_mode", "UNIFORM_VALUES")
-        )
-        # Convert balance type from string
-        pp_lf_cfg["balance_type"] = BALANCE_TYPES.get(
-            pp_lf_cfg.get("balance_type", "PROPORTIONAL_TO_GENERATION_P_MAX")
-        )
-
-        self.lf_params = pp.loadflow.Parameters(**pp_lf_cfg)
+        self.lf_provider, self.lf_params = load_lf_config()
 
     def update_lf_params(self, **params) -> list[str]:
         """Update PyPowsybl loadflow parameters with new values.
@@ -172,29 +242,15 @@ class PyPowsyblMCPServerProxy:
         provider: str | None = None,
         dc: bool = False,
     ) -> list[str]:
-        """Have a provider check load flow parameters with check_loadflow_parameters().
+        """Run the module-level check_lf_params() for this session.
 
-        params and provider default to the session's own. pypowsybl's run_ac()
-        and run_dc() force the dc attribute of the parameters, so the check
-        does the same: dc selects the kind of run being checked, AC by default.
-
-        Returns the provider's warnings, e.g. a parameter it ignores or a value
-        it replaces; empty when there are none. Raises
-        UnsupportedLoadflowParametersError when the provider rejects the
-        parameters, and PyPowsyblError when a value is invalid.
+        params and provider default to the session's own.
         """
-        candidate = copy.deepcopy(self.lf_params if params is None else params)
-        candidate.dc = dc
-        provider = self.lf_provider if provider is None else provider
-
-        report_node = pp.report.ReportNode()
-        supported = pp.loadflow.check_loadflow_parameters(
-            candidate, provider=provider, report_node=report_node
+        return check_lf_params(
+            self.lf_params if params is None else params,
+            self.lf_provider if provider is None else provider,
+            dc=dc,
         )
-        messages = report_messages(report_node)
-        if not supported:
-            raise UnsupportedLoadflowParametersError(provider, messages)
-        return messages
 
     def get_network(self, network_id: str) -> Network | None:
         """Thread-safe retrieval of a network by id."""
