@@ -29,8 +29,8 @@ Keying on the enum name rather than the getter name gives us three things:
 
 The getter a plain ``method()`` call dispatches to is *observed at runtime*, not
 parsed from source: a getter may route to different ElementType values
-depending on its own defaults (``get_operational_limits`` ->
-``SELECTED_OPERATIONAL_LIMITS`` unless ``show_inactive_sets=True``), so only
+depending on its own defaults (``get_loading_limits`` ->
+``SELECTED_LOADING_LIMITS`` unless ``show_inactive_sets=True``), so only
 calling it with defaults reveals which enum a bare call resolves to.
 
 Consumers that only accept a subset should derive their allow-list from this

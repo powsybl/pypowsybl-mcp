@@ -15,8 +15,8 @@ from pypowsybl_mcp.utils.element_data_filter import (
 )
 
 
-def _operational_limits():
-    # Same shape as Network.get_operational_limits(): a permanent CURRENT limit
+def _loading_limits():
+    # Same shape as Network.get_loading_limits(): a permanent CURRENT limit
     # (acceptable_duration = -1) and two temporary limits (60 s, 600 s) on line_1.
     return pd.DataFrame(
         {
@@ -118,7 +118,7 @@ def test_unknown_metric_lists_available_columns():
 def test_attach_current_limits_permanent_ignores_temporary():
     df = pd.DataFrame({"i1": [80.0, 150.0]}, index=["line_1", "line_2"])
 
-    out = attach_current_limits(df, _operational_limits())
+    out = attach_current_limits(df, _loading_limits())
 
     # The temporary limits (110/120) are ignored, only the permanent one (100) stays.
     assert out.loc["line_1", "current_limit1"] == pytest.approx(100.0)
@@ -135,7 +135,7 @@ def test_attach_current_limits_without_limits_returns_input():
 def test_attach_current_limits_temporary_prefers_longest_duration():
     df = pd.DataFrame({"i1": [80.0, 150.0]}, index=["line_1", "line_2"])
 
-    out = attach_current_limits(df, _operational_limits(), limit_kind="temporary")
+    out = attach_current_limits(df, _loading_limits(), limit_kind="temporary")
 
     # line_1 keeps the longest-duration temporary limit (600 s, 120 A) over the
     # shorter 60 s one (110 A); line_2 has no temporary limit so it falls back
@@ -144,12 +144,12 @@ def test_attach_current_limits_temporary_prefers_longest_duration():
     assert out.loc["line_2", "current_limit1"] == pytest.approx(200.0)
 
 
-def test_loading_percent_uses_current_limit1_from_operational_limits():
+def test_loading_percent_uses_current_limit1_from_loading_limits():
     df = attach_current_limits(
         pd.DataFrame(
             {"i1": [100.0, 150.0], "i2": [-100.0, -150.0]}, index=["line_1", "line_2"]
         ),
-        _operational_limits(),
+        _loading_limits(),
     )
 
     out = apply_element_filter(
@@ -177,7 +177,7 @@ def test_max_abs_returns_nan_when_no_matching_columns():
 def test_attach_current_limits_noop_when_current_limit1_already_present():
     df = pd.DataFrame({"i1": [80.0], "current_limit1": [999.0]}, index=["line_1"])
 
-    out = attach_current_limits(df, _operational_limits())
+    out = attach_current_limits(df, _loading_limits())
 
     # Existing current_limit1 column short-circuits the merge entirely.
     assert out is df

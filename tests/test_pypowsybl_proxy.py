@@ -4,13 +4,20 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
-from unittest.mock import Mock
+import warnings
+from unittest.mock import Mock, patch
 
 import pandas as pd
 import pypowsybl as pp
 import pytest
 
-from pypowsybl_mcp.proxy import PyPowsyblMCPServerProxy
+from pypowsybl_mcp.proxy import (
+    LoadflowConfigError,
+    PyPowsyblMCPServerProxy,
+    UnsupportedLoadflowParametersError,
+    load_lf_config,
+    validate_lf_config,
+)
 
 
 class TestPyPowsyblMCPServerProxyInit:
@@ -49,6 +56,149 @@ class TestPyPowsyblMCPServerProxyInit:
         proxy = PyPowsyblMCPServerProxy()
 
         assert proxy.lf_provider == "DynaFlow"
+
+
+class TestLoadflowConfig:
+    """Test reading and validating LF_default_parameters.toml."""
+
+    @pytest.fixture
+    def write_config(self, tmp_path):
+        def write(body: str):
+            path = tmp_path / "LF_default_parameters.toml"
+            path.write_text(body)
+            return path
+
+        return write
+
+    def test_shipped_config_is_valid(self):
+        validate_lf_config()
+
+    def test_load_lf_config_converts_names(self, write_config):
+        path = write_config(
+            'voltage_init_mode = "DC_VALUES"\n'
+            'balance_type = "PROPORTIONAL_TO_LOAD"\n'
+            "distributed_slack = false\n"
+            'provider = "DynaFlow"\n'
+        )
+
+        provider, params = load_lf_config(path)
+
+        assert provider == "DynaFlow"
+        assert params.voltage_init_mode == pp.loadflow.VoltageInitMode.DC_VALUES
+        assert params.balance_type == pp.loadflow.BalanceType.PROPORTIONAL_TO_LOAD
+        assert params.distributed_slack is False
+
+    def test_load_lf_config_defaults(self, write_config):
+        provider, params = load_lf_config(write_config(""))
+
+        assert provider == "OpenLoadFlow"
+        assert params.voltage_init_mode == pp.loadflow.VoltageInitMode.UNIFORM_VALUES
+
+    def test_load_lf_config_converts_component_mode(self, write_config):
+        # The name used to reach pypowsybl as a string, which it can only
+        # reject when converting the parameters for a run.
+        path = write_config('component_mode = "ALL_CONNECTED"\n')
+
+        _, params = load_lf_config(path)
+
+        assert params.component_mode == pp.loadflow.ComponentMode.ALL_CONNECTED
+        validate_lf_config(path)
+
+    @pytest.mark.parametrize(
+        "name, expected",
+        [
+            ("MAIN", pp.loadflow.ComponentMode.MAIN_CONNECTED),
+            ("ALL", pp.loadflow.ComponentMode.ALL_CONNECTED),
+        ],
+    )
+    def test_load_lf_config_converts_connected_component_mode(
+        self, write_config, name, expected
+    ):
+        # "MAIN" used to become ALL_CONNECTED: pypowsybl compared the string
+        # with ConnectedComponentMode.MAIN and fell back to ALL_CONNECTED.
+        path = write_config(f'connected_component_mode = "{name}"\n')
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            _, params = load_lf_config(path)
+
+        assert params.component_mode == expected
+
+    def test_load_lf_config_component_mode_wins_over_deprecated_key(self, write_config):
+        # pypowsybl raises when both are given; component_mode wins instead,
+        # as with update_loadflow_params.
+        path = write_config(
+            'component_mode = "MAIN_SYNCHRONOUS"\nconnected_component_mode = "ALL"\n'
+        )
+
+        _, params = load_lf_config(path)
+
+        assert params.component_mode == pp.loadflow.ComponentMode.MAIN_SYNCHRONOUS
+
+    @pytest.mark.parametrize(
+        "body, expected",
+        [
+            ('voltage_init_mode = "NOPE"\n', "Accepted values: UNIFORM_VALUES"),
+            (
+                'balance_type = "PROPORTIONAL_TO_GENERATION_AND_LOAD"\n',
+                "Accepted values:",
+            ),
+            ('component_mode = "NOPE"\n', "Accepted values: MAIN_SYNCHRONOUS"),
+            ('connected_component_mode = "NOPE"\n', "Accepted values: MAIN, ALL"),
+            ("not_a_parameter = 1\n", "not_a_parameter"),
+        ],
+    )
+    def test_load_lf_config_rejects_bad_entries(self, write_config, body, expected):
+        path = write_config(body)
+
+        with pytest.raises(LoadflowConfigError) as exc_info:
+            load_lf_config(path)
+
+        assert str(path) in str(exc_info.value)
+        assert expected in str(exc_info.value)
+
+    def test_proxy_no_longer_stores_none_for_a_bad_name(
+        self, write_config, monkeypatch
+    ):
+        # A bad name used to become None in the session's parameters, which
+        # broke every load flow of that session.
+        path = write_config('voltage_init_mode = "NOPE"\n')
+        monkeypatch.setattr("pypowsybl_mcp.proxy.LF_DEFAULT_PARAMETERS_PATH", path)
+
+        with pytest.raises(LoadflowConfigError):
+            PyPowsyblMCPServerProxy()
+
+    def test_validate_lf_config_rejects_unknown_provider(self, write_config):
+        path = write_config('provider = "Nope"\n')
+
+        with pytest.raises(LoadflowConfigError, match="unknown provider 'Nope'"):
+            validate_lf_config(path)
+
+    def test_validate_lf_config_rejects_a_badly_typed_value(self, write_config):
+        path = write_config('distributed_slack = "yes"\n')
+
+        with pytest.raises(LoadflowConfigError, match=str(path)):
+            validate_lf_config(path)
+
+    def test_validate_lf_config_rejects_parameters_the_provider_refuses(
+        self, write_config
+    ):
+        path = write_config("")
+
+        with (
+            patch.object(pp.loadflow, "check_loadflow_parameters", return_value=False),
+            pytest.raises(LoadflowConfigError, match="not supported by provider"),
+        ):
+            validate_lf_config(path)
+
+    def test_validate_lf_config_logs_provider_warnings(self, write_config):
+        path = write_config('provider = "DynaFlow"\n')
+
+        with patch("pypowsybl_mcp.proxy.logger") as mock_logger:
+            validate_lf_config(path)
+
+        logged = [c.args[0] for c in mock_logger.warning.call_args_list]
+        assert any("WriteSlackBus" in m and str(path) in m for m in logged)
 
 
 class TestGetNetworkSummary:
@@ -268,6 +418,116 @@ class TestUpdateLfParams:
         from pypowsybl_mcp import COMPONENT_MODES
 
         assert proxy.lf_params.component_mode == COMPONENT_MODES["ALL_CONNECTED"]
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "voltage_init_mode",
+            "balance_type",
+            "component_mode",
+            "connected_component_mode",
+        ],
+    )
+    def test_update_lf_params_rejects_unknown_enum_name(self, proxy, key):
+        # An unknown name used to be stored as None, which pypowsybl cannot
+        # convert, so every later load flow of the session failed.
+        before = proxy.lf_params.to_json()
+
+        with pytest.raises(ValueError, match="Accepted values"):
+            proxy.update_lf_params(**{key: "NOPE"})
+
+        assert proxy.lf_params.to_json() == before
+
+    def test_update_lf_params_returns_no_warning_when_supported(self, proxy):
+        assert proxy.update_lf_params(distributed_slack=False) == []
+        assert proxy.lf_params.distributed_slack is False
+
+    def test_update_lf_params_keeps_params_on_invalid_value(self, proxy):
+        with pytest.raises(pp.PyPowsyblError):
+            proxy.update_lf_params(countries_to_balance=["XX"])
+
+        assert proxy.lf_params.countries_to_balance == []
+
+    def test_update_lf_params_returns_provider_warnings(self, proxy):
+        proxy.lf_provider = "DynaFlow"
+
+        warnings = proxy.update_lf_params(twt_split_shunt_admittance=True)
+
+        assert proxy.lf_params.twt_split_shunt_admittance is True
+        assert any("TwtSplitShuntAdmittance" in w for w in warnings)
+        assert all(w.startswith("WARN: ") for w in warnings)
+
+    def test_update_lf_params_keeps_params_when_provider_rejects_them(self, proxy):
+        with (
+            patch.object(pp.loadflow, "check_loadflow_parameters", return_value=False),
+            pytest.raises(UnsupportedLoadflowParametersError) as exc_info,
+        ):
+            proxy.update_lf_params(use_reactive_limits=False)
+
+        assert exc_info.value.provider == "OpenLoadFlow"
+        assert proxy.lf_params.use_reactive_limits is True
+
+
+class TestCheckLfParams:
+    """Test the provider check shared by the load flow tools."""
+
+    @pytest.fixture
+    def proxy(self):
+        return PyPowsyblMCPServerProxy()
+
+    def test_check_lf_params_rejects_a_dc_run_the_provider_cannot_do(self, proxy):
+        proxy.lf_provider = "DynaFlow"
+
+        with pytest.raises(UnsupportedLoadflowParametersError) as exc_info:
+            proxy.check_lf_params(dc=True)
+
+        assert exc_info.value.provider == "DynaFlow"
+        assert any(
+            m.startswith("ERROR: ") and "DC power flow" in m
+            for m in exc_info.value.messages
+        )
+
+    def test_check_lf_params_ignores_the_stored_dc_flag(self, proxy):
+        # run_ac() forces dc to false whatever the parameters say, so an AC
+        # check must not fail because of the stored flag.
+        proxy.lf_provider = "DynaFlow"
+        proxy.lf_params.dc = True
+
+        warnings = proxy.check_lf_params()
+
+        assert all(w.startswith("WARN: ") for w in warnings)
+        assert proxy.lf_params.dc is True
+
+    def test_check_lf_params_uses_the_given_params_and_provider(self, proxy):
+        params = pp.loadflow.Parameters(twt_split_shunt_admittance=True)
+
+        assert proxy.check_lf_params(params=params) == []
+        assert any(
+            "TwtSplitShuntAdmittance" in w
+            for w in proxy.check_lf_params(params=params, provider="DynaFlow")
+        )
+        assert proxy.lf_provider == "OpenLoadFlow"
+
+    def test_set_lf_provider_returns_the_new_provider_warnings(self, proxy):
+        warnings = proxy.set_lf_provider("DynaFlow")
+
+        assert proxy.lf_provider == "DynaFlow"
+        assert any("WriteSlackBus" in w for w in warnings)
+
+    def test_set_lf_provider_keeps_provider_when_rejected(self, proxy):
+        with (
+            patch.object(pp.loadflow, "check_loadflow_parameters", return_value=False),
+            pytest.raises(UnsupportedLoadflowParametersError),
+        ):
+            proxy.set_lf_provider("DynaFlow")
+
+        assert proxy.lf_provider == "OpenLoadFlow"
+
+    def test_set_lf_provider_keeps_provider_when_unknown(self, proxy):
+        with pytest.raises(pp.PyPowsyblError):
+            proxy.set_lf_provider("Nope")
+
+        assert proxy.lf_provider == "OpenLoadFlow"
 
 
 class TestNetworkAccessors:

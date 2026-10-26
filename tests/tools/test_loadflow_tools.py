@@ -12,6 +12,7 @@ import pypowsybl as pp
 import pytest
 from cachetools import TTLCache
 
+from pypowsybl_mcp.proxy import UnsupportedLoadflowParametersError
 from pypowsybl_mcp.tools.loadflow_tools import LoadflowTools, register_loadflow_tools
 
 
@@ -201,15 +202,51 @@ async def test_get_loadflow_provider_info(lf_tools, mock_ctx):
 async def test_set_loadflow_provider_valid(lf_tools, mock_ctx):
     with patch(
         "pypowsybl_mcp.tools.loadflow_tools.pp.loadflow.get_provider_names",
-        return_value=["OpenLoadFlow", "DynaFlow", "Hades2"],
+        return_value=["OpenLoadFlow", "DynaFlow"],
     ):
-        out = await lf_tools.set_loadflow_provider(provider="Hades2", ctx=mock_ctx)
+        out = await lf_tools.set_loadflow_provider(provider="DynaFlow", ctx=mock_ctx)
         assert '"success": true' in out
         assert '"previous_provider": "OpenLoadFlow"' in out
-        assert '"new_provider": "Hades2"' in out
+        assert '"new_provider": "DynaFlow"' in out
+        # DynaFlow ignores or replaces some of the default parameters
+        assert "WriteSlackBus" in out
+        assert '"provider_warnings"' in out
         # Verify it is stored in the proxy
         proxy = lf_tools.get_proxy("test-session")
-        assert proxy.lf_provider == "Hades2"
+        assert proxy.lf_provider == "DynaFlow"
+
+
+@pytest.mark.asyncio
+async def test_set_loadflow_provider_without_warnings(lf_tools, mock_ctx):
+    proxy = lf_tools.get_proxy("test-session")
+    proxy.lf_provider = "DynaFlow"
+
+    out = await lf_tools.set_loadflow_provider(provider="OpenLoadFlow", ctx=mock_ctx)
+
+    data = json.loads(out)
+    assert data["success"] is True
+    assert "provider_warnings" not in data
+
+
+@pytest.mark.asyncio
+async def test_set_loadflow_provider_rejected_by_provider(lf_tools, mock_ctx):
+    proxy = lf_tools.get_proxy("test-session")
+    proxy.set_lf_provider = MagicMock(
+        side_effect=UnsupportedLoadflowParametersError(
+            "DynaFlow", ["ERROR: Load flow parameter 'X' is not supported"]
+        )
+    )
+
+    out = await lf_tools.set_loadflow_provider(provider="DynaFlow", ctx=mock_ctx)
+
+    data = json.loads(out)
+    assert data["success"] is False
+    assert "keeps provider 'OpenLoadFlow'" in data["error"]
+    assert data["provider"] == "DynaFlow"
+    assert data["provider_messages"] == [
+        "ERROR: Load flow parameter 'X' is not supported"
+    ]
+    assert proxy.lf_provider == "OpenLoadFlow"
 
 
 @pytest.mark.asyncio
@@ -371,6 +408,71 @@ async def test_update_loadflow_params_exception(lf_tools, mock_ctx):
 
 
 @pytest.mark.asyncio
+async def test_update_loadflow_params_has_no_provider_warnings_by_default(
+    lf_tools, mock_ctx
+):
+    result = await lf_tools.update_loadflow_params(
+        distributed_slack=False, ctx=mock_ctx
+    )
+
+    data = json.loads(result)
+    assert data["success"] is True
+    assert "provider_warnings" not in data
+
+
+@pytest.mark.asyncio
+async def test_update_loadflow_params_reports_provider_warnings(lf_tools, mock_ctx):
+    proxy = lf_tools.get_proxy("test-session")
+    proxy.update_lf_params = MagicMock(
+        return_value=["WARN: Load flow parameter 'WriteSlackBus' is ignored"]
+    )
+
+    result = await lf_tools.update_loadflow_params(write_slack_bus=True, ctx=mock_ctx)
+
+    data = json.loads(result)
+    assert data["success"] is True
+    assert data["provider_warnings"] == [
+        "WARN: Load flow parameter 'WriteSlackBus' is ignored"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_loadflow_params_unsupported_by_provider(lf_tools, mock_ctx):
+    proxy = lf_tools.get_proxy("test-session")
+    proxy.update_lf_params = MagicMock(
+        side_effect=UnsupportedLoadflowParametersError(
+            "DynaFlow", ["ERROR: Load flow parameter 'DC power flow' is not supported"]
+        )
+    )
+
+    result = await lf_tools.update_loadflow_params(
+        use_reactive_limits=False, ctx=mock_ctx
+    )
+
+    data = json.loads(result)
+    assert data["success"] is False
+    assert "'DynaFlow'" in data["error"]
+    assert "previous parameters are kept" in data["error"]
+    assert data["provider"] == "DynaFlow"
+    assert data["provider_messages"] == [
+        "ERROR: Load flow parameter 'DC power flow' is not supported"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_loadflow_params_unknown_enum_name(lf_tools, mock_ctx):
+    result = await lf_tools.update_loadflow_params(
+        voltage_init_mode="NOPE", ctx=mock_ctx
+    )
+
+    data = json.loads(result)
+    assert data["success"] is False
+    assert "UNIFORM_VALUES" in data["error"]
+    proxy = lf_tools.get_proxy("test-session")
+    assert proxy.lf_params.voltage_init_mode.name == "UNIFORM_VALUES"
+
+
+@pytest.mark.asyncio
 async def test_run_loadflow_uses_current_network_id_when_none(lf_tools, mock_ctx):
     proxy = lf_tools.get_proxy("test-session")
     mock_net = MagicMock()
@@ -433,6 +535,72 @@ async def test_run_loadflow_dc_mode_with_bus_samples(lf_tools, mock_ctx):
     assert data["sample_bus_voltages"][0]["name"] == "B1"
     assert data["sample_bus_voltages"][0]["v_mag"] == pytest.approx(1.05)
     assert data["sample_bus_voltages"][0]["v_angle"] == pytest.approx(-2.5)
+
+
+@pytest.mark.asyncio
+async def test_run_loadflow_not_run_when_provider_rejects_parameters(
+    lf_tools, mock_ctx
+):
+    # DynaFlow cannot run a DC load flow: the check stops it before pypowsybl
+    # is asked to run anything.
+    proxy = lf_tools.get_proxy("test-session")
+    proxy.networks["net1"] = MagicMock()
+    proxy.current_network_id = "net1"
+    proxy.lf_provider = "DynaFlow"
+
+    with patch("pypowsybl_mcp.tools.loadflow_tools.pp.loadflow.run_dc") as mock_run:
+        result = await lf_tools.run_loadflow(network_id="net1", dc=True, ctx=mock_ctx)
+
+    mock_run.assert_not_called()
+    data = json.loads(result)
+    assert data["success"] is False
+    assert data["dc"] is True
+    assert "load flow was not run" in data["error"]
+    assert data["provider"] == "DynaFlow"
+    assert any("DC power flow" in m for m in data["provider_messages"])
+    assert "net1" not in proxy.loadflow_results
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["CONVERGED", "FAILED"])
+async def test_run_loadflow_reports_provider_warnings(lf_tools, mock_ctx, status):
+    proxy = lf_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_buses.return_value = pd.DataFrame(columns=["name", "v_mag", "v_angle"])
+    proxy.networks["net1"] = mock_net
+    proxy.current_network_id = "net1"
+    proxy.lf_provider = "DynaFlow"
+
+    with patch("pypowsybl_mcp.tools.loadflow_tools.pp.loadflow.run_ac") as mock_run:
+        mock_res = MagicMock()
+        mock_res.status.name = status
+        mock_res.connected_component_num = 0
+        mock_run.return_value = [mock_res]
+
+        result = await lf_tools.run_loadflow(network_id="net1", ctx=mock_ctx)
+
+    mock_run.assert_called_once()
+    data = json.loads(result)
+    assert data["success"] is (status == "CONVERGED")
+    assert any("WriteSlackBus" in w for w in data["provider_warnings"])
+
+
+@pytest.mark.asyncio
+async def test_run_loadflow_has_no_provider_warnings_by_default(lf_tools, mock_ctx):
+    proxy = lf_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_buses.return_value = pd.DataFrame(columns=["name", "v_mag", "v_angle"])
+    proxy.networks["net1"] = mock_net
+    proxy.current_network_id = "net1"
+
+    with patch("pypowsybl_mcp.tools.loadflow_tools.pp.loadflow.run_ac") as mock_run:
+        mock_res = MagicMock()
+        mock_res.status.name = "CONVERGED"
+        mock_run.return_value = [mock_res]
+
+        result = await lf_tools.run_loadflow(network_id="net1", ctx=mock_ctx)
+
+    assert "provider_warnings" not in json.loads(result)
 
 
 @pytest.mark.asyncio

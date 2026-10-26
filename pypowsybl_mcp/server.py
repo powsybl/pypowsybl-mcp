@@ -14,6 +14,7 @@ Uses MCPServer for simplified server implementation.
 import os
 from pathlib import Path
 
+from loguru import logger
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.prompts import Prompt
 from mcp.server.mcpserver.resources import FileResource
@@ -26,7 +27,11 @@ from pypowsybl_mcp.plugins import (
     discover_and_load_plugins,
     discover_and_load_resource_plugins,
 )
-from pypowsybl_mcp.proxy import PyPowsyblMCPServerProxy
+from pypowsybl_mcp.proxy import (
+    LoadflowConfigError,
+    PyPowsyblMCPServerProxy,
+    validate_lf_config,
+)
 from pypowsybl_mcp.tools.loadflow_tools import register_loadflow_tools
 from pypowsybl_mcp.tools.network_tools import register_network_tools
 from pypowsybl_mcp.tools.security_tools import register_security_tools
@@ -161,10 +166,22 @@ register_admin_routes(mcp, pypowsybl_proxies)
 instrument_tool_calls(mcp, SESSIONS)
 
 
-if __name__ == "__main__":
+def main():
+    """Check the configuration, register the tools and run the server."""
+    # Sessions read the default load flow configuration on their first tool
+    # call; refuse to start rather than let every session fail then.
+    try:
+        validate_lf_config()
+    except LoadflowConfigError as e:
+        logger.critical(f"Invalid load flow configuration: {e}")
+        raise SystemExit(1) from e
     register_tools(mcp)
     mcp.run(
         transport="streamable-http",
         host="0.0.0.0",
         port=int(os.getenv("MCP_PORT", DEFAULT_PORT)),
     )
+
+
+if __name__ == "__main__":
+    main()

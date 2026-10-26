@@ -4,6 +4,8 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
+import subprocess
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -140,3 +142,77 @@ def test_read_temp_resource_session_reattached_by_string_id():
     finally:
         pypowsybl_proxies.pop(generated_id, None)
         pypowsybl_proxies.pop(str(generated_id), None)
+
+
+@pytest.fixture
+def bad_lf_config(tmp_path, monkeypatch):
+    path = tmp_path / "LF_default_parameters.toml"
+    path.write_text('voltage_init_mode = "NOPE"\n')
+    monkeypatch.setattr("pypowsybl_mcp.proxy.LF_DEFAULT_PARAMETERS_PATH", path)
+    return path
+
+
+def test_main_refuses_to_start_with_an_invalid_lf_config(bad_lf_config):
+    from pypowsybl_mcp.server import main
+
+    with (
+        patch("pypowsybl_mcp.server.logger") as mock_logger,
+        patch("pypowsybl_mcp.server.register_tools") as mock_register,
+        patch("pypowsybl_mcp.server.mcp") as mock_mcp,
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        main()
+
+    assert exc_info.value.code == 1
+    message = mock_logger.critical.call_args.args[0]
+    assert str(bad_lf_config) in message
+    assert "voltage_init_mode" in message
+    mock_register.assert_not_called()
+    mock_mcp.run.assert_not_called()
+
+
+def test_main_runs_the_server_with_a_valid_lf_config(monkeypatch):
+    from pypowsybl_mcp.server import main
+
+    monkeypatch.setenv("MCP_PORT", "8123")
+
+    with (
+        patch("pypowsybl_mcp.server.register_tools") as mock_register,
+        patch("pypowsybl_mcp.server.mcp") as mock_mcp,
+    ):
+        main()
+
+    mock_register.assert_called_once_with(mock_mcp)
+    mock_mcp.run.assert_called_once_with(
+        transport="streamable-http", host="0.0.0.0", port=8123
+    )
+
+
+def test_running_the_module_checks_the_lf_config(tmp_path):
+    # Runs the module as `python -m pypowsybl_mcp.server` does, to cover the
+    # __main__ block itself, with the configuration path redirected to a bad
+    # file. MCPServer.run exits at once with code 0, so a missing check fails
+    # the test instead of starting a server that never returns.
+    path = tmp_path / "LF_default_parameters.toml"
+    path.write_text('voltage_init_mode = "NOPE"\n')
+    script = (
+        "import runpy, sys\n"
+        "from pathlib import Path\n"
+        "from mcp.server.mcpserver import MCPServer\n"
+        "import pypowsybl_mcp.proxy as proxy\n"
+        "MCPServer.run = lambda self, **kwargs: sys.exit(0)\n"
+        "proxy.LF_DEFAULT_PARAMETERS_PATH = Path(sys.argv[1])\n"
+        "runpy.run_module('pypowsybl_mcp.server', run_name='__main__')\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(path)],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=120,
+    )
+
+    assert result.returncode == 1
+    assert "Invalid load flow configuration" in result.stderr
+    assert str(path) in result.stderr

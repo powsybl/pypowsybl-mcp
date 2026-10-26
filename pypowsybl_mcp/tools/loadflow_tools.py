@@ -13,6 +13,7 @@ from loguru import logger
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 
+from pypowsybl_mcp.proxy import UnsupportedLoadflowParametersError
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.utils.user_session_management import get_session_id
 
@@ -121,6 +122,13 @@ class LoadflowTools(PyPowsyblTool):
 
         This setting is per-session and does not affect other users or sessions.
 
+        The new provider first checks the session's load flow parameters. If it
+        rejects them, the session keeps its current provider and "success" is
+        false; adjust the parameters with update_loadflow_params, then switch.
+        If it accepts them but will ignore a parameter or replace a value
+        (DynaFlow does this for several settings), its warnings come back in
+        "provider_warnings".
+
         IMPORTANT: After calling this tool, always call get_loadflow_provider_info
         to verify that the provider has been correctly set for the current session.
 
@@ -138,7 +146,11 @@ class LoadflowTools(PyPowsyblTool):
                 - success (bool): Whether the provider was changed successfully
                 - previous_provider (str): The provider that was configured before
                 - new_provider (str): The newly configured provider
+                - provider_warnings (list[str]): Parameters the new provider will
+                  ignore or replace (only when there are some)
                 - available_providers (list[str]): List of valid provider names (if failed)
+                - provider_messages (list[str]): Why the provider rejected the
+                  session's parameters (if failed for that reason)
                 - error (str): Error message (if failed)
         """
         logger.debug(f"Setting loadflow provider to '{provider}'")
@@ -158,20 +170,34 @@ class LoadflowTools(PyPowsyblTool):
                         indent=2,
                     )
 
-            previous_provider = self.get_proxy(session_id).lf_provider
-            self.get_proxy(session_id).lf_provider = provider
+            proxy = self.get_proxy(session_id)
+            previous_provider = proxy.lf_provider
+            warnings = proxy.set_lf_provider(provider)
 
             result = {
                 "success": True,
                 "previous_provider": previous_provider,
                 "new_provider": provider,
             }
+            if warnings:
+                result["provider_warnings"] = warnings
 
             logger.info(
                 f"Loadflow provider changed from '{previous_provider}' to '{provider}'"
             )
             return json.dumps(result, indent=2)
 
+        except UnsupportedLoadflowParametersError as e:
+            logger.warning(f"{e}: {e.messages}")
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": f"{e}; the session keeps provider '{previous_provider}'",
+                    "provider": e.provider,
+                    "provider_messages": e.messages,
+                },
+                indent=2,
+            )
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.exception(f"Failed to set loadflow provider: {e}")
             return json.dumps({"success": False, "error": str(e)}, indent=2)
@@ -237,6 +263,12 @@ class LoadflowTools(PyPowsyblTool):
         This tool allows modifying parameters used for load flow calculations.
         The updated parameters will be used in subsequent run_loadflow calls.
 
+        The session's load flow provider checks the new parameters before they
+        are applied. If it rejects them, or a value is invalid, nothing changes
+        and "success" is false. If it accepts them but will ignore a parameter
+        or replace a value (DynaFlow does this for several settings), its
+        warnings come back in "provider_warnings".
+
         Args:
             voltage_init_mode (str, optional): The resolution starting point.
                 Possible values: "UNIFORM_VALUES", "PREVIOUS_VALUES", "DC_VALUES".
@@ -249,8 +281,10 @@ class LoadflowTools(PyPowsyblTool):
             write_slack_bus (bool, optional): Write selected slack bus to the network.
             distributed_slack (bool, optional): Distribute active power slack on the network.
             balance_type: str, optional): How to distribute active power slack.
-                Possible values: "PROPORTIONAL_TO_LOAD", "PROPORTIONAL_TO_GENERATION_P",
-                "PROPORTIONAL_TO_GENERATION_P_MAX", etc.
+                Possible values: "PROPORTIONAL_TO_GENERATION_P_MAX", "PROPORTIONAL_TO_GENERATION_P",
+                "PROPORTIONAL_TO_GENERATION_PARTICIPATION_FACTOR",
+                "PROPORTIONAL_TO_GENERATION_REMAINING_MARGIN", "PROPORTIONAL_TO_LOAD",
+                "PROPORTIONAL_TO_CONFORM_LOAD".
             dc_use_transformer_ratio (bool, optional): In DC mode, take into account transformer ratio.
             countries_to_balance (list[str], optional): List of countries participating to slack distribution.
                 Used only if distributed_slack is True.
@@ -286,15 +320,25 @@ class LoadflowTools(PyPowsyblTool):
             }
             filtered_params = {k: v for k, v in params.items() if v is not None}
 
-            self.get_proxy(session_id).update_lf_params(**filtered_params)
+            proxy = self.get_proxy(session_id)
+            warnings = proxy.update_lf_params(**filtered_params)
 
+            result = {
+                "success": True,
+                "message": "Load flow parameters updated",
+                "current_params": json.loads(proxy.lf_params.to_json()),
+            }
+            if warnings:
+                result["provider_warnings"] = warnings
+            return json.dumps(result, indent=2)
+        except UnsupportedLoadflowParametersError as e:
+            logger.warning(f"{e}: {e.messages}")
             return json.dumps(
                 {
-                    "success": True,
-                    "message": "Load flow parameters updated",
-                    "current_params": json.loads(
-                        self.get_proxy(session_id).lf_params.to_json()
-                    ),
+                    "success": False,
+                    "error": f"{e}; the previous parameters are kept",
+                    "provider": e.provider,
+                    "provider_messages": e.messages,
                 },
                 indent=2,
             )
@@ -317,6 +361,11 @@ class LoadflowTools(PyPowsyblTool):
         Both AC (nonlinear) and DC (linear approximation) loadflows are supported.
         NB. This function uses the current active loadflow parameters.
 
+        The session's provider checks those parameters for the requested run (AC
+        or DC) first. If it rejects them, the load flow is not run and "success"
+        is false. If it accepts them but will ignore a parameter or replace a
+        value, its warnings come back in "provider_warnings".
+
         IMPORTANT: Before running a loadflow, always call get_loadflow_provider_info to
         verify that the current session provider is the one you intend to use. If it is
         not, use set_loadflow_provider to change it, then call get_loadflow_provider_info
@@ -337,13 +386,18 @@ class LoadflowTools(PyPowsyblTool):
                 - network_id (str): Network identifier
                 - converged (bool): Convergence status
                 - dc (bool): Whether DC loadflow was run
-                - voltage_init_mode (str): Initialization mode used (for AC)
-                - distributed_slack (bool): Slack distribution setting
-                - balance_type (str): Power balance method
                 - components (int): Number of components analyzed
-                - total_buses (int): Total number of buses
-                - sample_bus_voltages (list): First 10 bus voltages with details
-                - failed_components (list): Components that failed (if any)
+                - total_buses (int): Total number of buses (if converged)
+                - sample_bus_voltages (list): The first 10 buses, each with its
+                  name, v_mag (kV) and v_angle (degrees) (if converged)
+                - remaining_buses (int): Number of buses left out of the sample
+                  (if converged)
+                - failed_components (list): Components that did not converge, each
+                  with its component_num and status (if not converged)
+                - provider_warnings (list[str]): Parameters the provider ignored or
+                  replaced (only when there are some)
+                - provider_messages (list[str]): Why the provider rejected the
+                  parameters (if the load flow was not run for that reason)
                 - error (str): Error message (if failed)
 
         Example Output:
@@ -352,15 +406,14 @@ class LoadflowTools(PyPowsyblTool):
               "network_id": "ieee_14",
               "converged": true,
               "dc": false,
-              "voltage_init_mode": "UNIFORM_VALUES",
-              "distributed_slack": true,
-              "balance_type": "PROPORTIONAL_TO_GENERATION_P_MAX",
               "components": 1,
               "total_buses": 14,
               "sample_bus_voltages": [
-                {"name": "Bus 1", "v_mag": 1.060, "v_angle": 0.00},
-                {"name": "Bus 2", "v_mag": 1.045, "v_angle": -4.98}
-              ]
+                {"name": "", "v_mag": 143.1, "v_angle": 0.0},
+                {"name": "", "v_mag": 141.075, "v_angle": -4.98},
+                ...
+              ],
+              "remaining_buses": 4
             }
         """
         try:
@@ -378,6 +431,23 @@ class LoadflowTools(PyPowsyblTool):
 
             # Use the session's active provider
             provider = proxy.lf_provider
+
+            # Let the provider check the parameters for this kind of run
+            try:
+                warnings = proxy.check_lf_params(dc=dc)
+            except UnsupportedLoadflowParametersError as e:
+                logger.warning(f"{e}: {e.messages}")
+                return json.dumps(
+                    {
+                        "success": False,
+                        "network_id": network_id,
+                        "dc": dc,
+                        "error": f"{e}; the load flow was not run",
+                        "provider": e.provider,
+                        "provider_messages": e.messages,
+                    },
+                    indent=2,
+                )
 
             # Run loadflow
             if dc:
@@ -426,6 +496,8 @@ class LoadflowTools(PyPowsyblTool):
                     "sample_bus_voltages": sample_buses,
                     "remaining_buses": max(0, len(buses) - 10),
                 }
+                if warnings:
+                    result["provider_warnings"] = warnings
                 logger.info(f"Load flow completed for network '{network_id}'")
                 return json.dumps(result, indent=2)
             else:
@@ -447,6 +519,8 @@ class LoadflowTools(PyPowsyblTool):
                     "components": len(results),
                     "failed_components": failed_components,
                 }
+                if warnings:
+                    result["provider_warnings"] = warnings
                 logger.error(f"Load flow failed for network '{network_id}'")
                 return json.dumps(result, indent=2)
 

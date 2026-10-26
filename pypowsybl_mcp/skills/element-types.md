@@ -30,8 +30,8 @@ There are no aliases, no abbreviations and no plurals: `transformers`,
 values. The accepted names follow the installed pypowsybl version, so anything
 the network object can return as a table is available — including `branch`,
 `injection`, `identifiable`, `terminal`, `area`, `battery`, `tie_line`,
-`boundary_line`, `selected_operational_limits`, `ratio_tap_changer`,
-`phase_tap_changer` and the `dc_*` tables.
+`boundary_line`, `selected_loading_limits`, `voltage_angle_limits`,
+`ratio_tap_changer`, `phase_tap_changer` and the `dc_*` tables.
 
 Use `get_online_resource(class_object='network')` (see the `remote-resource`
 skill) to list the getters of the pypowsybl version actually running, and hence
@@ -49,6 +49,7 @@ Grid operators rarely speak in enum names. Translate before calling:
 | SVC, static var compensator, reactive compensator | `static_var_compensator`                            |
 | shunt, capacitor bank, reactor             | `shunt_compensator`                                        |
 | dangling line                              | `boundary_line` (renamed upstream in pypowsybl 1.15)       |
+| operational limits, current limits, Imax   | `selected_loading_limits` (renamed upstream in pypowsybl 1.16) |
 | busbar, bar                                | `busbar_section`                                           |
 | node, bus, electrical node                 | `bus` (topology view: `bus_from_bus_breaker_view`)         |
 | HVDC link, DC link                         | `hvdc_line`                                                |
