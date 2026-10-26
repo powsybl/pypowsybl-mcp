@@ -47,6 +47,36 @@ def _enum_from_name(key: str, name: str, mapping: dict[str, Any]) -> Any:
     return mapping[name]
 
 
+def _normalize_lf_enums(params: dict[str, Any]) -> None:
+    """Convert enum-valued load flow parameters given by name, in place.
+
+    An unknown name raises ValueError rather than being stored as None, which
+    pypowsybl cannot convert and which would break every later load flow.
+
+    connected_component_mode is deprecated in pypowsybl in favor of
+    component_mode. It is converted here instead of being passed to
+    pp.loadflow.Parameters, so pypowsybl's DeprecationWarning is not triggered
+    and an explicitly provided component_mode is not overridden.
+    """
+    for key, mapping in (
+        ("voltage_init_mode", VOLTAGE_MODES),
+        ("balance_type", BALANCE_TYPES),
+        ("component_mode", COMPONENT_MODES),
+        ("connected_component_mode", CONNECTED_COMPONENT_MODES),
+    ):
+        if key in params and isinstance(params[key], str):
+            params[key] = _enum_from_name(key, params[key], mapping)
+
+    if "connected_component_mode" in params:
+        connected_component_mode = params.pop("connected_component_mode")
+        if connected_component_mode is not None and "component_mode" not in params:
+            params["component_mode"] = (
+                pp.loadflow.ComponentMode.MAIN_CONNECTED
+                if connected_component_mode == pp.loadflow.ConnectedComponentMode.MAIN
+                else pp.loadflow.ComponentMode.ALL_CONNECTED
+            )
+
+
 class UnsupportedLoadflowParametersError(ValueError):
     """The session's load flow provider rejected a set of parameters."""
 
@@ -93,28 +123,24 @@ def check_lf_params(
 def load_lf_config(path: Path | None = None) -> tuple[str, pp.loadflow.Parameters]:
     """Read the default load flow configuration file.
 
-    Returns the configured provider and the load flow parameters. Raises
-    LoadflowConfigError, naming the file, for an unknown voltage_init_mode or
-    balance_type name and for a key that pp.loadflow.Parameters does not take.
+    Enum-valued parameters (voltage_init_mode, balance_type, component_mode
+    and the deprecated connected_component_mode) are given by name, as with
+    update_loadflow_params. Returns the configured provider and the load flow
+    parameters. Raises LoadflowConfigError, naming the file, for an unknown
+    enum name, for a key that pp.loadflow.Parameters does not take, and for a
+    combination pypowsybl rejects.
     """
     path = path or LF_DEFAULT_PARAMETERS_PATH
     with path.open("rb") as f:
         loadflow_config = tomllib.load(f)
     # provider is not a parameter of pp.loadflow.Parameters
     provider = loadflow_config.pop("provider", "OpenLoadFlow")
+    loadflow_config.setdefault("voltage_init_mode", "UNIFORM_VALUES")
+    loadflow_config.setdefault("balance_type", "PROPORTIONAL_TO_GENERATION_P_MAX")
     try:
-        loadflow_config["voltage_init_mode"] = _enum_from_name(
-            "voltage_init_mode",
-            loadflow_config.get("voltage_init_mode", "UNIFORM_VALUES"),
-            VOLTAGE_MODES,
-        )
-        loadflow_config["balance_type"] = _enum_from_name(
-            "balance_type",
-            loadflow_config.get("balance_type", "PROPORTIONAL_TO_GENERATION_P_MAX"),
-            BALANCE_TYPES,
-        )
+        _normalize_lf_enums(loadflow_config)
         params = pp.loadflow.Parameters(**loadflow_config)
-    except (ValueError, TypeError) as e:
+    except (ValueError, TypeError, pp.PyPowsyblError) as e:
         raise LoadflowConfigError(f"{path}: {e}") from e
     return provider, params
 
@@ -188,31 +214,7 @@ class PyPowsyblMCPServerProxy:
 
         Returns the provider's warnings about the accepted parameters.
         """
-        # Convert enum-valued parameters given by name. An unknown name is
-        # rejected here rather than stored as None, which pypowsybl cannot
-        # convert and which would break every later load flow of the session.
-        for key, mapping in (
-            ("voltage_init_mode", VOLTAGE_MODES),
-            ("balance_type", BALANCE_TYPES),
-            ("component_mode", COMPONENT_MODES),
-            ("connected_component_mode", CONNECTED_COMPONENT_MODES),
-        ):
-            if key in params and isinstance(params[key], str):
-                params[key] = _enum_from_name(key, params[key], mapping)
-
-        # connected_component_mode is deprecated in pypowsybl in favor of
-        # component_mode. Convert it ourselves instead of setting it on
-        # lf_params, so we don't trigger pypowsybl's DeprecationWarning and
-        # don't override an explicitly provided component_mode.
-        if "connected_component_mode" in params:
-            connected_component_mode = params.pop("connected_component_mode")
-            if connected_component_mode is not None and "component_mode" not in params:
-                params["component_mode"] = (
-                    pp.loadflow.ComponentMode.MAIN_CONNECTED
-                    if connected_component_mode
-                    == pp.loadflow.ConnectedComponentMode.MAIN
-                    else pp.loadflow.ComponentMode.ALL_CONNECTED
-                )
+        _normalize_lf_enums(params)
 
         candidate = copy.deepcopy(self.lf_params)
         for key, value in params.items():

@@ -44,8 +44,13 @@ These are the default load flow parameters loaded at server startup. They can be
 `update_loadflow_params` and reset with `restore_default_loadflow_param`.
 
 The server checks this file before it starts and refuses to start, naming the file and the faulty entry, if it holds
-an unknown `voltage_init_mode` or `balance_type`, a key that is not a load flow parameter, a value of the wrong type,
-a provider that is not installed, or parameters that provider rejects. Provider warnings (see below) are only logged.
+an unknown `voltage_init_mode`, `balance_type`, `component_mode` or `connected_component_mode`, a key that is not a
+load flow parameter, a value of the wrong type, a provider that is not installed, or parameters that provider rejects.
+Provider warnings (see below) are only logged.
+
+Any other `pypowsybl.loadflow.Parameters` attribute can be set in the file. Enum-valued parameters are given by name,
+as with `update_loadflow_params`: `component_mode` takes `MAIN_SYNCHRONOUS`, `MAIN_CONNECTED` or `ALL_CONNECTED`; the
+deprecated `connected_component_mode` (`MAIN` or `ALL`) is converted to `component_mode`, which wins if both are set.
 
 | Parameter           | Default                            | Description                                                                                                                                                                                                                                                                     |
 |---------------------|------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|

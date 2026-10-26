@@ -4,6 +4,7 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
+import warnings
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -93,6 +94,47 @@ class TestLoadflowConfig:
         assert provider == "OpenLoadFlow"
         assert params.voltage_init_mode == pp.loadflow.VoltageInitMode.UNIFORM_VALUES
 
+    def test_load_lf_config_converts_component_mode(self, write_config):
+        # The name used to reach pypowsybl as a string, which it can only
+        # reject when converting the parameters for a run.
+        path = write_config('component_mode = "ALL_CONNECTED"\n')
+
+        _, params = load_lf_config(path)
+
+        assert params.component_mode == pp.loadflow.ComponentMode.ALL_CONNECTED
+        validate_lf_config(path)
+
+    @pytest.mark.parametrize(
+        "name, expected",
+        [
+            ("MAIN", pp.loadflow.ComponentMode.MAIN_CONNECTED),
+            ("ALL", pp.loadflow.ComponentMode.ALL_CONNECTED),
+        ],
+    )
+    def test_load_lf_config_converts_connected_component_mode(
+        self, write_config, name, expected
+    ):
+        # "MAIN" used to become ALL_CONNECTED: pypowsybl compared the string
+        # with ConnectedComponentMode.MAIN and fell back to ALL_CONNECTED.
+        path = write_config(f'connected_component_mode = "{name}"\n')
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            _, params = load_lf_config(path)
+
+        assert params.component_mode == expected
+
+    def test_load_lf_config_component_mode_wins_over_deprecated_key(self, write_config):
+        # pypowsybl raises when both are given; component_mode wins instead,
+        # as with update_loadflow_params.
+        path = write_config(
+            'component_mode = "MAIN_SYNCHRONOUS"\nconnected_component_mode = "ALL"\n'
+        )
+
+        _, params = load_lf_config(path)
+
+        assert params.component_mode == pp.loadflow.ComponentMode.MAIN_SYNCHRONOUS
+
     @pytest.mark.parametrize(
         "body, expected",
         [
@@ -101,6 +143,8 @@ class TestLoadflowConfig:
                 'balance_type = "PROPORTIONAL_TO_GENERATION_AND_LOAD"\n',
                 "Accepted values:",
             ),
+            ('component_mode = "NOPE"\n', "Accepted values: MAIN_SYNCHRONOUS"),
+            ('connected_component_mode = "NOPE"\n', "Accepted values: MAIN, ALL"),
             ("not_a_parameter = 1\n", "not_a_parameter"),
         ],
     )
