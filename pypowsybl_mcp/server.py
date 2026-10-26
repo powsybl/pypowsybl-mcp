@@ -166,7 +166,8 @@ register_admin_routes(mcp, pypowsybl_proxies)
 instrument_tool_calls(mcp, SESSIONS)
 
 
-if __name__ == "__main__":
+def main():
+    """Check the configuration, register the tools and run the server."""
     # Sessions read the default load flow configuration on their first tool
     # call; refuse to start rather than let every session fail then.
     try:
@@ -180,3 +181,7 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=int(os.getenv("MCP_PORT", DEFAULT_PORT)),
     )
+
+
+if __name__ == "__main__":
+    main()
