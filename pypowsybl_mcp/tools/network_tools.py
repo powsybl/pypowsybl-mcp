@@ -1752,7 +1752,9 @@ class NetworkTools(PyPowsyblTool):
                         # i_a / limit_a describe the dimensioning terminal — the
                         # side whose |i| / limit drives loading_percent — so they
                         # match the reported loading on an asymmetric transformer.
-                        i_a, limit_a = dimensioning_terminal(fields, kind)
+                        # element_t lets a one-sided transformer rating be rescaled
+                        # by the winding voltage ratio rather than borrowed as-is.
+                        i_a, limit_a = dimensioning_terminal(fields, kind, element_t)
                         name = fields.get("name") or ""
                         violations.append(
                             {

@@ -68,6 +68,12 @@ DERIVED_METRICS = ("loading_percent", "loading_percent_temporary", "p_abs", "q_a
 # Lines and transformers have two terminals (side 1 and side 2).
 TWO_SIDED_TYPES = ("line", "hvdc_line", "two_windings_transformer")
 
+# Transformer windings do NOT share a current: they carry currents in inverse
+# ratio of their rated voltages, so a borrowed ampere rating must be rescaled by
+# the voltage ratio (see _resolve_effective_limits). Lines/tie-lines share a
+# current and are not listed here, keeping the direct shared-Imax borrow.
+_TRANSFORMER_TYPES = ("two_windings_transformer", "three_windings_transformer")
+
 
 def _max_abs(df, columns):
     """Return the highest absolute value among the given columns, for each row.
@@ -635,15 +641,45 @@ def _branch_terminals(df):
     return terminals
 
 
-def _resolve_effective_limits(limit_by_side):
+def _transformer_rated_u(df, element_type, terminals):
+    """Per-side rated voltage Series for a transformer, else None.
+
+    Returned only for transformer types and only when every ``rated_u{side}``
+    column is present. Transformer windings do not share a current, so a borrowed
+    ampere rating must be rescaled by the voltage ratio; lines/tie-lines share a
+    current and return None, keeping the direct shared-Imax borrow. A 0 rated_u is
+    invalid and mapped to NaN so the rescaled borrow is skipped rather than
+    dividing by zero.
+    """
+    if element_type not in _TRANSFORMER_TYPES:
+        return None
+    cols = {side: f"rated_u{side}" for side in terminals}
+    if not all(col in df.columns for col in cols.values()):
+        return None
+    return {
+        side: df[col].astype(float).replace(0, float("nan"))
+        for side, col in cols.items()
+    }
+
+
+def _resolve_effective_limits(limit_by_side, rated_u_by_side=None):
     """Map the declared per-side limits onto every terminal, per row.
 
     The single place the "count the limits, map them onto the sides" rule lives:
-    a terminal uses its own rating; a terminal with none borrows the single
-    declared rating — a line's shared conductor Imax — resolved PER ROW, so a
-    branch whose own-side column is NaN on this row (the mixed-table case where
-    another branch defines that side's limit) still borrows one. One declared
-    limit => shared across sides (a line); one per side => per-side (a transformer).
+    a terminal uses its own rating; a terminal with none borrows a declared one,
+    resolved PER ROW, so a branch whose own-side column is NaN on this row (the
+    mixed-table case where another branch defines that side's limit) still borrows.
+
+    How the borrow works depends on the element. For a current-sharing element
+    (line, tie_line; ``rated_u_by_side`` is None) the borrow is DIRECT — both ends
+    carry the same current, so the single conductor Imax applies unchanged. For a
+    transformer (``rated_u_by_side`` given) the windings carry currents in inverse
+    ratio of their rated voltages, so the ampere ratings are NOT interchangeable:
+    what is shared is the apparent-power limit S = Ilim_k * rated_u_k, converted
+    back to a current on each borrowing side as Ilim_j = S / rated_u_j
+    (== Ilim_k * rated_u_k / rated_u_j). An HV-side rating thus no longer reports a
+    false overload on the LV winding.
+
     Returns ``{side: Series}``, or None when no side declares a rating. Both
     _loading_percent and dimensioning_terminal go through here, so they cannot
     disagree.
@@ -651,11 +687,30 @@ def _resolve_effective_limits(limit_by_side):
     declared = [series for series in limit_by_side.values() if series is not None]
     if not declared:
         return None
-    shared = declared[0]
-    for series in declared[1:]:
-        shared = shared.fillna(series)
+
+    if rated_u_by_side is None:
+        shared = declared[0]
+        for series in declared[1:]:
+            shared = shared.fillna(series)
+        return {
+            side: shared if series is None else series.fillna(shared)
+            for side, series in limit_by_side.items()
+        }
+
+    # Transformer: share the apparent-power-equivalent (Ilim * rated_u) across
+    # sides, then convert it back to a current on each borrowing side.
+    shared_s = None
+    for side, series in limit_by_side.items():
+        if series is None:
+            continue
+        s_equiv = series * rated_u_by_side[side]
+        shared_s = s_equiv if shared_s is None else shared_s.fillna(s_equiv)
     return {
-        side: shared if series is None else series.fillna(shared)
+        side: (
+            shared_s / rated_u_by_side[side]
+            if series is None
+            else series.fillna(shared_s / rated_u_by_side[side])
+        )
         for side, series in limit_by_side.items()
     }
 
@@ -669,7 +724,7 @@ def _scalar_float(value):
     return None if pd.isna(number) else number
 
 
-def _loading_percent(df, kind="permanent"):
+def _loading_percent(df, kind="permanent", element_type=None):
     """Loading in percent: each terminal's current over its effective rating.
 
     The number of terminals is read from the i1, i2, i3... columns present, so the
@@ -677,8 +732,8 @@ def _loading_percent(df, kind="permanent"):
     3-terminal (three_windings_transformer) elements:
     ``max_k(|i_k| / effective_limit_k) * 100``, where the effective per-terminal
     limit comes from _resolve_effective_limits (one shared limit = a line's Imax;
-    one per side = a transformer). Injections with no terminal currents use
-    |p| / max_p.
+    one per side = a transformer, with a borrowed rating rescaled by the winding
+    voltage ratio). Injections with no terminal currents use |p| / max_p.
     """
     terminals = _branch_terminals(df)
     if terminals:
@@ -686,7 +741,8 @@ def _loading_percent(df, kind="permanent"):
             {
                 side: _first_present_limit(df, _side_limit_columns(side, kind))
                 for side in terminals
-            }
+            },
+            _transformer_rated_u(df, element_type, terminals),
         )
         if effective is None:
             return pd.Series(float("nan"), index=df.index)
@@ -706,10 +762,10 @@ def compute_metric(df, metric, element_type):
         return df[metric]
 
     if metric == "loading_percent":
-        return _loading_percent(df)
+        return _loading_percent(df, element_type=element_type)
 
     if metric == "loading_percent_temporary":
-        return _loading_percent(df, kind="temporary")
+        return _loading_percent(df, kind="temporary", element_type=element_type)
 
     if metric == "p_abs":
         if element_type in TWO_SIDED_TYPES:
@@ -732,16 +788,18 @@ def compute_metric(df, metric, element_type):
     )
 
 
-def dimensioning_terminal(row, kind="permanent"):
+def dimensioning_terminal(row, kind="permanent", element_type=None):
     """Current and limit of the worst-loaded terminal of one branch row.
 
     Returns ``(i_a, limit_a)`` for the terminal maximising ``|i_k| / limit_k`` —
     the one that dimensions the row's loading_percent — or ``(None, None)`` when
     no terminal has both a current and a resolvable limit. ``row`` is a mapping
     (dict or Series) carrying i1/i2/... and the attached permanent_limit{k} /
-    temporary_limit{k} columns. The effective per-terminal limit is resolved by
-    the SAME _resolve_effective_limits that backs loading_percent, so i_a / limit_a
-    are consistent with it by construction.
+    temporary_limit{k} columns (plus rated_u{k} for a transformer). The effective
+    per-terminal limit is resolved by the SAME _resolve_effective_limits that
+    backs loading_percent, so i_a / limit_a are consistent with it by construction
+    — on an asymmetric transformer limit_a is the borrowed rating already rescaled
+    to the dimensioning winding's voltage.
     """
     frame = pd.DataFrame([dict(row)])
     terminals = _branch_terminals(frame)
@@ -751,7 +809,8 @@ def dimensioning_terminal(row, kind="permanent"):
         {
             side: _first_present_limit(frame, _side_limit_columns(side, kind))
             for side in terminals
-        }
+        },
+        _transformer_rated_u(frame, element_type, terminals),
     )
     if effective is None:
         return None, None

@@ -621,6 +621,50 @@ def test_loading_percent_single_limit_falls_back_to_worst_current():
     assert out.loc["l1", "loading_percent"] == pytest.approx(90.0)
 
 
+def test_loading_percent_transformer_rescales_borrowed_limit_by_voltage():
+    # A 2WT rated on side 1 only (400 kV / 200 kV). Side 2 has no rating and
+    # borrows side 1's 1000 A -> rescaled by the voltage ratio to 1000 * 400/200
+    # = 2000 A, NOT a direct 1000 A. So i2 = 1400 A loads 70%, not the false 140%
+    # a line-style direct borrow would report for the LV winding.
+    df = pd.DataFrame(
+        {
+            "i1": [300.0],
+            "i2": [1400.0],
+            "permanent_limit1": [1000.0],
+            "rated_u1": [400.0],
+            "rated_u2": [200.0],
+        },
+        index=["t1"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="two_windings_transformer",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
+    )
+
+    assert out.loc["t1", "loading_percent"] == pytest.approx(70.0)
+
+
+def test_dimensioning_terminal_rescales_one_sided_transformer_limit():
+    # Same one-sided 2WT: the LV winding (side 2) dimensions the row, and limit_a
+    # is the side-1 rating already rescaled to the side-2 voltage (2000 A), so
+    # i_a / limit_a * 100 reproduces the 70% loading above.
+    row = {
+        "i1": 300.0,
+        "i2": 1400.0,
+        "permanent_limit1": 1000.0,
+        "rated_u1": 400.0,
+        "rated_u2": 200.0,
+    }
+
+    i_a, limit_a = dimensioning_terminal(row, "permanent", "two_windings_transformer")
+
+    assert i_a == pytest.approx(1400.0)
+    assert limit_a == pytest.approx(2000.0)
+    assert i_a / limit_a * 100 == pytest.approx(70.0)
+
+
 def test_loading_percent_borrows_shared_limit_per_row_in_mixed_table():
     # The regression: L has only a side-1 rating, but line M defines a side-2
     # rating, so the permanent_limit2 column EXISTS and is NaN for L. L's worst
