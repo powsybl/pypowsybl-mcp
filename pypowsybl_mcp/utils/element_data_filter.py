@@ -63,7 +63,16 @@ class FilterError(ValueError):
 
 
 # These metrics are not columns in the pypowsybl table; we compute them here.
-DERIVED_METRICS = ("loading_percent", "loading_percent_temporary", "p_abs", "q_abs")
+# unrated_sides counts the energised terminals a branch cannot be checked on (a
+# current but no resolvable permanent rating) — the coverage gap the overload
+# check would otherwise skip silently.
+DERIVED_METRICS = (
+    "loading_percent",
+    "loading_percent_temporary",
+    "p_abs",
+    "q_abs",
+    "unrated_sides",
+)
 
 # Lines and transformers have two terminals (side 1 and side 2).
 TWO_SIDED_TYPES = ("line", "hvdc_line", "two_windings_transformer")
@@ -440,10 +449,10 @@ def converter_station_nominal_voltages(network, vl_nominal):
 def attach_nominal_voltage(elements_df, network, element_type):
     """Attach a nominal_v column (kV) resolved from static voltage-level ids.
 
-    The higher of a branch's two terminals (so a 400/90 kV asset reads 400),
-    the single voltage level for an injection, the converter-station AC side for
-    an HVDC line. NaN when unresolvable, so a band comparison excludes the
-    element from both sides symmetrically rather than bucketing it at 0 kV.
+    The highest of a branch's sides (two for a line/2WT, three for a 3WT, so a
+    400/90 kV asset reads 400), the single voltage level for an injection, the
+    converter-station AC side for an HVDC line. NaN when unresolvable, so a band
+    comparison excludes the element symmetrically rather than bucketing it at 0 kV.
     """
     if elements_df is None or elements_df.empty or "nominal_v" in elements_df.columns:
         return elements_df
@@ -457,10 +466,12 @@ def attach_nominal_voltage(elements_df, network, element_type):
             for col in ("converter_station1_id", "converter_station2_id")
             if col in out.columns
         ]
-    elif "voltage_level1_id" in out.columns or "voltage_level2_id" in out.columns:
+    elif any(f"voltage_level{n}_id" in out.columns for n in (1, 2, 3)):
+        # Every side present (line/2WT: 1,2; 3WT: 1,2,3); the skipna max below
+        # then yields the higher/highest resolved side.
         sides = [
             out[col].map(vl_nominal)
-            for col in ("voltage_level1_id", "voltage_level2_id")
+            for col in ("voltage_level1_id", "voltage_level2_id", "voltage_level3_id")
             if col in out.columns
         ]
     elif "voltage_level_id" in out.columns:
@@ -490,12 +501,14 @@ def element_nominal_voltage(
 ):
     """Nominal voltage used to classify one element row (kV), NaN if unresolvable.
 
-    Two-sided elements (line, two_windings_transformer) take the higher side so a
-    mixed-voltage asset stays visible in a high-voltage band; HVDC lines resolve
-    via their converter stations' voltage levels (the AC side); injections take
-    their single voltage level. ``element_row`` may be a Series or a plain dict.
-    Returns NaN (not 0) when the voltage cannot be resolved, so a band filter
-    excludes the element symmetrically instead of bucketing it at 0 kV.
+    Branch elements take the HIGHER of every side they expose so a mixed-voltage
+    asset stays visible in a high-voltage band — the higher of two sides for a
+    line / two_windings_transformer, of three legs for a three_windings_transformer
+    (read from voltage_level{1,2,3}_id). HVDC lines resolve via their converter
+    stations' voltage levels (the AC side); injections take their single voltage
+    level. ``element_row`` may be a Series or a plain dict. Returns NaN (not 0)
+    when the voltage cannot be resolved, so a band filter excludes the element
+    symmetrically instead of bucketing it at 0 kV.
     """
     nan = float("nan")
     if element_row is None:
@@ -504,18 +517,26 @@ def element_nominal_voltage(
     def nominal(mapping, key):
         return mapping.get(key, nan) if key is not None else nan
 
-    if element_type in ("line", "two_windings_transformer"):
-        return _higher_side(
-            nominal(voltage_by_level, element_row.get("voltage_level1_id")),
-            nominal(voltage_by_level, element_row.get("voltage_level2_id")),
-        )
     if element_type == "hvdc_line":
         stations = voltage_by_converter_station or {}
         return _higher_side(
             nominal(stations, element_row.get("converter_station1_id")),
             nominal(stations, element_row.get("converter_station2_id")),
         )
-    return nominal(voltage_by_level, element_row.get("voltage_level_id"))
+
+    # Fold the higher side over whatever voltage-level ids this row carries: a
+    # branch exposes voltage_level{1,2,3}_id (3WT uses all three), an injection a
+    # single voltage_level_id. NaN-aware, so missing sides drop out and the side
+    # count is never hardcoded.
+    higher = nan
+    for key in (
+        "voltage_level_id",
+        "voltage_level1_id",
+        "voltage_level2_id",
+        "voltage_level3_id",
+    ):
+        higher = _higher_side(higher, nominal(voltage_by_level, element_row.get(key)))
+    return higher
 
 
 def attach_voltage_limits(df, network, element_type):
@@ -662,7 +683,7 @@ def _transformer_rated_u(df, element_type, terminals):
     }
 
 
-def _resolve_effective_limits(limit_by_side, rated_u_by_side=None):
+def _resolve_effective_limits(limit_by_side, rated_u_by_side=None, allow_borrow=True):
     """Map the declared per-side limits onto every terminal, per row.
 
     The single place the "count the limits, map them onto the sides" rule lives:
@@ -673,12 +694,22 @@ def _resolve_effective_limits(limit_by_side, rated_u_by_side=None):
     How the borrow works depends on the element. For a current-sharing element
     (line, tie_line; ``rated_u_by_side`` is None) the borrow is DIRECT — both ends
     carry the same current, so the single conductor Imax applies unchanged. For a
-    transformer (``rated_u_by_side`` given) the windings carry currents in inverse
-    ratio of their rated voltages, so the ampere ratings are NOT interchangeable:
-    what is shared is the apparent-power limit S = Ilim_k * rated_u_k, converted
-    back to a current on each borrowing side as Ilim_j = S / rated_u_j
-    (== Ilim_k * rated_u_k / rated_u_j). An HV-side rating thus no longer reports a
-    false overload on the LV winding.
+    two-winding transformer (``rated_u_by_side`` given) the windings carry currents
+    in inverse ratio of their rated voltages, so the ampere ratings are NOT
+    interchangeable: what is shared is the apparent-power limit S = Ilim_k *
+    rated_u_k, converted back to a current on each borrowing side as Ilim_j =
+    S / rated_u_j (== Ilim_k * rated_u_k / rated_u_j). An HV-side rating thus no
+    longer reports a false overload on the LV winding.
+
+    ``allow_borrow=False`` disables borrowing entirely: each terminal keeps only
+    its own declared rating and an unrated terminal stays NaN (skipped by the
+    worst-terminal max). This is required for a three-winding transformer — a star
+    of three windings where S1 ~= S2 + S3 and the legs carry independent
+    apparent-power ratings (the tertiary is typically far smaller). A missing
+    leg's rating therefore cannot be inferred from a sibling; fabricating one by
+    either borrow rule would invent a too-high limit and silently mask a real
+    overload. Leaving it NaN fails safe: overloads on the RATED legs are still
+    caught, and an unrated leg is never reported as falsely "within limit".
 
     Returns ``{side: Series}``, or None when no side declares a rating. Both
     _loading_percent and dimensioning_terminal go through here, so they cannot
@@ -687,6 +718,15 @@ def _resolve_effective_limits(limit_by_side, rated_u_by_side=None):
     declared = [series for series in limit_by_side.values() if series is not None]
     if not declared:
         return None
+
+    if not allow_borrow:
+        # No cross-terminal inference (3+ winding transformer): own rating only,
+        # NaN where a side declares none, so the worst-terminal max skips it.
+        nan_series = pd.Series(float("nan"), index=declared[0].index)
+        return {
+            side: nan_series if series is None else series
+            for side, series in limit_by_side.items()
+        }
 
     if rated_u_by_side is None:
         shared = declared[0]
@@ -732,8 +772,10 @@ def _loading_percent(df, kind="permanent", element_type=None):
     3-terminal (three_windings_transformer) elements:
     ``max_k(|i_k| / effective_limit_k) * 100``, where the effective per-terminal
     limit comes from _resolve_effective_limits (one shared limit = a line's Imax;
-    one per side = a transformer, with a borrowed rating rescaled by the winding
-    voltage ratio). Injections with no terminal currents use |p| / max_p.
+    one per side = a 2-winding transformer, with a borrowed rating rescaled by the
+    winding voltage ratio). A 3-winding transformer does NOT borrow across legs
+    (star topology, independent ratings): an unrated leg stays NaN and is skipped
+    by the max. Injections with no terminal currents use |p| / max_p.
     """
     terminals = _branch_terminals(df)
     if terminals:
@@ -743,6 +785,9 @@ def _loading_percent(df, kind="permanent", element_type=None):
                 for side in terminals
             },
             _transformer_rated_u(df, element_type, terminals),
+            # A 3+ winding transformer (star topology) must not borrow a missing
+            # leg's rating from a sibling; only 2-terminal branches may borrow.
+            allow_borrow=len(terminals) <= 2,
         )
         if effective is None:
             return pd.Series(float("nan"), index=df.index)
@@ -781,10 +826,16 @@ def compute_metric(df, metric, element_type):
             return df["q"].abs()
         return pd.Series(float("nan"), index=df.index)
 
+    if metric == "unrated_sides":
+        mask = _unrated_loaded_mask(df, element_type)
+        if mask.shape[1] == 0:
+            return pd.Series(0, index=df.index)
+        return mask.sum(axis=1)
+
     cols = ", ".join(sorted(df.columns.astype(str)))
     raise ValueError(
         f"Unknown metric '{metric}' for '{element_type}'. "
-        f"Try loading_percent, p_abs, q_abs, or a column name ({cols})"
+        f"Try loading_percent, p_abs, q_abs, unrated_sides, or a column name ({cols})"
     )
 
 
@@ -811,6 +862,9 @@ def dimensioning_terminal(row, kind="permanent", element_type=None):
             for side in terminals
         },
         _transformer_rated_u(frame, element_type, terminals),
+        # Mirror _loading_percent: a 3+ winding transformer never borrows a
+        # missing leg's rating, so i_a/limit_a report a truly-rated winding.
+        allow_borrow=len(terminals) <= 2,
     )
     if effective is None:
         return None, None
@@ -825,6 +879,57 @@ def dimensioning_terminal(row, kind="permanent", element_type=None):
         if best is None or loading > best[0]:
             best = (loading, abs(current), limit)
     return (best[1], best[2]) if best else (None, None)
+
+
+def _unrated_loaded_mask(df, element_type):
+    """Per row and side, True where the terminal is energised (carries a finite
+    current) yet has NO resolvable permanent rating, so its loading cannot be
+    computed and the overload check silently skips it.
+
+    Uses the SAME effective-limit resolution as loading_percent (permanent kind),
+    so the no-borrow rule holds: a 2-terminal branch's side that borrows a
+    sibling's rating is NOT flagged, but an unrated three-winding leg (no
+    cross-leg borrow) IS — as is any branch terminal with a current but no rating
+    anywhere. Returns a bool DataFrame indexed like ``df`` with one column per
+    side (empty columns for a non-branch table, where there is nothing to check).
+    """
+    terminals = _branch_terminals(df)
+    if not terminals:
+        return pd.DataFrame(index=df.index)
+    effective = _resolve_effective_limits(
+        {
+            side: _first_present_limit(df, _side_limit_columns(side, "permanent"))
+            for side in terminals
+        },
+        _transformer_rated_u(df, element_type, terminals),
+        allow_borrow=len(terminals) <= 2,
+    )
+    out = pd.DataFrame(index=df.index)
+    for side in terminals:
+        energised = df[f"i{side}"].abs().notna()
+        limit_missing = (
+            pd.Series(True, index=df.index)
+            if effective is None
+            else effective[side].isna()
+        )
+        out[side] = energised & limit_missing
+    return out
+
+
+def unrated_loaded_sides(row, element_type):
+    """The 1-based side numbers of ``row`` that carry a current but have no
+    resolvable permanent rating — the terminals the overload check cannot see.
+
+    Empty when every energised terminal is rated. ``row`` is a mapping (dict or
+    Series); mirrors dimensioning_terminal's one-row-frame reuse of the shared
+    limit resolution so the coverage report and the loading math stay consistent.
+    """
+    frame = pd.DataFrame([dict(row)])
+    mask = _unrated_loaded_mask(frame, element_type)
+    if mask.shape[1] == 0:
+        return []
+    row_mask = mask.iloc[0]
+    return [int(side) for side, flag in row_mask.items() if bool(flag)]
 
 
 def _coerce_operand(value, op):

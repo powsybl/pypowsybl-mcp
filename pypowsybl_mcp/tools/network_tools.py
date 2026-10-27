@@ -34,6 +34,7 @@ from pypowsybl_mcp.utils.element_data_filter import (
     filter_elements_to_main_area,
     main_area_bus_ids,
     parse_main_component,
+    unrated_loaded_sides,
 )
 from pypowsybl_mcp.utils.element_types import (
     ELEMENT_TYPE_TO_GETTER,
@@ -85,10 +86,22 @@ MODIFY_NETWORK_SPEC: dict[str, dict] = {
 
 
 # Enrichment tokens get_network_element_data accepts for its `attach` argument.
-# current_limits -> permanent_limit1/2 + temporary_limit1/2; geotags ->
+# current_limits -> permanent_limit1/2/3 + temporary_limit1/2/3; geotags ->
 # country/regionCvg (via the substation hop); voltage_limits -> low/high_voltage_limit
 # on bus rows. (surface-conventions §7)
 _SUPPORTED_ATTACH_TOKENS = {"current_limits", "geotags", "voltage_limits"}
+
+# Branch types the current-violation sweep iterates when the caller names no
+# element_type: the tables with current-loading math (|i|/ampacity). Kept as one
+# list so the default sweep and its docstring cannot drift apart — the single
+# place a type must be named, because getters are called by type before any
+# DataFrame (and thus the structural "i1" limit-join) exists. A swept type whose
+# table lacks i1 simply yields no violations (loud/testable), never a silent NaN.
+LOADING_BRANCH_TYPES = [
+    "line",
+    "two_windings_transformer",
+    "three_windings_transformer",
+]
 
 
 # Variant-independent fields compare_variants may scope by (surface-conventions
@@ -1599,13 +1612,17 @@ class NetworkTools(PyPowsyblTool):
         The current-side twin of check_voltage_violations: it sweeps every branch
         (no component filter by default), auto-runs an AC load flow if none is
         cached, and reports every branch loaded above threshold_percent, worst
-        first. Operates on the currently active working variant.
+        first. Operates on the currently active working variant. It also reports,
+        separately, any branch carrying a current on a terminal with no permanent
+        rating — those terminals cannot be checked, so they are surfaced as a
+        coverage gap instead of silently passing (e.g. an unrated three-winding
+        leg, which never borrows a sibling's rating).
 
         Args:
             network_id (str, optional): Network to check. None = current network.
             element_type (str, optional): One branch type to check. None sweeps
-                both "line" and "two_windings_transformer" (the types with loading
-                math) in a single call.
+                "line", "two_windings_transformer" and "three_windings_transformer"
+                (the types with loading math) in a single call.
             threshold_percent (float, optional): Report branches loaded strictly
                 above this percentage. Default 100.0.
             limit_kind (str, optional): Which rating is the denominator —
@@ -1626,12 +1643,20 @@ class NetworkTools(PyPowsyblTool):
             str: JSON. {"success": true, loadflow_executed, element_types,
             threshold_percent, limit_kind, total_elements, matched_count,
             violation_count, violations[{element_id, name, element_type,
-            voltage_level1_id, voltage_level2_id, nominal_v, i_a, limit_a,
-            loading_percent, excess_percent, limit_kind, violation_type:"CURRENT"}]}.
-            On non-convergence, success=false with failed_components.
+            voltage_level1_id, voltage_level2_id, voltage_level3_id (None off a
+            3WT), nominal_v, i_a, limit_a, loading_percent, excess_percent,
+            missing_sides (unrated energised sides of this overloaded branch, []
+            when fully rated), limit_kind, violation_type:"CURRENT"}],
+            unrated_count, unrated[{element_id, name, element_type,
+            voltage_level1_id, voltage_level2_id, voltage_level3_id, nominal_v,
+            missing_sides}]}. i_a/limit_a describe the worst-loaded terminal — the
+            dimensioning winding on a 3WT. `unrated` lists branches not overloaded
+            on their rated terminals but carrying a current on an unrated one (the
+            1-based side numbers in missing_sides); it is not paginated. On
+            non-convergence, success=false with failed_components.
 
         Example:
-            check_current_violations(threshold_percent=100)  # line + 2WT overloads
+            check_current_violations(threshold_percent=100)  # line + 2WT + 3WT
         """
         try:
             proxy, network_id, network = self.resolve_network(ctx, network_id)
@@ -1685,11 +1710,7 @@ class NetworkTools(PyPowsyblTool):
                     "timestamp": datetime.now(UTC).isoformat(),
                 }
 
-            types = (
-                [element_type]
-                if element_type
-                else ["line", "two_windings_transformer"]
-            )
+            types = [element_type] if element_type else list(LOADING_BRANCH_TYPES)
             working_variant = network.get_working_variant_id()
 
             # Nominal voltage per voltage level — used to label every violation's
@@ -1706,6 +1727,11 @@ class NetworkTools(PyPowsyblTool):
                 vl_nominal = {}
 
             violations = []
+            # Branches that carry a current on a terminal with no permanent rating:
+            # the overload check cannot see that terminal, so it is reported here
+            # as a coverage gap rather than silently skipped. One OR clause on the
+            # same query surfaces them with no extra fetch.
+            unrated = []
             total_elements = 0
             for element_t in types:
                 cursor_t = None
@@ -1714,9 +1740,16 @@ class NetworkTools(PyPowsyblTool):
                         network_id=network_id,
                         variant_id=working_variant,
                         element_type=element_t,
-                        conditions=[
-                            {"field": metric, "op": ">", "value": threshold_percent}
-                        ],
+                        conditions={
+                            "any": [
+                                {
+                                    "field": metric,
+                                    "op": ">",
+                                    "value": threshold_percent,
+                                },
+                                {"field": "unrated_sides", "op": ">", "value": 0},
+                            ]
+                        },
                         order_by=f"-{metric}",
                         attach=["current_limits"],
                         main_component=main_component,
@@ -1748,36 +1781,65 @@ class NetworkTools(PyPowsyblTool):
                                 and nominal_v > max_nominal_voltage
                             ):
                                 continue
-                        loading = fields.get(metric)
-                        # i_a / limit_a describe the dimensioning terminal — the
-                        # side whose |i| / limit drives loading_percent — so they
-                        # match the reported loading on an asymmetric transformer.
-                        # element_t lets a one-sided transformer rating be rescaled
-                        # by the winding voltage ratio rather than borrowed as-is.
-                        i_a, limit_a = dimensioning_terminal(fields, kind, element_t)
-                        name = fields.get("name") or ""
-                        violations.append(
-                            {
-                                "element_id": element_id,
-                                "name": "" if pd.isna(name) else name,
-                                "element_type": element_t,
-                                "voltage_level1_id": fields.get("voltage_level1_id"),
-                                "voltage_level2_id": fields.get("voltage_level2_id"),
-                                "nominal_v": None
-                                if pd.isna(nominal_v)
-                                else round(float(nominal_v), 3),
-                                "i_a": None if i_a is None else round(i_a, 3),
-                                "limit_a": None if limit_a is None else round(limit_a, 3),
-                                "loading_percent": None
-                                if loading is None or pd.isna(loading)
-                                else round(float(loading), 2),
-                                "excess_percent": None
-                                if loading is None or pd.isna(loading)
-                                else round(float(loading) - 100.0, 2),
-                                "limit_kind": kind,
-                                "violation_type": "CURRENT",
-                            }
+                        # Which energised terminals have no permanent rating (so
+                        # their loading could not be computed). [] for a fully-rated
+                        # branch — the common case.
+                        missing_sides = unrated_loaded_sides(fields, element_t)
+                        nominal_out = (
+                            None if pd.isna(nominal_v) else round(float(nominal_v), 3)
                         )
+                        name = fields.get("name") or ""
+                        name = "" if pd.isna(name) else name
+                        loading = fields.get(metric)
+                        is_overload = (
+                            loading is not None
+                            and not pd.isna(loading)
+                            and float(loading) > threshold_percent
+                        )
+                        if is_overload:
+                            # i_a / limit_a describe the dimensioning terminal — the
+                            # side whose |i| / limit drives loading_percent — so they
+                            # match the reported loading on an asymmetric transformer.
+                            i_a, limit_a = dimensioning_terminal(fields, kind, element_t)
+                            violations.append(
+                                {
+                                    "element_id": element_id,
+                                    "name": name,
+                                    "element_type": element_t,
+                                    "voltage_level1_id": fields.get("voltage_level1_id"),
+                                    "voltage_level2_id": fields.get("voltage_level2_id"),
+                                    # None off a 3WT; present so a three-winding
+                                    # overload names its third leg (uniform schema).
+                                    "voltage_level3_id": fields.get("voltage_level3_id"),
+                                    "nominal_v": nominal_out,
+                                    "i_a": None if i_a is None else round(i_a, 3),
+                                    "limit_a": None
+                                    if limit_a is None
+                                    else round(limit_a, 3),
+                                    "loading_percent": round(float(loading), 2),
+                                    "excess_percent": round(float(loading) - 100.0, 2),
+                                    # Non-empty when an overloaded asset ALSO has an
+                                    # unrated energised terminal the check can't see.
+                                    "missing_sides": missing_sides,
+                                    "limit_kind": kind,
+                                    "violation_type": "CURRENT",
+                                }
+                            )
+                        elif missing_sides:
+                            # Not overloaded on its rated terminals, but a terminal
+                            # with no rating went unchecked — surface the gap.
+                            unrated.append(
+                                {
+                                    "element_id": element_id,
+                                    "name": name,
+                                    "element_type": element_t,
+                                    "voltage_level1_id": fields.get("voltage_level1_id"),
+                                    "voltage_level2_id": fields.get("voltage_level2_id"),
+                                    "voltage_level3_id": fields.get("voltage_level3_id"),
+                                    "nominal_v": nominal_out,
+                                    "missing_sides": missing_sides,
+                                }
+                            )
                     pagination = data.get("pagination")
                     if not pagination:
                         break
@@ -1786,7 +1848,7 @@ class NetworkTools(PyPowsyblTool):
                         break
                     cursor_t = next_cursor
 
-            # Worst first, across both types (no caller sort — a safety report has
+            # Worst first, across every type (no caller sort — a safety report has
             # one sensible order).
             violations.sort(
                 key=lambda v: v["loading_percent"]
@@ -1794,6 +1856,8 @@ class NetworkTools(PyPowsyblTool):
                 else float("-inf"),
                 reverse=True,
             )
+            # Coverage gaps have no loading to rank by; stable by id.
+            unrated.sort(key=lambda u: u["element_id"])
 
             summary = {
                 "success": True,
@@ -1805,6 +1869,10 @@ class NetworkTools(PyPowsyblTool):
                 "total_elements": total_elements,
                 "matched_count": len(violations),
                 "violation_count": len(violations),
+                # Branches the check could not fully evaluate (an energised terminal
+                # with no permanent rating). Empty on well-rated networks.
+                "unrated_count": len(unrated),
+                "unrated": unrated,
             }
 
             if return_mode == "artifact":
@@ -1879,7 +1947,8 @@ class NetworkTools(PyPowsyblTool):
                 list is implicit AND; {"all": [...]} / {"any": [...]} nests AND/OR.
                 Each leaf is {"field", "op", and exactly one of "value" | "ref"}:
                   - field: a real column OR a derived metric — loading_percent,
-                    loading_percent_temporary, p_abs, q_abs.
+                    loading_percent_temporary, p_abs, q_abs, unrated_sides (count
+                    of energised terminals with no permanent current rating).
                   - op: > >= < <= == != (gt/ge/lt/le/eq/ne aliases), in, not_in.
                     Ordered ops need a numeric value; == / != / in / not_in accept
                     strings and lists (e.g. country == "FR").
@@ -2071,17 +2140,28 @@ class NetworkTools(PyPowsyblTool):
                     indent=2,
                 )
 
+            raw_elements = method()
+            # A getter should return a DataFrame; guard so a getter that returns
+            # something else (an empty table surfaced as None, or a test double)
+            # degrades to an empty frame instead of corrupting the filter /
+            # pagination path with a non-DataFrame.
+            if not isinstance(raw_elements, pd.DataFrame):
+                raw_elements = pd.DataFrame()
             elements_df = filter_elements_to_main_area(
-                method(), network, element_type, main_bus_ids
+                raw_elements, network, element_type, main_bus_ids
             )
 
             # get_lines() returns i1/i2 (current in A) but not Imax. Imax is in
             # get_operational_limits(). We materialise the full ampacity set
-            # (permanent_limit1/2, temporary_limit1/2) so loading_percent and
+            # (permanent_limit1/2/3, temporary_limit1/2/3) so loading_percent and
             # loading_percent_temporary resolve, and a leaf can compare against a
-            # per-row rating. This is the current_limits attach, applied implicitly
-            # for the two types that have loading math.
-            if element_type in ("line", "two_windings_transformer"):
+            # per-row rating. Triggered structurally — any branch table carries an
+            # i1 column (line, 2WT, 3WT, tie_line) — which mirrors _branch_terminals
+            # and auto-covers every multi-terminal type without a hardcoded set. The
+            # current_limits attach token forces the same join on a type that has no
+            # i1 column (e.g. a single-terminal dangling_line); attach_full_current_limits
+            # is a no-op when the limits table declares nothing for these ids.
+            if "i1" in elements_df.columns or "current_limits" in attach_tokens:
                 limits_df = None
                 try:
                     limits_df = network.get_operational_limits()

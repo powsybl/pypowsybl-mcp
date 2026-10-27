@@ -18,6 +18,8 @@ from pypowsybl_mcp.utils.element_data_filter import (
     attach_voltage_limits,
     compute_metric,
     dimensioning_terminal,
+    element_nominal_voltage,
+    unrated_loaded_sides,
 )
 
 
@@ -828,3 +830,143 @@ def test_attach_voltage_limits_non_bus_is_unchanged():
     out = attach_voltage_limits(df, _geo_network(), "generator")
 
     assert out is df
+
+
+def test_element_nominal_voltage_three_winding_uses_highest_leg():
+    # A 3WT reads the HIGHEST of its three legs (read from voltage_level{1,2,3}_id)
+    # so a 400/225/90 kV unit classifies at 400, not at its tertiary.
+    vl = {"VL1": 400.0, "VL2": 225.0, "VL3": 90.0}
+    row = {
+        "voltage_level1_id": "VL1",
+        "voltage_level2_id": "VL2",
+        "voltage_level3_id": "VL3",
+    }
+
+    assert element_nominal_voltage("three_windings_transformer", row, vl) == 400.0
+
+
+def test_element_nominal_voltage_three_winding_skips_unknown_leg():
+    # An unresolvable leg (VL2 missing from the map) drops out of the NaN-aware
+    # fold rather than poisoning the result; the higher known leg still wins.
+    vl = {"VL1": 400.0, "VL3": 90.0}
+    row = {
+        "voltage_level1_id": "VL1",
+        "voltage_level2_id": "VL2",  # unknown
+        "voltage_level3_id": "VL3",
+    }
+
+    assert element_nominal_voltage("three_windings_transformer", row, vl) == 400.0
+
+
+def test_loading_percent_three_winding_does_not_borrow_unrated_leg():
+    # Legs 1&2 rated 400 A, leg 3 UNRATED. A 2WT would borrow a rescaled rating
+    # for the unrated side, but a 3WT is a star with independent ratings: leg 3
+    # must NOT be given a fabricated limit. It stays NaN (skipped), so loading is
+    # the worst RATED leg (100/400 = 25%), never a borrowed value that could mask
+    # the 5000 A on leg 3.
+    df = pd.DataFrame(
+        {
+            "i1": [100.0],
+            "i2": [100.0],
+            "i3": [5000.0],
+            "permanent_limit1": [400.0],
+            "permanent_limit2": [400.0],
+            # no permanent_limit3
+            "rated_u1": [400.0],
+            "rated_u2": [225.0],
+            "rated_u3": [90.0],
+        },
+        index=["t3"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="three_windings_transformer",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
+    )
+
+    assert out.loc["t3", "loading_percent"] == pytest.approx(25.0)
+
+
+def test_dimensioning_terminal_three_winding_skips_unrated_leg():
+    # Same shape: dimensioning_terminal must agree with loading_percent and report
+    # a truly-rated winding (100 A / 400 A), not the unrated leg 3 dressed in a
+    # fabricated borrowed limit.
+    row = {
+        "i1": 100.0,
+        "i2": 100.0,
+        "i3": 5000.0,
+        "permanent_limit1": 400.0,
+        "permanent_limit2": 400.0,
+        "rated_u1": 400.0,
+        "rated_u2": 225.0,
+        "rated_u3": 90.0,
+    }
+
+    i_a, limit_a = dimensioning_terminal(row, "permanent", "three_windings_transformer")
+
+    assert (i_a, limit_a) == (100.0, 400.0)
+
+
+def test_unrated_loaded_sides_three_winding_flags_the_unrated_leg():
+    # Legs 1&2 rated, leg 3 carries 350 A but has no rating. A 3WT never borrows
+    # across legs, so only leg 3 is unreachable by the overload check.
+    row = {
+        "i1": 100.0,
+        "i2": 100.0,
+        "i3": 350.0,
+        "permanent_limit1": 400.0,
+        "permanent_limit2": 400.0,
+        "rated_u1": 400.0,
+        "rated_u2": 225.0,
+        "rated_u3": 90.0,
+    }
+
+    assert unrated_loaded_sides(row, "three_windings_transformer") == [3]
+
+
+def test_unrated_loaded_sides_empty_when_fully_rated():
+    row = {
+        "i1": 100.0,
+        "i2": 100.0,
+        "i3": 100.0,
+        "permanent_limit1": 400.0,
+        "permanent_limit2": 400.0,
+        "permanent_limit3": 300.0,
+    }
+
+    assert unrated_loaded_sides(row, "three_windings_transformer") == []
+
+
+def test_unrated_loaded_sides_line_borrow_covers_the_unrated_side():
+    # A line shares one Imax: side 2 borrows side 1's rating, so neither side is
+    # flagged — borrowing is valid for a 2-terminal branch.
+    row = {"i1": 100.0, "i2": 100.0, "permanent_limit1": 200.0}
+
+    assert unrated_loaded_sides(row, "line") == []
+
+
+def test_unrated_loaded_sides_line_with_no_rating_flags_both_sides():
+    row = {"i1": 100.0, "i2": 100.0}
+
+    assert unrated_loaded_sides(row, "line") == [1, 2]
+
+
+def test_unrated_sides_metric_counts_unreachable_terminals_per_row():
+    # Row "ok" fully rated -> 0; row "gap" has a NaN leg-3 limit -> 1.
+    df = pd.DataFrame(
+        {
+            "i1": [100.0, 100.0],
+            "i2": [100.0, 100.0],
+            "i3": [100.0, 100.0],
+            "permanent_limit1": [400.0, 400.0],
+            "permanent_limit2": [400.0, 400.0],
+            "permanent_limit3": [300.0, float("nan")],
+        },
+        index=["ok", "gap"],
+    )
+
+    out = compute_metric(df, "unrated_sides", "three_windings_transformer")
+
+    assert out.loc["ok"] == 0
+    assert out.loc["gap"] == 1

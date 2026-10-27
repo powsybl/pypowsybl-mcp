@@ -3008,7 +3008,8 @@ async def test_get_top_active_power_transit_lines_exception(network_tools, mock_
 
 def _current_network():
     """A network with one overloaded line (150%), one healthy (50%), one
-    overloaded 2WT (150%), on voltage levels VL1=400 kV and VL2=225 kV."""
+    overloaded 2WT (150%), and one healthy 3WT (25%), on voltage levels
+    VL1=400 kV, VL2=225 kV and VL3=90 kV."""
     net = MagicMock()
     net.get_variant_ids.return_value = ["InitialState"]
     net.get_working_variant_id.return_value = "InitialState"
@@ -3030,18 +3031,34 @@ def _current_network():
         },
         index=["T1"],
     )
+    # A healthy 3WT (25%): swept by default, but never a violation — proves the
+    # sweep handles a real three-winding table without crashing or false-flagging.
+    net.get_3_windings_transformers.return_value = pd.DataFrame(
+        {
+            "i1": [100.0],
+            "i2": [100.0],
+            "i3": [100.0],
+            "voltage_level1_id": ["VL1"],
+            "voltage_level2_id": ["VL2"],
+            "voltage_level3_id": ["VL3"],
+            "rated_u1": [400.0],
+            "rated_u2": [225.0],
+            "rated_u3": [90.0],
+        },
+        index=["T3"],
+    )
     net.get_operational_limits.return_value = pd.DataFrame(
         {
-            "element_id": ["L1", "L2", "T1"],
-            "side": ["ONE", "ONE", "ONE"],
-            "type": ["CURRENT", "CURRENT", "CURRENT"],
-            "acceptable_duration": [-1, -1, -1],
-            "value": [100.0, 100.0, 200.0],
+            "element_id": ["L1", "L2", "T1", "T3", "T3", "T3"],
+            "side": ["ONE", "ONE", "ONE", "ONE", "TWO", "THREE"],
+            "type": ["CURRENT"] * 6,
+            "acceptable_duration": [-1] * 6,
+            "value": [100.0, 100.0, 200.0, 400.0, 400.0, 400.0],
         }
     )
     net.get_voltage_levels.return_value = pd.DataFrame(
-        {"substation_id": ["S1", "S2"], "nominal_v": [400.0, 225.0]},
-        index=["VL1", "VL2"],
+        {"substation_id": ["S1", "S2", "S2"], "nominal_v": [400.0, 225.0, 90.0]},
+        index=["VL1", "VL2", "VL3"],
     )
     return net
 
@@ -3060,11 +3077,16 @@ async def test_check_current_violations_sweeps_line_and_2wt(network_tools, mock_
 
     assert data["success"] is True
     assert data["loadflow_executed"] is False
-    assert data["element_types"] == ["line", "two_windings_transformer"]
+    assert data["element_types"] == [
+        "line",
+        "two_windings_transformer",
+        "three_windings_transformer",
+    ]
     ids = {(v["element_id"], v["element_type"]) for v in data["violations"]}
     assert ("L1", "line") in ids
     assert ("T1", "two_windings_transformer") in ids
     assert ("L2", "line") not in ids  # only 50% loaded
+    assert ("T3", "three_windings_transformer") not in ids  # 3WT only 25% loaded
     # worst-first, with excess over 100%
     worst = data["violations"][0]
     assert worst["loading_percent"] == 150.0
@@ -3157,3 +3179,251 @@ async def test_check_current_violations_invalid_element_type(network_tools, mock
     )
     assert data["success"] is False
     assert "Invalid element type 'transfarmer'" in data["error"]
+
+
+def _three_winding_network():
+    """A network of two overloaded 3-winding transformers and no lines/2WTs.
+
+    T3W_HV: legs 400/225/90 kV, worst leg 3 at 350/300 = 116.67%.
+    T3W_LV: legs all 90 kV, worst leg at 200/100 = 200%.
+    Voltage levels VL1=400, VL2=225, VL3=90 kV.
+    """
+    net = MagicMock()
+    net.get_variant_ids.return_value = ["InitialState"]
+    net.get_working_variant_id.return_value = "InitialState"
+    net.get_lines.return_value = pd.DataFrame(
+        columns=["i1", "i2", "voltage_level1_id", "voltage_level2_id"]
+    )
+    net.get_2_windings_transformers.return_value = pd.DataFrame(
+        columns=["i1", "i2", "voltage_level1_id", "voltage_level2_id"]
+    )
+    net.get_3_windings_transformers.return_value = pd.DataFrame(
+        {
+            "i1": [100.0, 200.0],
+            "i2": [150.0, 200.0],
+            "i3": [350.0, 200.0],
+            "voltage_level1_id": ["VL1", "VL3"],
+            "voltage_level2_id": ["VL2", "VL3"],
+            "voltage_level3_id": ["VL3", "VL3"],
+            "rated_u1": [400.0, 90.0],
+            "rated_u2": [225.0, 90.0],
+            "rated_u3": [90.0, 90.0],
+        },
+        index=["T3W_HV", "T3W_LV"],
+    )
+    net.get_operational_limits.return_value = pd.DataFrame(
+        {
+            "element_id": [
+                "T3W_HV", "T3W_HV", "T3W_HV",
+                "T3W_LV", "T3W_LV", "T3W_LV",
+            ],
+            "side": ["ONE", "TWO", "THREE", "ONE", "TWO", "THREE"],
+            "type": ["CURRENT"] * 6,
+            "acceptable_duration": [-1] * 6,
+            "value": [400.0, 400.0, 300.0, 100.0, 100.0, 100.0],
+        }
+    )
+    net.get_voltage_levels.return_value = pd.DataFrame(
+        {"substation_id": ["S1", "S2", "S2"], "nominal_v": [400.0, 225.0, 90.0]},
+        index=["VL1", "VL2", "VL3"],
+    )
+    return net
+
+
+@pytest.mark.asyncio
+async def test_check_current_violations_includes_three_windings_transformer(
+    network_tools, mock_ctx
+):
+    # End-to-end proof of the whole 3WT path: the structural limits-join attaches
+    # permanent_limit3, the sweep includes 3WT, loading/dimensioning read leg 3,
+    # and nominal_v resolves to the HV leg.
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = _three_winding_network()
+    proxy.loadflow_results["net1"] = {"converged": True}
+
+    data = json.loads(
+        await network_tools.check_current_violations(
+            network_id="net1", threshold_percent=100, ctx=mock_ctx
+        )
+    )
+
+    assert data["success"] is True
+    assert "three_windings_transformer" in data["element_types"]
+    by_id = {v["element_id"]: v for v in data["violations"]}
+    assert set(by_id) == {"T3W_HV", "T3W_LV"}
+
+    hv = by_id["T3W_HV"]
+    assert hv["element_type"] == "three_windings_transformer"
+    assert hv["loading_percent"] == pytest.approx(116.67, abs=0.01)
+    assert hv["i_a"] == pytest.approx(350.0)  # worst winding is leg 3
+    assert hv["limit_a"] == pytest.approx(300.0)
+    assert hv["nominal_v"] == 400.0  # highest leg, not the 90 kV tertiary
+    assert hv["voltage_level3_id"] == "VL3"
+    assert hv["i_a"] / hv["limit_a"] * 100 == pytest.approx(
+        hv["loading_percent"], abs=0.01
+    )
+
+    # Worst-first across the whole report: the 200% 3WT leads.
+    assert data["violations"][0]["element_id"] == "T3W_LV"
+
+
+@pytest.mark.asyncio
+async def test_check_current_violations_three_winding_single_type(
+    network_tools, mock_ctx
+):
+    # The gate/join work when 3WT is named explicitly, independent of the sweep.
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = _three_winding_network()
+    proxy.loadflow_results["net1"] = {"converged": True}
+
+    data = json.loads(
+        await network_tools.check_current_violations(
+            network_id="net1",
+            element_type="three_windings_transformer",
+            threshold_percent=100,
+            ctx=mock_ctx,
+        )
+    )
+
+    assert data["element_types"] == ["three_windings_transformer"]
+    assert {v["element_id"] for v in data["violations"]} == {"T3W_HV", "T3W_LV"}
+
+
+@pytest.mark.asyncio
+async def test_check_current_violations_three_winding_band_uses_highest_leg(
+    network_tools, mock_ctx
+):
+    # Regression guard for the silent-drop bug: a nominal-voltage band must resolve
+    # the 3WT's highest leg. min_nominal_voltage=300 keeps T3W_HV (400 kV leg) and
+    # excludes T3W_LV (90 kV). Without the three-leg nominal resolution both would
+    # read NaN and vanish from the band entirely.
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = _three_winding_network()
+    proxy.loadflow_results["net1"] = {"converged": True}
+
+    data = json.loads(
+        await network_tools.check_current_violations(
+            network_id="net1",
+            min_nominal_voltage=300,
+            threshold_percent=100,
+            ctx=mock_ctx,
+        )
+    )
+
+    assert {v["element_id"] for v in data["violations"]} == {"T3W_HV"}
+
+
+def _coverage_gap_network():
+    """A network exercising the unrated-terminal coverage report.
+
+    L_OVER: line at 250% (a plain violation, fully rated).
+    L_NOLIM: line carrying current with NO rating on either side -> unrated [1,2].
+    T3W_GAP: 3WT rated on legs 1&2, leg 3 carries current but is unrated and the
+        rated legs are healthy -> unrated [3], not a violation.
+    T3W_OVER_GAP: 3WT overloaded on rated leg 1 (200%) AND unrated on leg 3 -> a
+        violation that also carries missing_sides=[3].
+    """
+    net = MagicMock()
+    net.get_variant_ids.return_value = ["InitialState"]
+    net.get_working_variant_id.return_value = "InitialState"
+    net.get_lines.return_value = pd.DataFrame(
+        {
+            "i1": [500.0, 100.0],
+            "i2": [-500.0, -100.0],
+            "voltage_level1_id": ["VL1", "VL2"],
+            "voltage_level2_id": ["VL1", "VL2"],
+        },
+        index=["L_OVER", "L_NOLIM"],
+    )
+    net.get_2_windings_transformers.return_value = pd.DataFrame(
+        columns=["i1", "i2", "voltage_level1_id", "voltage_level2_id"]
+    )
+    net.get_3_windings_transformers.return_value = pd.DataFrame(
+        {
+            "i1": [100.0, 800.0],
+            "i2": [100.0, 100.0],
+            "i3": [350.0, 350.0],
+            "voltage_level1_id": ["VL1", "VL1"],
+            "voltage_level2_id": ["VL2", "VL2"],
+            "voltage_level3_id": ["VL3", "VL3"],
+            "rated_u1": [400.0, 400.0],
+            "rated_u2": [225.0, 225.0],
+            "rated_u3": [90.0, 90.0],
+        },
+        index=["T3W_GAP", "T3W_OVER_GAP"],
+    )
+    net.get_operational_limits.return_value = pd.DataFrame(
+        {
+            "element_id": [
+                "L_OVER",
+                "T3W_GAP", "T3W_GAP",
+                "T3W_OVER_GAP", "T3W_OVER_GAP",
+            ],
+            "side": ["ONE", "ONE", "TWO", "ONE", "TWO"],
+            "type": ["CURRENT"] * 5,
+            "acceptable_duration": [-1] * 5,
+            "value": [200.0, 400.0, 400.0, 400.0, 400.0],
+        }
+    )
+    net.get_voltage_levels.return_value = pd.DataFrame(
+        {"substation_id": ["S1", "S2", "S2"], "nominal_v": [400.0, 225.0, 90.0]},
+        index=["VL1", "VL2", "VL3"],
+    )
+    return net
+
+
+@pytest.mark.asyncio
+async def test_check_current_violations_reports_unrated_terminals(
+    network_tools, mock_ctx
+):
+    # The coverage report: a current on a terminal with no permanent rating is
+    # surfaced (unrated) instead of silently skipped, for lines and 3WT legs alike.
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = _coverage_gap_network()
+    proxy.loadflow_results["net1"] = {"converged": True}
+
+    data = json.loads(
+        await network_tools.check_current_violations(
+            network_id="net1", threshold_percent=100, ctx=mock_ctx
+        )
+    )
+
+    # Overloads (unchanged behaviour) — worst first.
+    assert [v["element_id"] for v in data["violations"]] == ["L_OVER", "T3W_OVER_GAP"]
+    by_viol = {v["element_id"]: v for v in data["violations"]}
+    assert by_viol["L_OVER"]["missing_sides"] == []  # line borrows, fully covered
+    # An overloaded branch that ALSO has an unchecked leg carries it inline.
+    assert by_viol["T3W_OVER_GAP"]["missing_sides"] == [3]
+    assert by_viol["T3W_OVER_GAP"]["i_a"] == pytest.approx(800.0)  # rated leg 1
+
+    # Coverage gaps: not overloaded on rated terminals, but a terminal went
+    # unchecked for lack of a rating.
+    assert data["unrated_count"] == 2
+    by_gap = {u["element_id"]: u for u in data["unrated"]}
+    assert set(by_gap) == {"L_NOLIM", "T3W_GAP"}
+    assert sorted(by_gap["L_NOLIM"]["missing_sides"]) == [1, 2]
+    assert by_gap["T3W_GAP"]["missing_sides"] == [3]
+    assert by_gap["T3W_GAP"]["element_type"] == "three_windings_transformer"
+    assert by_gap["T3W_GAP"]["voltage_level3_id"] == "VL3"
+    assert by_gap["T3W_GAP"]["nominal_v"] == 400.0  # highest leg
+
+
+@pytest.mark.asyncio
+async def test_check_current_violations_no_unrated_on_fully_rated_network(
+    network_tools, mock_ctx
+):
+    # The common case: a fully-rated network reports an empty coverage section.
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = _current_network()
+    proxy.loadflow_results["net1"] = {"converged": True}
+
+    data = json.loads(
+        await network_tools.check_current_violations(
+            network_id="net1", threshold_percent=100, ctx=mock_ctx
+        )
+    )
+
+    assert data["unrated_count"] == 0
+    assert data["unrated"] == []
+    # Existing violations carry the additive, empty missing_sides field.
+    assert all(v["missing_sides"] == [] for v in data["violations"])
