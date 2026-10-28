@@ -17,6 +17,7 @@ from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.utils.artifact_utils import (
     artifact_response,
     dataframe_to_rows,
+    json_scalar,
     normalize_return_options,
 )
 from pypowsybl_mcp.utils.element_data_filter import (
@@ -2521,7 +2522,14 @@ class NetworkTools(PyPowsyblTool):
                     a_val = a_common.at[element_id, col]
                     b_val = b_common.at[element_id, col]
                     if _cells_differ(a_val, b_val):
-                        changes[col] = {"a": a_val, "b": b_val}
+                        # DataFrame.at yields numpy scalars; coerce to native
+                        # Python types so json.dumps emits a real bool/int/float,
+                        # not "True" / "3" via default=str. Feeds both the inline
+                        # answer and the artifact rows (built from `changes`).
+                        changes[col] = {
+                            "a": json_scalar(a_val),
+                            "b": json_scalar(b_val),
+                        }
                 if changes:
                     changed.append({"id": element_id, "changes": changes})
 

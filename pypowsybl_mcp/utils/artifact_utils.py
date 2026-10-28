@@ -120,6 +120,26 @@ def dataframe_to_rows(frame: pd.DataFrame, id_column: str = "id") -> list[dict]:
     return json.loads(flat.to_json(orient="records"))
 
 
+def json_scalar(value: Any) -> Any:
+    """A JSON-native copy of a single cell value (e.g. from DataFrame.at).
+
+    `DataFrame.at` / `.iat` hand back numpy scalars; json.dumps(default=str)
+    renders a numpy.float64 as a number (it subclasses float) but stringifies
+    numpy.bool_ and numpy.int64 -> "True" / "3", which read as truthy text to a
+    consumer. `.item()` converts any numpy scalar to its native Python type at
+    full precision (unlike to_json, which rounds floats); a value without
+    `.item()` (a plain str, a Timestamp) is returned unchanged. NaN / NaT
+    collapse to None, so the result is valid JSON rather than a NaN token - the
+    same outcome dataframe_to_rows gets for whole frames, here for one cell.
+
+    Meant for scalar cell values; a non-scalar is returned untouched.
+    """
+    if pd.api.types.is_scalar(value) and pd.isna(value):
+        return None
+    item = getattr(value, "item", None)
+    return item() if callable(item) else value
+
+
 def _json_bytes(rows: list[dict[str, Any]], columns: list[str]) -> bytes:
     """Serialize rows as a table document.
 

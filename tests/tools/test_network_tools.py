@@ -2318,6 +2318,42 @@ async def test_compare_variants_detects_a_changed_cell(network_tools, mock_ctx):
 
 
 @pytest.mark.asyncio
+async def test_compare_variants_keeps_bool_and_int_types(network_tools, mock_ctx):
+    # DataFrame.at yields numpy scalars; the diff must emit real JSON bool/int,
+    # not "False" / "3" via json.dumps(default=str).
+    proxy = network_tools.get_proxy("test-session")
+    mock_net, _ = _variant_aware_network(
+        "get_generators",
+        {
+            "InitialState": pd.DataFrame(
+                {"connected": [True], "tap": [3]}, index=["g1"]
+            ),
+            "v2": pd.DataFrame({"connected": [False], "tap": [5]}, index=["g1"]),
+        },
+    )
+    proxy.networks["net1"] = mock_net
+
+    result = await network_tools.compare_variants(
+        network_id="net1",
+        element_type="generator",
+        variant_a="InitialState",
+        variant_b="v2",
+        ctx=mock_ctx,
+    )
+
+    changes = json.loads(result)["changed"][0]["changes"]
+    # Real JSON booleans, not the strings "True" / "False".
+    assert changes["connected"]["a"] is True
+    assert changes["connected"]["b"] is False
+    # Real JSON ints, not "3" / "5". bool is a subclass of int in Python, so the
+    # not-bool guard keeps the check honest.
+    a_tap = changes["tap"]["a"]
+    assert isinstance(a_tap, int) and not isinstance(a_tap, bool)
+    assert changes["tap"]["a"] == 3
+    assert changes["tap"]["b"] == 5
+
+
+@pytest.mark.asyncio
 async def test_compare_variants_requires_variant_b(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
