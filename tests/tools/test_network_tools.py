@@ -2354,6 +2354,183 @@ async def test_compare_variants_keeps_bool_and_int_types(network_tools, mock_ctx
 
 
 @pytest.mark.asyncio
+async def test_compare_variants_tolerance_suppresses_float_noise(
+    network_tools, mock_ctx
+):
+    # p1 moves by solver noise (1e-9); connected flips and tap moves for real.
+    proxy = network_tools.get_proxy("test-session")
+    mock_net, _ = _variant_aware_network(
+        "get_generators",
+        {
+            "InitialState": pd.DataFrame(
+                {"connected": [True], "tap": [3], "p1": [100.0]}, index=["g1"]
+            ),
+            "v2": pd.DataFrame(
+                {"connected": [False], "tap": [5], "p1": [100.0 + 1e-9]}, index=["g1"]
+            ),
+        },
+    )
+    proxy.networks["net1"] = mock_net
+
+    async def run(**kw):
+        return json.loads(
+            await network_tools.compare_variants(
+                network_id="net1",
+                element_type="generator",
+                variant_a="InitialState",
+                variant_b="v2",
+                ctx=mock_ctx,
+                **kw,
+            )
+        )
+
+    # Opting out of the tolerance (rtol=0) shows the float noise as a change.
+    exact = await run(rtol=0.0, atol=0.0)
+    assert set(exact["changed"][0]["changes"]) == {"connected", "tap", "p1"}
+
+    # The default (rtol=1e-4) suppresses the load-flow noise, while the real
+    # bool/int changes stay (the tolerance only touches float columns).
+    default = await run()
+    assert set(default["changed"][0]["changes"]) == {"connected", "tap"}
+
+
+@pytest.mark.asyncio
+async def test_compare_variants_column_types_dtype_lens(network_tools, mock_ctx):
+    # connected (bool), tap (int), p1 (float), name (object); all change.
+    proxy = network_tools.get_proxy("test-session")
+    mock_net, _ = _variant_aware_network(
+        "get_generators",
+        {
+            "InitialState": pd.DataFrame(
+                {"connected": [True], "tap": [3], "p1": [100.0], "name": ["x"]},
+                index=["g1"],
+            ),
+            "v2": pd.DataFrame(
+                {"connected": [False], "tap": [5], "p1": [150.0], "name": ["y"]},
+                index=["g1"],
+            ),
+        },
+    )
+    proxy.networks["net1"] = mock_net
+
+    async def changed_cols(**kw):
+        data = json.loads(
+            await network_tools.compare_variants(
+                network_id="net1",
+                element_type="generator",
+                variant_a="InitialState",
+                variant_b="v2",
+                ctx=mock_ctx,
+                **kw,
+            )
+        )
+        return set(data["changed"][0]["changes"])
+
+    assert await changed_cols() == {"connected", "tap", "p1", "name"}  # default both
+    # numeric = int/float only (tap, p1); bool is NOT numeric here.
+    assert await changed_cols(column_types="numeric") == {"tap", "p1"}
+    # non_numeric = bool + object (connected, name).
+    assert await changed_cols(column_types="non_numeric") == {"connected", "name"}
+
+
+@pytest.mark.asyncio
+async def test_compare_variants_both_nan_is_not_a_change(network_tools, mock_ctx):
+    # q1 is NaN in both variants (not a change); p1 goes value -> NaN (a change).
+    proxy = network_tools.get_proxy("test-session")
+    mock_net, _ = _variant_aware_network(
+        "get_generators",
+        {
+            "InitialState": pd.DataFrame(
+                {"p1": [5.0], "q1": [float("nan")]}, index=["g1"]
+            ),
+            "v2": pd.DataFrame(
+                {"p1": [float("nan")], "q1": [float("nan")]}, index=["g1"]
+            ),
+        },
+    )
+    proxy.networks["net1"] = mock_net
+
+    data = json.loads(
+        await network_tools.compare_variants(
+            network_id="net1",
+            element_type="generator",
+            variant_a="InitialState",
+            variant_b="v2",
+            ctx=mock_ctx,
+        )
+    )
+
+    changes = data["changed"][0]["changes"]
+    assert set(changes) == {"p1"}  # q1 both-NaN is not reported
+    assert changes["p1"]["a"] == 5.0
+    assert changes["p1"]["b"] is None  # NaN -> null, not a NaN token
+
+
+@pytest.mark.asyncio
+async def test_compare_variants_warns_on_unknown_requested_column(
+    network_tools, mock_ctx
+):
+    proxy = network_tools.get_proxy("test-session")
+    mock_net, _ = _variant_aware_network(
+        "get_generators",
+        {
+            "InitialState": pd.DataFrame({"connected": [True]}, index=["g1"]),
+            "v2": pd.DataFrame({"connected": [False]}, index=["g1"]),
+        },
+    )
+    proxy.networks["net1"] = mock_net
+
+    data = json.loads(
+        await network_tools.compare_variants(
+            network_id="net1",
+            element_type="generator",
+            variant_a="InitialState",
+            variant_b="v2",
+            columns=["connected", "ghost"],
+            ctx=mock_ctx,
+        )
+    )
+
+    # The real column is still diffed; the unknown one is reported, not dropped silently.
+    assert set(data["changed"][0]["changes"]) == {"connected"}
+    assert "ghost" in data["warning"]
+
+
+@pytest.mark.asyncio
+async def test_compare_variants_rejects_bad_column_types_and_tolerance(
+    network_tools, mock_ctx
+):
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_variant_ids.return_value = ["InitialState", "v2"]
+    proxy.networks["net1"] = mock_net
+
+    bad_type = json.loads(
+        await network_tools.compare_variants(
+            network_id="net1",
+            element_type="generator",
+            variant_b="v2",
+            column_types="weird",
+            ctx=mock_ctx,
+        )
+    )
+    assert bad_type["success"] is False
+    assert "column_types" in bad_type["error"]
+
+    bad_atol = json.loads(
+        await network_tools.compare_variants(
+            network_id="net1",
+            element_type="generator",
+            variant_b="v2",
+            atol=-1.0,
+            ctx=mock_ctx,
+        )
+    )
+    assert bad_atol["success"] is False
+    assert ">= 0" in bad_atol["error"]
+
+
+@pytest.mark.asyncio
 async def test_compare_variants_requires_variant_b(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()

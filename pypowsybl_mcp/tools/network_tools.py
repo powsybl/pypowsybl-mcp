@@ -6,12 +6,14 @@
 import json
 from datetime import UTC, datetime
 
+import numpy as np
 import pandas as pd
 import pypowsybl as pp
 from cachetools import TTLCache
 from loguru import logger
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
+from pandas.api.types import is_bool_dtype, is_float_dtype, is_numeric_dtype
 
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.utils.artifact_utils import (
@@ -149,15 +151,16 @@ def _attach_scope_columns(df, network, element_type, referenced):
     return df
 
 
-def _cells_differ(a_value, b_value):
-    """NaN-aware inequality: two NaNs are equal, a NaN vs a value differs."""
-    a_na = pd.isna(a_value)
-    b_na = pd.isna(b_value)
-    if a_na and b_na:
-        return False
-    if a_na != b_na:
-        return True
-    return a_value != b_value
+def _is_true_numeric(series) -> bool:
+    """Int/float column, but NOT bool.
+
+    pandas counts a bool column as numeric, yet compare_variants treats a
+    connection flag as structural state, not a measured quantity. Excluding bool
+    here puts connected*/regulating in the "non_numeric" lens alongside the id
+    columns, and leaves only the real int/float columns (tap positions, targets,
+    flows) under "numeric" (where the atol/rtol tolerance applies).
+    """
+    return is_numeric_dtype(series) and not is_bool_dtype(series)
 
 
 def register_network_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
@@ -2361,6 +2364,9 @@ class NetworkTools(PyPowsyblTool):
         variant_b: str | None = None,
         conditions: list | dict | str | None = None,
         columns: list[str] | None = None,
+        column_types: str = "both",
+        atol: float = 1e-6,
+        rtol: float = 1e-4,
         return_as: str = "inline",
         limit: int | None = None,
         cursor: str | int | None = None,
@@ -2388,8 +2394,30 @@ class NetworkTools(PyPowsyblTool):
                 loading_percent, connected*) is rejected — it would select a
                 different subset per variant and fake added/removed. Applied
                 identically to both variants. None = compare the whole table.
-            columns (list[str], optional): Restrict which columns are diffed.
-                None = every column present in both variants.
+            columns (list[str], optional): Restrict which columns are diffed, by
+                name. None = the element's own columns, filtered by column_types.
+                An explicit list overrides column_types; names absent from the
+                table are skipped and reported in a warning. Only the getter's own
+                columns are diffed — scope columns attached for `conditions`
+                (country1, nominal_v, ...) are variant-independent and excluded.
+            column_types (str, optional): Which columns the default (columns=None)
+                diff covers, by dtype: "both" (default), "numeric" (int/float —
+                tap positions, targets, flows), or "non_numeric" (everything else,
+                INCLUDING booleans — connected*/regulating and the id columns).
+                Use "non_numeric" for a flow-noise-free structural view, or
+                "numeric" with atol/rtol to see measured changes above a threshold.
+            rtol (float, optional): Relative tolerance for FLOAT columns: a pair
+                within |a - b| <= atol + rtol*|b| (numpy isclose) counts as
+                unchanged. This is the main lever — the float columns are mixed
+                units (MW, A, p.u., degrees), so a relative threshold is the only
+                one consistent across them. Default 1e-4 (0.01%): above load-flow
+                solver noise, below operational significance, so the default diff
+                shows SIGNIFICANT float changes, not every numerical bit. Pass
+                rtol=0 (and atol=0) for an exact diff. Bool/int columns (connected,
+                tap positions, int targets) are ALWAYS compared exactly.
+            atol (float, optional): Absolute tolerance paired with rtol, acting as
+                a near-zero floor so idling (~0) flows are not flagged by a
+                vanishing relative tolerance. Default 1e-6.
             return_as (str, optional): "inline" (default) or "artifact_json" /
                 "artifact_csv" (one long row per change: id, change_type, column,
                 value_a, value_b).
@@ -2399,9 +2427,10 @@ class NetworkTools(PyPowsyblTool):
         Returns:
             str: JSON. {"success": true, counts {total, scoped, common, added,
             removed, changed}, added[], removed[], changed[{id, changes:{col:{a,b}}}]}.
-            An empty diff means "nothing changed in scope". Flows/voltages only
-            differ meaningfully if both variants were solved (run a load flow on
-            each first); structural diffs need none.
+            An empty diff means "nothing changed in scope" beyond the float
+            tolerance (rtol/atol). Flows/voltages only differ meaningfully if both
+            variants were solved (run a load flow on each first); structural diffs
+            need none.
 
         Example:
             compare_variants("net", element_type="line", variant_a="InitialState",
@@ -2433,6 +2462,26 @@ class NetworkTools(PyPowsyblTool):
             return_mode, artifact_format = normalize_return_options(return_as, None)
         except ValueError as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
+
+        if column_types not in ("both", "numeric", "non_numeric"):
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": "column_types must be 'both', 'numeric' or 'non_numeric'",
+                },
+                indent=2,
+            )
+        try:
+            atol, rtol = float(atol), float(rtol)
+        except (TypeError, ValueError):
+            return json.dumps(
+                {"success": False, "error": "atol and rtol must be numbers"},
+                indent=2,
+            )
+        if atol < 0 or rtol < 0:
+            return json.dumps(
+                {"success": False, "error": "atol and rtol must be >= 0"}, indent=2
+            )
 
         element_methods = ELEMENT_TYPE_TO_GETTER
         if element_type not in element_methods:
@@ -2498,7 +2547,13 @@ class NetworkTools(PyPowsyblTool):
                 return frame
 
             network.set_working_variant(variant_a)
-            total = len(method())
+            base = method()
+            total = len(base)
+            # Diff only the element's OWN columns: scope columns attached for
+            # `conditions` (country1, nominal_v, substation_id) are
+            # variant-independent, so they never differ and would only widen the
+            # comparison.
+            base_cols = list(base.columns)
             df_a = scoped(variant_a)
             df_b = scoped(variant_b)
 
@@ -2506,32 +2561,62 @@ class NetworkTools(PyPowsyblTool):
             removed = list(df_a.index.difference(df_b.index))
             common = df_a.index.intersection(df_b.index)
 
+            present = [c for c in base_cols if c in df_a.columns and c in df_b.columns]
+            missing_columns: list[str] = []
             if columns:
-                diff_cols = [
-                    c for c in columns if c in df_a.columns and c in df_b.columns
-                ]
+                # An explicit list wins over column_types; flag unknown names
+                # instead of dropping them silently.
+                missing_columns = [c for c in columns if c not in present]
+                diff_cols = [c for c in columns if c in present]
+            elif column_types == "numeric":
+                diff_cols = [c for c in present if _is_true_numeric(df_a[c])]
+            elif column_types == "non_numeric":
+                diff_cols = [c for c in present if not _is_true_numeric(df_a[c])]
             else:
-                diff_cols = [c for c in df_a.columns if c in df_b.columns]
+                diff_cols = present
 
             a_common = df_a.loc[common, diff_cols]
             b_common = df_b.loc[common, diff_cols]
-            changed = []
-            for element_id in common:
-                changes = {}
-                for col in diff_cols:
-                    a_val = a_common.at[element_id, col]
-                    b_val = b_common.at[element_id, col]
-                    if _cells_differ(a_val, b_val):
-                        # DataFrame.at yields numpy scalars; coerce to native
-                        # Python types so json.dumps emits a real bool/int/float,
-                        # not "True" / "3" via default=str. Feeds both the inline
-                        # answer and the artifact rows (built from `changes`).
-                        changes[col] = {
-                            "a": json_scalar(a_val),
-                            "b": json_scalar(b_val),
-                        }
-                if changes:
-                    changed.append({"id": element_id, "changes": changes})
+
+            # Vectorised cell diff: differs, except both-NaN. For float columns, a
+            # pair within atol/rtol counts as unchanged (load-flow numerical
+            # noise); bool/int columns are always compared exactly. Only the True
+            # cells are materialised, so the cost is O(changes), not O(rows x cols).
+            ne = (a_common != b_common) & ~(a_common.isna() & b_common.isna())
+            if atol or rtol:
+                float_cols = [
+                    c
+                    for c in diff_cols
+                    if is_float_dtype(a_common[c]) and is_float_dtype(b_common[c])
+                ]
+                if float_cols:
+                    close = pd.DataFrame(
+                        np.isclose(
+                            a_common[float_cols].to_numpy(dtype=float),
+                            b_common[float_cols].to_numpy(dtype=float),
+                            rtol=rtol,
+                            atol=atol,
+                            equal_nan=True,
+                        ),
+                        index=a_common.index,
+                        columns=float_cols,
+                    )
+                    ne[float_cols] &= ~close
+
+            changed_by_id: dict = {}
+            stacked = ne.stack()
+            for element_id, col in stacked[stacked].index:
+                # DataFrame.at yields numpy scalars; json_scalar coerces them to
+                # native bool/int/float so json.dumps emits real types, not
+                # "True" / "3" via default=str. Feeds the artifact rows too.
+                changed_by_id.setdefault(element_id, {})[col] = {
+                    "a": json_scalar(a_common.at[element_id, col]),
+                    "b": json_scalar(b_common.at[element_id, col]),
+                }
+            changed = [
+                {"id": element_id, "changes": changes}
+                for element_id, changes in changed_by_id.items()
+            ]
 
             counts = {
                 "total": total,
@@ -2550,14 +2635,22 @@ class NetworkTools(PyPowsyblTool):
                 "conditions": conditions,
                 "counts": counts,
             }
+            warnings = []
             # For an equipment type, a non-empty added/removed is an artifact of
             # filter divergence or a getter dropping rows, never a real change.
             if added or removed:
-                summary["warning"] = (
+                warnings.append(
                     "Non-empty added/removed on an equipment type usually means a "
                     "getter dropped rows or the filter diverged, not a structural "
                     "change; equipment index sets should match across variants."
                 )
+            if missing_columns:
+                warnings.append(
+                    "requested columns not found and skipped: "
+                    + ", ".join(missing_columns)
+                )
+            if warnings:
+                summary["warning"] = " ".join(warnings)
 
             if return_mode == "artifact":
                 rows = []
