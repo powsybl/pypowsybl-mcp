@@ -155,9 +155,7 @@ def test_filter_column_vs_column_with_ref():
 
 
 def test_filter_categorical_equality_passes_strings_through():
-    df = pd.DataFrame(
-        {"country": ["FR", "BE", "FR"]}, index=["l1", "l2", "l3"]
-    )
+    df = pd.DataFrame({"country": ["FR", "BE", "FR"]}, index=["l1", "l2", "l3"])
 
     out = apply_element_filter(
         df,
@@ -319,18 +317,14 @@ def test_bad_json_conditions_is_rejected():
     df = pd.DataFrame({"p": [1.0]}, index=["a"])
 
     with pytest.raises(FilterError, match="valid JSON"):
-        apply_element_filter(
-            df, element_type="generator", conditions="[{not json}]"
-        )
+        apply_element_filter(df, element_type="generator", conditions="[{not json}]")
 
 
 def test_empty_group_is_rejected():
     df = pd.DataFrame({"p": [1.0]}, index=["a"])
 
     with pytest.raises(FilterError, match="non-empty"):
-        apply_element_filter(
-            df, element_type="generator", conditions={"all": []}
-        )
+        apply_element_filter(df, element_type="generator", conditions={"all": []})
 
 
 def test_conditions_leaf_count_cap():
@@ -736,7 +730,10 @@ def test_dimensioning_terminal_single_limit_is_shared():
 
 
 def test_dimensioning_terminal_none_without_a_resolvable_limit():
-    assert dimensioning_terminal({"i1": 100.0, "i2": 100.0}, "permanent") == (None, None)
+    assert dimensioning_terminal({"i1": 100.0, "i2": 100.0}, "permanent") == (
+        None,
+        None,
+    )
 
 
 def test_loading_percent_temporary_is_referenceable():

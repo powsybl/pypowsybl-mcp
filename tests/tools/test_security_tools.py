@@ -598,5 +598,3 @@ async def test_create_contingencies_list_pagination_invalid_cursor(sa_tools, moc
     data = json.loads(result)
     assert data["success"] is False
     assert "cursor" in data["error"].lower()
-
-

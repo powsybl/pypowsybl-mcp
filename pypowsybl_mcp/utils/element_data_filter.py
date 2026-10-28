@@ -358,7 +358,10 @@ def _converter_station_voltage_levels(network):
     vl_by_station = {}
     for getter in ("get_vsc_converter_stations", "get_lcc_converter_stations"):
         stations = getattr(network, getter)()
-        if isinstance(stations, pd.DataFrame) and "voltage_level_id" in stations.columns:
+        if (
+            isinstance(stations, pd.DataFrame)
+            and "voltage_level_id" in stations.columns
+        ):
             vl_by_station.update(stations["voltage_level_id"].to_dict())
     return vl_by_station
 
@@ -388,7 +391,10 @@ def attach_substation_geotags(elements_df, network, element_type):
 
     if element_type == "hvdc_line":
         vl_by_station = _converter_station_voltage_levels(network)
-        for end, col in (("1", "converter_station1_id"), ("2", "converter_station2_id")):
+        for end, col in (
+            ("1", "converter_station1_id"),
+            ("2", "converter_station2_id"),
+        ):
             if col in out.columns:
                 tags = tags_for(out[col].map(vl_by_station))
                 for tag in _GEOTAG_COLUMNS:
@@ -417,7 +423,11 @@ def attach_substation_id(elements_df, network, element_type):
     Branches span two substations, so substation_id is only meaningful for
     injections; left untouched when already present or unresolvable.
     """
-    if elements_df is None or elements_df.empty or "substation_id" in elements_df.columns:
+    if (
+        elements_df is None
+        or elements_df.empty
+        or "substation_id" in elements_df.columns
+    ):
         return elements_df
     if "voltage_level_id" not in elements_df.columns:
         return elements_df
@@ -440,7 +450,10 @@ def converter_station_nominal_voltages(network, vl_nominal):
     out = {}
     for getter in ("get_vsc_converter_stations", "get_lcc_converter_stations"):
         stations = getattr(network, getter)()
-        if isinstance(stations, pd.DataFrame) and "voltage_level_id" in stations.columns:
+        if (
+            isinstance(stations, pd.DataFrame)
+            and "voltage_level_id" in stations.columns
+        ):
             for station_id, vl_id in stations["voltage_level_id"].items():
                 out[station_id] = vl_nominal.get(vl_id, float("nan"))
     return out

@@ -3117,7 +3117,10 @@ async def test_check_current_violations_single_type_and_band(network_tools, mock
     # Band keeps only the 400 kV branches.
     band = json.loads(
         await network_tools.check_current_violations(
-            network_id="net1", min_nominal_voltage=300, threshold_percent=100, ctx=mock_ctx
+            network_id="net1",
+            min_nominal_voltage=300,
+            threshold_percent=100,
+            ctx=mock_ctx,
         )
     )
     assert {v["element_id"] for v in band["violations"]} == {"L1", "T1"}
@@ -3214,8 +3217,12 @@ def _three_winding_network():
     net.get_operational_limits.return_value = pd.DataFrame(
         {
             "element_id": [
-                "T3W_HV", "T3W_HV", "T3W_HV",
-                "T3W_LV", "T3W_LV", "T3W_LV",
+                "T3W_HV",
+                "T3W_HV",
+                "T3W_HV",
+                "T3W_LV",
+                "T3W_LV",
+                "T3W_LV",
             ],
             "side": ["ONE", "TWO", "THREE", "ONE", "TWO", "THREE"],
             "type": ["CURRENT"] * 6,
@@ -3356,8 +3363,10 @@ def _coverage_gap_network():
         {
             "element_id": [
                 "L_OVER",
-                "T3W_GAP", "T3W_GAP",
-                "T3W_OVER_GAP", "T3W_OVER_GAP",
+                "T3W_GAP",
+                "T3W_GAP",
+                "T3W_OVER_GAP",
+                "T3W_OVER_GAP",
             ],
             "side": ["ONE", "ONE", "TWO", "ONE", "TWO"],
             "type": ["CURRENT"] * 5,

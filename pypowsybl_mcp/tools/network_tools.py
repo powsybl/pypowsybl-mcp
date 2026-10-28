@@ -109,15 +109,25 @@ LOADING_BRANCH_TYPES = [
 # a derived metric, which would select a different subset per variant and fake
 # added/removed; those are rejected with a friendly error.
 _COMPARE_SCOPE_ALLOWLIST = {
-    "country", "country1", "country2",
-    "regionCvg", "regionCvg1", "regionCvg2",
+    "country",
+    "country1",
+    "country2",
+    "regionCvg",
+    "regionCvg1",
+    "regionCvg2",
     "nominal_v",
     "substation_id",
-    "voltage_level_id", "voltage_level1_id", "voltage_level2_id",
+    "voltage_level_id",
+    "voltage_level1_id",
+    "voltage_level2_id",
 }
 _GEOTAG_SCOPE_FIELDS = {
-    "country", "country1", "country2",
-    "regionCvg", "regionCvg1", "regionCvg2",
+    "country",
+    "country1",
+    "country2",
+    "regionCvg",
+    "regionCvg1",
+    "regionCvg2",
 }
 # Longest added/removed id list shown inline before it is truncated with a hint.
 _COMPARE_ID_LIST_CAP = 200
@@ -1679,7 +1689,9 @@ class NetworkTools(PyPowsyblTool):
         except ValueError as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
-        metric = "loading_percent" if kind == "permanent" else "loading_percent_temporary"
+        metric = (
+            "loading_percent" if kind == "permanent" else "loading_percent_temporary"
+        )
 
         try:
             loadflow_executed = False
@@ -1800,17 +1812,25 @@ class NetworkTools(PyPowsyblTool):
                             # i_a / limit_a describe the dimensioning terminal — the
                             # side whose |i| / limit drives loading_percent — so they
                             # match the reported loading on an asymmetric transformer.
-                            i_a, limit_a = dimensioning_terminal(fields, kind, element_t)
+                            i_a, limit_a = dimensioning_terminal(
+                                fields, kind, element_t
+                            )
                             violations.append(
                                 {
                                     "element_id": element_id,
                                     "name": name,
                                     "element_type": element_t,
-                                    "voltage_level1_id": fields.get("voltage_level1_id"),
-                                    "voltage_level2_id": fields.get("voltage_level2_id"),
+                                    "voltage_level1_id": fields.get(
+                                        "voltage_level1_id"
+                                    ),
+                                    "voltage_level2_id": fields.get(
+                                        "voltage_level2_id"
+                                    ),
                                     # None off a 3WT; present so a three-winding
                                     # overload names its third leg (uniform schema).
-                                    "voltage_level3_id": fields.get("voltage_level3_id"),
+                                    "voltage_level3_id": fields.get(
+                                        "voltage_level3_id"
+                                    ),
                                     "nominal_v": nominal_out,
                                     "i_a": None if i_a is None else round(i_a, 3),
                                     "limit_a": None
@@ -1833,9 +1853,15 @@ class NetworkTools(PyPowsyblTool):
                                     "element_id": element_id,
                                     "name": name,
                                     "element_type": element_t,
-                                    "voltage_level1_id": fields.get("voltage_level1_id"),
-                                    "voltage_level2_id": fields.get("voltage_level2_id"),
-                                    "voltage_level3_id": fields.get("voltage_level3_id"),
+                                    "voltage_level1_id": fields.get(
+                                        "voltage_level1_id"
+                                    ),
+                                    "voltage_level2_id": fields.get(
+                                        "voltage_level2_id"
+                                    ),
+                                    "voltage_level3_id": fields.get(
+                                        "voltage_level3_id"
+                                    ),
                                     "nominal_v": nominal_out,
                                     "missing_sides": missing_sides,
                                 }
@@ -1851,9 +1877,11 @@ class NetworkTools(PyPowsyblTool):
             # Worst first, across every type (no caller sort — a safety report has
             # one sensible order).
             violations.sort(
-                key=lambda v: v["loading_percent"]
-                if v["loading_percent"] is not None
-                else float("-inf"),
+                key=lambda v: (
+                    v["loading_percent"]
+                    if v["loading_percent"] is not None
+                    else float("-inf")
+                ),
                 reverse=True,
             )
             # Coverage gaps have no loading to rank by; stable by id.
@@ -2308,7 +2336,10 @@ class NetworkTools(PyPowsyblTool):
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.error(f"Failed to get network element data: {e}")
             return json.dumps(
-                {"success": False, "error": f"Failed to get network element data: {e!s}"},
+                {
+                    "success": False,
+                    "error": f"Failed to get network element data: {e!s}",
+                },
                 indent=2,
             )
         finally:
@@ -2458,9 +2489,7 @@ class NetworkTools(PyPowsyblTool):
             def scoped(vid):
                 network.set_working_variant(vid)
                 frame = method()
-                frame = _attach_scope_columns(
-                    frame, network, element_type, referenced
-                )
+                frame = _attach_scope_columns(frame, network, element_type, referenced)
                 if conditions is not None:
                     frame = apply_element_filter(
                         frame, element_type=element_type, conditions=conditions
@@ -2578,9 +2607,7 @@ class NetworkTools(PyPowsyblTool):
             )
 
             try:
-                changed_page, pagination = paginate(
-                    changed, limit=limit, cursor=cursor
-                )
+                changed_page, pagination = paginate(changed, limit=limit, cursor=cursor)
             except (ValueError, TypeError) as e:
                 return json.dumps({"success": False, "error": str(e)}, indent=2)
 
