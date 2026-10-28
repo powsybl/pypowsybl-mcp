@@ -253,15 +253,41 @@ class SecurityTools(PyPowsyblTool):
         return filter_result["contingencies"], "auto"
 
     @staticmethod
+    def _violation_passes(
+        limit_type: str,
+        loading_percent: float | None,
+        limit_type_filter: set[str] | None,
+        threshold_percent: float | None,
+    ) -> bool:
+        """Whether a violation survives the active filters.
+
+        Shared by the pre- and post-contingency loops so the whole response obeys
+        one lens. ``limit_type_filter`` keeps only the requested kinds (e.g.
+        {"CURRENT"}). ``threshold_percent`` is a thermal-overload filter: it
+        narrows CURRENT rows only — voltage violations have no "% over" in this
+        sense and always pass it — and a CURRENT row whose loading is not
+        computable (infinite limit) is dropped once a threshold is in force.
+        """
+        if limit_type_filter is not None and limit_type not in limit_type_filter:
+            return False
+        if threshold_percent is not None and limit_type == "CURRENT":
+            return loading_percent is not None and loading_percent > threshold_percent
+        return True
+
+    @staticmethod
     def _compute_ranked_contingencies(
-        post_contingency_results, limit_type_filter: set[str] | None = None
+        post_contingency_results,
+        limit_type_filter: set[str] | None = None,
+        threshold_percent: float | None = None,
     ) -> tuple[list[dict], int]:
         """Sort the contingencies, worst first, and add a loading to each violation.
 
         The contingency with the most problems comes first. Every violation gets
         its loading and its overload in percent, so nobody has to compute them
-        again. If limit_type_filter is given, we keep only those kinds of
-        violations, for example {"CURRENT"} for line overloads.
+        again. Violations that do not pass the active filters (limit_type_filter,
+        threshold_percent — see _violation_passes) are dropped here, so every
+        downstream view (ranked_violations, the detail list, the top-contingency
+        counts and total_violations) stays consistent with the filter.
         """
         ranked_contingencies = []
         total_violations = 0
@@ -273,18 +299,16 @@ class SecurityTools(PyPowsyblTool):
 
             for violation in limit_violations:
                 limit_type = SecurityTools._limit_type_name(violation)
-                if (
-                    limit_type_filter is not None
-                    and limit_type not in limit_type_filter
-                ):
-                    continue
-
                 violation_data = SecurityTools._limit_violation_data(violation)
                 loading_percent, excess_percent = SecurityTools._loading_and_excess(
                     violation_data["value"], violation_data["limit"]
                 )
                 violation_data["loading_percent"] = loading_percent
                 violation_data["excess_percent"] = excess_percent
+                if not SecurityTools._violation_passes(
+                    limit_type, loading_percent, limit_type_filter, threshold_percent
+                ):
+                    continue
                 contingency_violations.append(violation_data)
 
             total_violations += len(contingency_violations)
@@ -307,16 +331,16 @@ class SecurityTools(PyPowsyblTool):
     def _flatten_ranked_violations(
         ranked_contingencies: list[dict],
         top_violations: int | None,
-        threshold_percent: float | None = None,
     ) -> list[dict]:
         """Gather every violation into one flat list, most loaded first.
 
         Each row remembers the contingency it comes from, so the list reads like
         a simple table. Rows without a real loading (infinite limit) go to the
         end. We keep at most top_violations rows, or all of them when it is None
-        - which is what an artifact wants, since nothing is truncated there.
-        When threshold_percent is set, only rows loaded strictly above it are
-        kept (applied before the top_violations cut).
+        - which is what an artifact wants, since nothing is truncated there. The
+        rows are already narrowed by the active filters (limit_type_filter,
+        threshold_percent) in _compute_ranked_contingencies, so this is a pure
+        flatten-and-sort.
         """
         flat = []
         for item in ranked_contingencies:
@@ -328,14 +352,6 @@ class SecurityTools(PyPowsyblTool):
                         **violation,
                     }
                 )
-
-        if threshold_percent is not None:
-            flat = [
-                v
-                for v in flat
-                if v["loading_percent"] is not None
-                and v["loading_percent"] > threshold_percent
-            ]
 
         flat.sort(
             key=lambda v: (
@@ -426,11 +442,20 @@ class SecurityTools(PyPowsyblTool):
                 "LOW_VOLTAGE". Default None keeps them all; use "CURRENT" for overloads.
             top_violations (int, optional): How many lines to keep in the
                 "ranked_violations" table. Default: 20.
-            threshold_percent (float, optional): When set, keep only ranked
-                violations loaded strictly above this percentage (the N-1 overload
-                case; pair with limit_type="CURRENT" for overloads only). The
-                post_contingency breakdown counts stay unfiltered — they describe
-                the full study. Default None keeps every violation.
+            threshold_percent (float, optional): Keep only CURRENT (thermal)
+                violations loaded strictly above this percentage; voltage
+                violations are never affected by it. Applied consistently across
+                ranked_violations, the detail contingencies_with_violations,
+                top_violating_contingencies, post_contingency.total_violations and
+                the pre_contingency violations; only violation_types_breakdown /
+                all_violations_count stay the full, unfiltered census of the study.
+                NOTE: the security analysis reports an element only once it is
+                ALREADY over its limit, so every CURRENT violation is already above
+                100%. A threshold below 100 therefore keeps them all and CANNOT
+                reveal near-limit (sub-100%) branches — those never appear as
+                violations at all. Use >= 100 (e.g. 120) to isolate the serious
+                overloads; to find near-limit branches in the base state, use
+                check_current_violations. Default None keeps every violation.
             return_as (str, optional): "inline" (default) puts the violations in the
                 answer, capped by top_violations and detail_limit. "artifact" writes
                 every violation of every contingency to a temporary file instead -
@@ -589,12 +614,22 @@ class SecurityTools(PyPowsyblTool):
             if hasattr(pre_contingency_result, "limit_violations"):
                 violations = pre_contingency_result.limit_violations
                 for violation in violations:
+                    limit_type = self._limit_type_name(violation)
                     violation_data = self._limit_violation_data(violation)
                     loading_percent, excess_percent = self._loading_and_excess(
                         violation_data["value"], violation_data["limit"]
                     )
                     violation_data["loading_percent"] = loading_percent
                     violation_data["excess_percent"] = excess_percent
+                    # Same filters as the post-contingency views, so the whole
+                    # response obeys one lens (limit_type + threshold).
+                    if not self._violation_passes(
+                        limit_type,
+                        loading_percent,
+                        limit_type_filter,
+                        threshold_percent,
+                    ):
+                        continue
                     pre_contingency_violations.append(violation_data)
 
             pre_contingency_data = {
@@ -617,7 +652,7 @@ class SecurityTools(PyPowsyblTool):
             all_violations_count = sum(violation_types_breakdown.values())
 
             ranked_contingencies, total_violations = self._compute_ranked_contingencies(
-                post_contingency_results, limit_type_filter
+                post_contingency_results, limit_type_filter, threshold_percent
             )
             contingencies_with_violations_list = [
                 item for item in ranked_contingencies if item["violation_count"] > 0
@@ -652,7 +687,7 @@ class SecurityTools(PyPowsyblTool):
                 # contingency, one row each, with no cap and no pagination. The
                 # ranked list kept for the inline answer would be a subset.
                 all_violations = self._flatten_ranked_violations(
-                    contingencies_with_violations_list, None, threshold_percent
+                    contingencies_with_violations_list, None
                 )
                 result["top_violating_contingencies"] = [
                     {
@@ -679,7 +714,7 @@ class SecurityTools(PyPowsyblTool):
 
             result["top_violations"] = top_violations
             result["ranked_violations"] = self._flatten_ranked_violations(
-                contingencies_with_violations_list, top_violations, threshold_percent
+                contingencies_with_violations_list, top_violations
             )
 
             if mode == "summary":

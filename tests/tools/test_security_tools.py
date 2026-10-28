@@ -354,6 +354,136 @@ async def test_run_security_analysis_ranked_violations(sa_tools, mock_ctx):
     }
 
 
+async def _run_sa(sa_tools, mock_ctx, post_results, pre_violations=None, **kwargs):
+    """Run run_security_analysis against mocked pre/post results, return the JSON."""
+    proxy = sa_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net._handle = MagicMock()
+    proxy.networks["net1"] = mock_net
+    proxy.current_network_id = "net1"
+
+    with patch("pypowsybl_mcp.tools.security_tools.pp.security") as mock_security:
+        mock_sa = MagicMock()
+        mock_security.create_analysis.return_value = mock_sa
+        mock_results = MagicMock()
+        mock_results.pre_contingency_result = MagicMock(
+            limit_violations=pre_violations or []
+        )
+        mock_results.pre_contingency_result.status.name = "CONVERGED"
+        mock_results.post_contingency_results = post_results
+        mock_sa.run_ac.return_value = mock_results
+
+        result = await sa_tools.run_security_analysis(
+            network_id="net1",
+            contingencies=[{"element_id": "l1", "contingency_id": "C1"}],
+            ctx=mock_ctx,
+            **kwargs,
+        )
+    return json.loads(result)
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_threshold_filters_every_view(sa_tools, mock_ctx):
+    # C1 has a 150% overload, C2 a 130% one. threshold=135 keeps only C1's
+    # violation everywhere, not just in ranked_violations.
+    post = {
+        "C1": _PostResult([_make_violation("lineA", 100.0, 150.0, "CURRENT")]),
+        "C2": _PostResult([_make_violation("lineC", 100.0, 130.0, "CURRENT")]),
+    }
+    data = await _run_sa(
+        sa_tools, mock_ctx, post, limit_type="CURRENT", threshold_percent=135
+    )
+
+    assert [v["subject_id"] for v in data["ranked_violations"]] == ["lineA"]
+    # top_violating_contingencies and the counts drop C2 too (0 violations left).
+    top = data["top_violating_contingencies"]
+    assert [c["contingency_id"] for c in top] == ["C1"]
+    assert top[0]["violation_count"] == 1
+    assert data["post_contingency"]["total_violations"] == 1
+    assert data["post_contingency"]["contingencies_with_violations"] == 1
+    # ...but the breakdown stays the full census of the study.
+    assert data["post_contingency"]["violation_types_breakdown"] == {"CURRENT": 2}
+    assert data["post_contingency"]["all_violations_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_threshold_filters_detail_mode(sa_tools, mock_ctx):
+    # Detail mode's contingencies_with_violations is filtered too: C2's only
+    # violation is sub-threshold, so the whole contingency leaves the list.
+    post = {
+        "C1": _PostResult([_make_violation("lineA", 100.0, 150.0, "CURRENT")]),
+        "C2": _PostResult([_make_violation("lineC", 100.0, 130.0, "CURRENT")]),
+    }
+    data = await _run_sa(
+        sa_tools,
+        mock_ctx,
+        post,
+        limit_type="CURRENT",
+        threshold_percent=135,
+        mode="detail",
+    )
+
+    ids = [c["contingency_id"] for c in data["contingencies_with_violations"]]
+    assert ids == ["C1"]
+    assert data["returned_details"] == 1
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_threshold_spares_voltage_violations(
+    sa_tools, mock_ctx
+):
+    # With limit_type=None all types flow through, and the threshold is CURRENT
+    # only: a LOW_VOLTAGE row (loading < 100) survives while a sub-threshold
+    # CURRENT row is dropped.
+    post = {
+        "C1": _PostResult(
+            [
+                _make_violation("busLow", 0.95, 0.90, "LOW_VOLTAGE"),  # ~94.7%
+                _make_violation("lineA", 100.0, 150.0, "CURRENT"),  # 150%
+                _make_violation("lineB", 100.0, 110.0, "CURRENT"),  # 110%
+            ]
+        ),
+    }
+    data = await _run_sa(sa_tools, mock_ctx, post, threshold_percent=120)
+
+    subjects = {v["subject_id"] for v in data["ranked_violations"]}
+    assert "busLow" in subjects  # voltage kept despite loading < 100
+    assert "lineA" in subjects  # CURRENT 150% kept
+    assert "lineB" not in subjects  # CURRENT 110% dropped
+    assert data["post_contingency"]["total_violations"] == 2
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_threshold_below_100_keeps_all_overloads(
+    sa_tools, mock_ctx
+):
+    # The SA only reports elements already over their limit, so everything it
+    # reports is above 100%: a threshold below 100 is a no-op, it cannot surface
+    # near-limit branches.
+    post = {
+        "C1": _PostResult(
+            [
+                _make_violation("lineA", 100.0, 105.0, "CURRENT"),
+                _make_violation("lineB", 100.0, 130.0, "CURRENT"),
+            ]
+        ),
+    }
+    data = await _run_sa(
+        sa_tools, mock_ctx, post, limit_type="CURRENT", threshold_percent=90
+    )
+
+    assert {v["subject_id"] for v in data["ranked_violations"]} == {"lineA", "lineB"}
+    assert data["post_contingency"]["total_violations"] == 2
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_rejects_negative_threshold(sa_tools, mock_ctx):
+    data = await _run_sa(sa_tools, mock_ctx, {}, threshold_percent=-5)
+
+    assert data["success"] is False
+    assert ">= 0" in data["error"]
+
+
 # --- run_security_analysis: input validation / edge cases ---
 
 
