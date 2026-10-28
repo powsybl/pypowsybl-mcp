@@ -172,40 +172,22 @@ async def test_an_unknown_return_as_is_refused_before_any_computation(
 
 
 @pytest.mark.asyncio
-async def test_an_unknown_artifact_format_is_refused(network_tools, mock_ctx):
+async def test_voltage_violations_can_be_written_as_csv(network_tools, mock_ctx):
+    # Folded vocabulary: the format rides in return_as (no artifact_format param).
     proxy = network_tools.get_proxy("test-session")
-    proxy.networks["net1"] = network_with_buses([440.0])
-
-    data = json.loads(
-        await network_tools.check_voltage_violations(
-            network_id="net1",
-            return_as="artifact",
-            artifact_format="xlsx",
-            ctx=mock_ctx,
-        )
-    )
-
-    assert data["success"] is False
-    assert "json, csv" in data["error"]
-
-
-@pytest.mark.asyncio
-async def test_the_artifact_format_is_not_checked_for_an_inline_answer(
-    network_tools, mock_ctx
-):
-    proxy = network_tools.get_proxy("test-session")
-    proxy.networks["net1"] = network_with_buses([440.0])
+    proxy.networks["net1"] = network_with_buses([440.0, 445.0])
     proxy.loadflow_results["net1"] = {"converged": True}
 
     data = json.loads(
         await network_tools.check_voltage_violations(
-            network_id="net1", artifact_format="xlsx", ctx=mock_ctx
+            network_id="net1", return_as="artifact_csv", ctx=mock_ctx
         )
     )
 
     assert data["success"] is True
-    assert "artifact" not in data
-    assert len(data["violations"]) == 1
+    assert data["return_as"] == "artifact"
+    assert data["artifact"]["format"] == "csv"
+    assert data["artifact"]["url"].endswith(".csv")
 
 
 # --- get_network_element_data ----------------------------------------------
@@ -582,16 +564,16 @@ async def test_the_violations_are_flattened_once_for_an_artifact(
 
 
 @pytest.mark.asyncio
-async def test_the_security_analysis_ignores_the_artifact_format_when_inline(
-    security_tools, mock_ctx
-):
+async def test_security_analysis_can_be_written_as_csv(security_tools, mock_ctx):
+    # Folded vocabulary: the format rides in return_as (no artifact_format param).
     post_results = {"C1": FakeResult("CONVERGED", [FakeViolation("LINE_1")])}
 
     data = json.loads(
         await run_analysis(
-            security_tools, mock_ctx, post_results, artifact_format="xlsx"
+            security_tools, mock_ctx, post_results, return_as="artifact_csv"
         )
     )
 
-    assert data["success"] is True
-    assert len(data["ranked_violations"]) == 1
+    assert data["return_as"] == "artifact"
+    assert data["artifact"]["format"] == "csv"
+    assert data["artifact"]["url"].endswith(".csv")

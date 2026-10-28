@@ -1320,7 +1320,6 @@ class NetworkTools(PyPowsyblTool):
         unit: str = "pu",
         use_network_limits: bool = True,
         return_as: str = "inline",
-        artifact_format: str = "json",
         limit: int | None = None,
         cursor: str | int | None = None,
         ctx: Context = None,  # MCPServer injects this
@@ -1356,16 +1355,14 @@ class NetworkTools(PyPowsyblTool):
             use_network_limits (bool, optional): Use the low/high voltage limits carried
                 by the voltage levels when available. Default: True.
             return_as (str, optional): "inline" (default) puts the violations in the
-                answer, paginated. "artifact" writes every violation to a temporary
-                file instead and returns a link to it, with the counts and a short
-                preview. Use it on a real network, where the violations run into the
-                hundreds: the file is fetched over plain HTTP by whoever needs the
-                data, so nothing is truncated and no number is retyped.
-            artifact_format (str, optional): "json" (default) or "csv", when
-                return_as="artifact". Default: "json".
+                answer, paginated. "artifact_json" / "artifact_csv" writes every
+                violation to a temporary file instead and returns a link to it, with
+                the counts and a short preview. Use it on a real network, where the
+                violations run into the hundreds: the file is fetched over plain HTTP
+                by whoever needs the data, so nothing is truncated and no number is
+                retyped.
             limit (int, optional): Max violations per page. None = all violations.
-                Ignored when return_as="artifact": an artifact always holds
-                every violation.
+                Ignored for an artifact: it always holds every violation.
             cursor (str | int, optional): Page offset (default 0). See pagination.nextCursor.
 
         Returns:
@@ -1430,9 +1427,9 @@ class NetworkTools(PyPowsyblTool):
             )
 
         try:
-            return_mode, artifact_format = normalize_return_options(
-                return_as, artifact_format
-            )
+            # Folded vocabulary: the format rides in return_as
+            # (artifact_json/artifact_csv); pass None for the legacy second arg.
+            return_mode, artifact_format = normalize_return_options(return_as, None)
         except ValueError as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 

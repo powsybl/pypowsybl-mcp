@@ -375,7 +375,6 @@ class SecurityTools(PyPowsyblTool):
         top_violations: int = 20,
         threshold_percent: float | None = None,
         return_as: str = "inline",
-        artifact_format: str = "json",
         limit: int | None = None,
         cursor: str | int | None = None,
         ctx: Context = None,  # MCPServer injects this
@@ -457,14 +456,13 @@ class SecurityTools(PyPowsyblTool):
                 overloads; to find near-limit branches in the base state, use
                 check_current_violations. Default None keeps every violation.
             return_as (str, optional): "inline" (default) puts the violations in the
-                answer, capped by top_violations and detail_limit. "artifact" writes
-                every violation of every contingency to a temporary file instead -
-                one row per violation, carrying its contingency_id - and returns a
-                link to it next to the same counts. Use it for a full N-1 study: the
-                table runs into the thousands of rows, and the file is fetched over
-                plain HTTP by whoever needs the data instead of being read out loud.
-            artifact_format (str, optional): "json" (default) or "csv", when
-                return_as="artifact". Default: "json".
+                answer, capped by top_violations and detail_limit. "artifact_json" /
+                "artifact_csv" writes every violation of every contingency to a
+                temporary file instead - one row per violation, carrying its
+                contingency_id - and returns a link to it next to the same counts.
+                Use it for a full N-1 study: the table runs into the thousands of
+                rows, and the file is fetched over plain HTTP by whoever needs the
+                data instead of being read out loud.
             limit (int, optional): Max entries in contingencies_with_violations per page.
             cursor (str | int, optional): Page offset for contingencies_with_violations.
 
@@ -566,9 +564,9 @@ class SecurityTools(PyPowsyblTool):
                 )
 
         try:
-            return_mode, artifact_format = normalize_return_options(
-                return_as, artifact_format
-            )
+            # Folded vocabulary: the format rides in return_as
+            # (artifact_json/artifact_csv); pass None for the legacy second arg.
+            return_mode, artifact_format = normalize_return_options(return_as, None)
         except ValueError as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 

@@ -36,8 +36,9 @@ This document lists all MCP tools exposed by the PyPowsybl MCP server, grouped b
 | `check_voltage_violations`           | List buses whose voltage is outside acceptable bounds (N state).            |
 | `check_current_violations`           | List branches loaded above a threshold in the N state (line + 2WT, worst first). |
 
-`get_network_element_data` and `check_voltage_violations` also take `return_as="artifact"` to hand a large table over
-as a file instead of inlining it — see [Returning a big result as a file](#returning-a-big-result-as-a-file-return_asartifact).
+`get_network_element_data`, `check_voltage_violations`, `check_current_violations`, `compare_variants` and
+`run_security_analysis` also take `return_as="artifact_json"` / `"artifact_csv"` to hand a large table over
+as a file instead of inlining it — see [Returning a big result as a file](#returning-a-big-result-as-a-file).
 
 ##### Network modification
 
@@ -149,6 +150,18 @@ LLM**.
 | `read_resource`       | Read back a documentation page already fetched this session with `get_online_resource`, from the cache.   |
 
 ---
+
+#### Returning a big result as a file
+
+Read tools that can produce a large table — `get_network_element_data`, `check_voltage_violations`,
+`check_current_violations`, `compare_variants` and `run_security_analysis` — accept
+`return_as="artifact_json"` or `return_as="artifact_csv"` (default `"inline"`). Instead of inlining the
+rows, the server writes them to a temporary file and answers with the summary counts, the column list, a
+short preview and a download URL. Nothing is truncated, and the full table is fetched over plain HTTP by
+whoever needs it rather than travelling through the client's context.
+
+The format is carried in `return_as` itself — `artifact_json` for JSON, `artifact_csv` for CSV. There is no
+separate `artifact_format` argument.
 
 #### Notes
 
