@@ -57,13 +57,23 @@ _UNIT_LABELS = {"MVar": "MVAr", "ohm": "Ohm"}
 
 
 def _bullets(doc: str | None) -> dict[str, str]:
-    """Attribute name -> description, from one docstring."""
+    """Attribute name -> description, from one docstring.
+
+    The first bullet of a name wins. A later one is either the id of a further
+    dataframe or a copy-paste slip upstream -- pypowsybl 1.15 documents the
+    deadband of a shunt compensator as a second ``target_v`` -- and letting it
+    win would describe the attribute as something else.
+    """
     found: dict[str, str] = {}
     current: str | None = None
     for line in (doc or "").splitlines():
         match = _BULLET.match(line)
         if match:
-            current = match.group("name")
+            name = match.group("name")
+            if name in found:
+                current = None  # skip the duplicate and its continuation lines
+                continue
+            current = name
             found[current] = match.group("text").strip()
         elif current and line.strip() and _CONTINUATION.match(line):
             found[current] = f"{found[current]} {line.strip()}"
