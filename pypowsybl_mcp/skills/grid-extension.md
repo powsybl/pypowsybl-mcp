@@ -199,7 +199,9 @@ isolates the state of the network, not its structure.
   `run_loadflow()` before reading any flow or voltage.
 * Ids must be free across the whole network, whatever the element type.
 * `create_network_elements` checks every item against its schema before creating
-  anything, so a typo leaves the network untouched. A failure that only the
+  anything -- attribute names, required attributes, types, accepted values and
+  table rows such as tap-changer steps -- so such a mistake leaves the network
+  untouched. A failure that only the
   network can detect (an id already taken, a connection point that does not
   exist) stops the batch there and the report says how far it got.
 * Everything happens in memory. `export_network()` saves the extended grid.

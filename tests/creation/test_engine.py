@@ -815,6 +815,45 @@ def test_batch_checks_every_item_before_creating_anything(engine, bus_breaker):
     assert "S_NEW" not in bus_breaker.get_substations().index
 
 
+@pytest.mark.parametrize(
+    "load",
+    [
+        {"id": "L_NEW", "bus": "B4"},  # p0 missing
+        {"id": "L_NEW", "bus": "B4", "p0": 1.0, "type": "NOPE"},  # bad enum
+        {"id": "L_NEW", "bus": "B4", "p0": "a lot"},  # bad type
+    ],
+    ids=["missing-required", "bad-enum", "bad-type"],
+)
+def test_batch_checks_values_before_creating_anything(engine, bus_breaker, load):
+    with pytest.raises(CreationError, match="item 2"):
+        engine.create_many(
+            bus_breaker,
+            [
+                {"element_type": "substation", "id": "S_NEW"},
+                {"element_type": "load", **load},
+            ],
+        )
+
+    assert "S_NEW" not in bus_breaker.get_substations().index
+
+
+def test_batch_checks_table_rows_before_creating_anything(engine, site):
+    with pytest.raises(CreationError, match="item 2: Row 1 of 'steps'"):
+        engine.create_many(
+            site,
+            [
+                {"element_type": "substation", "id": "S_NEW"},
+                {
+                    "element_type": "ratio_tap_changer",
+                    "element_id": "TR",
+                    "steps": [{"rh0": 0.9}, {"rho": 1.1}],
+                },
+            ],
+        )
+
+    assert "S_NEW" not in site.get_substations().index
+
+
 def test_batch_stops_where_the_network_refuses_and_says_so(engine, bus_breaker):
     done, failed = engine.create_many(
         bus_breaker,
