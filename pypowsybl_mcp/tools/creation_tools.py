@@ -169,7 +169,7 @@ class CreationTools(PyPowsyblTool):
                 {"element_id": "LINE_B4_DC", "permanent_limit": 800.0})
 
         Notes:
-            - Cached load-flow results are cleared: re-run run_loadflow()
+            - Cached load-flow results are cleared on success: re-run run_loadflow()
             - A branch created without operational_limits can never be reported as
               overloaded, and a transformer has no tap changer until one is created
               on it
@@ -190,16 +190,21 @@ class CreationTools(PyPowsyblTool):
         logger.debug(f"Creating a {element_type} in network {network_id}")
 
         try:
-            proxy.invalidate_loadflow(network_id)
             report = self.engine.create(network, element_type, attributes or {})
-            info = f"In network '{network_id}': {report}"
-            logger.success(info)
-            return info
         except CreationError as error:
+            # Raised before anything reaches pypowsybl: the network, and the
+            # results computed on it, are unchanged.
             return self._failure(f"Failed to create a {element_type}", error)
         except (pp.PyPowsyblError, ValueError, KeyError) as error:
+            # pypowsybl may have applied part of the call before refusing it.
+            proxy.invalidate_loadflow(network_id)
             logger.error(f"Failed to create a {element_type}: {error}")
             return f"Failed to create a {element_type}: {error!s}"
+
+        proxy.invalidate_loadflow(network_id)
+        info = f"In network '{network_id}': {report}"
+        logger.success(info)
+        return info
 
     async def create_network_elements(
         self,
@@ -256,7 +261,7 @@ class CreationTools(PyPowsyblTool):
               what is already in the network
             - The ids of connection points created by a voltage level are reported
               as they are generated, and can be referenced by later items
-            - Cached load-flow results are cleared
+            - Cached load-flow results are cleared once something is created
 
         Related Tools:
             - describe_element_creation(): What each type needs
@@ -276,15 +281,19 @@ class CreationTools(PyPowsyblTool):
         logger.debug(f"Creating {len(items)} element(s) in network {network_id}")
 
         try:
-            proxy.invalidate_loadflow(network_id)
             done, failed = self.engine.create_many(network, list(items))
         except CreationError as error:
+            # The batch was rejected by its pre-check: nothing was created.
             return self._failure(
                 f"Nothing was created in network '{network_id}'", error
             )
         except (pp.PyPowsyblError, ValueError, KeyError) as error:
+            proxy.invalidate_loadflow(network_id)
             logger.error(f"Failed to create elements: {error}")
             return f"Failed to create elements: {error!s}"
+        # A failed item may have been half applied, so it counts as a change.
+        if done or failed:
+            proxy.invalidate_loadflow(network_id)
 
         lines = [f"In network '{network_id}':"]
         lines += [f"- {line}" for line in done]
