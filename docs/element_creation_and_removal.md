@@ -4,6 +4,9 @@ This page explains how the creation and removal tools work: what each tool does,
 every element type comes from, what happens during a call, and how the whole thing stays in step with the installed
 `pypowsybl`. It describes the code as it is.
 
+They form the **grid-extension plugin** (see [grid_extension.md](grid_extension.md)): a module of the server,
+`pypowsybl_mcp/plugins/grid_extension/`, active by default and turned off with `MCP_DISABLED_PLUGINS=grid_extension`.
+
 These are long-term study tools (connection studies, network development). They change the structure of the
 in-memory network, and are only meant to be used when the user explicitly asks for equipment to be built or retired.
 
@@ -35,27 +38,28 @@ When `network_id` is omitted, every tool works on the session's current network.
 
 | Path                                        | Role                                                                                       |
 |---------------------------------------------|--------------------------------------------------------------------------------------------|
-| `pypowsybl_mcp/tools/creation_tools.py`     | The three creation tools and the cheat sheet. Thin: they resolve the network and call the engine. |
-| `pypowsybl_mcp/tools/removal_tools.py`      | The removal tool, its per-type dispatch and the cascade summary.                           |
-| `pypowsybl_mcp/creation/schema.py`          | What pypowsybl says about its creation calls: field names, types, dataframe groups, and the `create_*` method of each type. Nothing hand-written. |
-| `pypowsybl_mcp/creation/doc_mining.py`      | Attribute descriptions and units parsed from pypowsybl docstrings. Informational only.     |
-| `pypowsybl_mcp/creation/profiles.py`        | The hand-written overlay: one profile per element type, plus the schema-only profiles derived for the others. |
-| `pypowsybl_mcp/creation/rules.py`           | Constraints a profile can declare (conditional requirements, orderings, bounds).           |
-| `pypowsybl_mcp/creation/derivations.py`     | Values the engine fills in on the caller's behalf (feeder positions, rated voltages, tap steps, limit rows). |
-| `pypowsybl_mcp/creation/executors.py`       | How each kind of element is handed to pypowsybl (bay helpers, plain calls, several dataframes). |
-| `pypowsybl_mcp/creation/engine.py`          | The single pipeline every creation goes through, and the descriptors.                      |
-| `pypowsybl_mcp/creation/context.py`         | `CreationError`, connection points, and the context shared by rules, derivations and executors. |
-| `pypowsybl_mcp/creation/drift.py`           | The profile checks against the installed pypowsybl, the coverage snapshot and the startup check. |
-| `pypowsybl_mcp/creation/coverage_snapshot.json` | What the tools covered on the pypowsybl version they were checked against. Generated.  |
-| `scripts/creation_coverage.py`              | Generates the coverage tables of `tools_reference.md` and the snapshot.                    |
-| `pypowsybl_mcp/skills/grid-extension.md`    | The skill teaching a model the workflows (connecting a datacenter, a site at another voltage). |
+| `pypowsybl_mcp/plugins/grid_extension/plugin.py` | The plugin entry points: registers the tools, the skill and `/admin/creation-coverage`. |
+| `pypowsybl_mcp/plugins/grid_extension/creation_tools.py` | The three creation tools and the cheat sheet. Thin: they resolve the network and call the engine. |
+| `pypowsybl_mcp/plugins/grid_extension/removal_tools.py` | The removal tool, its per-type dispatch and the cascade summary.                           |
+| `pypowsybl_mcp/plugins/grid_extension/creation/schema.py`          | What pypowsybl says about its creation calls: field names, types, dataframe groups, and the `create_*` method of each type. Nothing hand-written. |
+| `pypowsybl_mcp/plugins/grid_extension/creation/doc_mining.py`      | Attribute descriptions and units parsed from pypowsybl docstrings. Informational only.     |
+| `pypowsybl_mcp/plugins/grid_extension/creation/profiles.py`        | The hand-written overlay: one profile per element type, plus the schema-only profiles derived for the others. |
+| `pypowsybl_mcp/plugins/grid_extension/creation/rules.py`           | Constraints a profile can declare (conditional requirements, orderings, bounds).           |
+| `pypowsybl_mcp/plugins/grid_extension/creation/derivations.py`     | Values the engine fills in on the caller's behalf (feeder positions, rated voltages, tap steps, limit rows). |
+| `pypowsybl_mcp/plugins/grid_extension/creation/executors.py`       | How each kind of element is handed to pypowsybl (bay helpers, plain calls, several dataframes). |
+| `pypowsybl_mcp/plugins/grid_extension/creation/engine.py`          | The single pipeline every creation goes through, and the descriptors.                      |
+| `pypowsybl_mcp/plugins/grid_extension/creation/context.py`         | `CreationError`, connection points, and the context shared by rules, derivations and executors. |
+| `pypowsybl_mcp/plugins/grid_extension/creation/drift.py`           | The profile checks against the installed pypowsybl, the coverage snapshot and the startup check. |
+| `pypowsybl_mcp/plugins/grid_extension/creation/coverage_snapshot.json` | What the tools covered on the pypowsybl version they were checked against. Generated.  |
+| `scripts/creation_coverage.py`              | Generates the coverage tables of `docs/grid_extension.md` and the snapshot.                    |
+| `pypowsybl_mcp/plugins/grid_extension/skills/grid-extension.md` | The skill teaching a model the workflows (connecting a datacenter, a site at another voltage). |
 
 ---
 
 #### 3. Three groups of element types
 
 Every element type pypowsybl can create falls in one of three groups. The current lists are generated in
-[tools_reference.md](tools_reference.md#coverage-of-the-pypowsybl-creation-api).
+[grid_extension.md](grid_extension.md#coverage-of-the-pypowsybl-creation-api).
 
 | Group           | Count (1.15.0) | What is checked                                                                 | Switching equipment |
 |-----------------|----------------|---------------------------------------------------------------------------------|---------------------|
@@ -432,10 +436,10 @@ The schema follows the installed version by construction; the profiles do not. T
 in the installed pypowsybl: the element type is creatable, the executor and documentation calls exist, the
 required, managed, defaulted, enumerated and rule attributes are fields of the schema, every derivation produces a
 real field, no virtual or table attribute has become a pypowsybl field, the id is still the index, the connection
-attributes are present. `tests/creation/test_profiles_consistency.py` runs them for every profile.
+attributes are present. `tests/plugins/grid_extension/creation/test_profiles_consistency.py` runs them for every profile.
 
 **Coverage tables and snapshot.** `scripts/creation_coverage.py --write` regenerates the coverage tables of
-`tools_reference.md` and `pypowsybl_mcp/creation/coverage_snapshot.json`, which ships with the package: the pypowsybl
+`docs/grid_extension.md` and `pypowsybl_mcp/plugins/grid_extension/creation/coverage_snapshot.json`, which ships with the package: the pypowsybl
 version, the group of every type and the attributes of each. `--check`, run by `test_documented_coverage.py`, fails
 whenever either no longer matches, including after every version bump.
 
@@ -460,7 +464,7 @@ These checks only see names. When upgrading pypowsybl, still review by hand:
    to a bay executor; `create_boundary_line_bay` already exists for `boundary_line`, which is schema-only today;
 4. the docstring format the mining relies on;
 5. the identifiable type names in `FEEDER_TYPES` (`removal_tools.py`);
-6. then run the tests, `scripts/creation_coverage.py --write`, and read the diff of `tools_reference.md`.
+6. then run the tests, `scripts/creation_coverage.py --write`, and read the diff of `docs/grid_extension.md`.
 
 ---
 
@@ -484,11 +488,11 @@ These checks only see names. When upgrading pypowsybl, still review by hand:
 1. Add a `CreationProfile` with `_register(...)` in `profiles.py`: pick the executor and connection kind, list the
    required attributes, the managed ones, defaults, units, enumerations, rules and derivations, and write the summary
    and guidance. Name calls as strings.
-2. Run `uv run pytest tests/creation`: the consistency tests flag any name the profile gets wrong.
-3. Add engine tests on a real network (`tests/creation/test_engine.py`), ideally one that runs a load flow on the
+2. Run `uv run pytest tests/plugins/grid_extension`: the consistency tests flag any name the profile gets wrong.
+3. Add engine tests on a real network (`tests/plugins/grid_extension/creation/test_engine.py`), ideally one that runs a load flow on the
    result.
-4. Run `PYTHONPATH=. uv run python scripts/creation_coverage.py --write`: the type moves from "schema only" to
-   "profiled" in `tools_reference.md` and in the snapshot.
+4. Run `uv run python scripts/creation_coverage.py --write`: the type moves from "schema only" to
+   "profiled" in `docs/grid_extension.md` and in the snapshot.
 5. If the type deserves it, extend the cheat sheet in `creation_tools.py` and the `grid-extension` skill.
 
 ---
@@ -497,11 +501,11 @@ These checks only see names. When upgrading pypowsybl, still review by hand:
 
 | File                                         | Covers                                                                     |
 |----------------------------------------------|----------------------------------------------------------------------------|
-| `tests/creation/test_schema.py`              | the introspected schema and docstring mining                               |
-| `tests/creation/test_engine.py`              | the pipeline against real networks: every executor, rules, rows, batches, schema-only types, load flows on the result |
-| `tests/creation/test_profiles_consistency.py`| the name checks for every profile, design invariants, the schema-only registry |
-| `tests/creation/test_documented_coverage.py` | the generated tables and the shipped snapshot                              |
-| `tests/creation/test_drift.py`               | the startup check: verified, upgrade simulated, profiles disabled, missing snapshot |
-| `tests/tools/test_creation_tools.py`         | the MCP tools: descriptors, rejections, load-flow cache, end-to-end site creation |
-| `tests/tools/test_removal_tools.py`          | removal per type, the cascade gate, the cascade summary against real removals |
-| `tests/test_admin.py`                        | `/admin/creation-coverage`                                                 |
+| `tests/plugins/grid_extension/creation/test_schema.py`              | the introspected schema and docstring mining                               |
+| `tests/plugins/grid_extension/creation/test_engine.py`              | the pipeline against real networks: every executor, rules, rows, batches, schema-only types, load flows on the result |
+| `tests/plugins/grid_extension/creation/test_profiles_consistency.py`| the name checks for every profile, design invariants, the schema-only registry |
+| `tests/plugins/grid_extension/creation/test_documented_coverage.py` | the generated tables and the shipped snapshot                              |
+| `tests/plugins/grid_extension/creation/test_drift.py`               | the startup check: verified, upgrade simulated, profiles disabled, missing snapshot |
+| `tests/plugins/grid_extension/test_creation_tools.py` | the MCP tools: descriptors, rejections, load-flow cache, end-to-end site creation |
+| `tests/plugins/grid_extension/test_removal_tools.py` | removal per type, the cascade gate, the cascade summary against real removals |
+| `tests/plugins/grid_extension/test_plugin.py` | the entry points, the disable switch, the skill, `/admin/creation-coverage` |

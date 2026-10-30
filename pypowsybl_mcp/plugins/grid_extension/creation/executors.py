@@ -29,7 +29,7 @@ from typing import Any
 import pandas as pd
 import pypowsybl as pp
 
-from pypowsybl_mcp.creation.schema import (
+from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
     ElementSchema,
     Field,
     creation_schema,

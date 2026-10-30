@@ -15,9 +15,16 @@ hand-written half can never drift silently from the generated half.
 
 import pytest
 
-from pypowsybl_mcp.creation.drift import PROFILE_CHECKS
-from pypowsybl_mcp.creation.profiles import PROFILES, UNPROFILED, Connection
-from pypowsybl_mcp.creation.schema import CREATION_METHODS, creatable_element_types
+from pypowsybl_mcp.plugins.grid_extension.creation.drift import PROFILE_CHECKS
+from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
+    PROFILES,
+    UNPROFILED,
+    Connection,
+)
+from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
+    CREATION_METHODS,
+    creatable_element_types,
+)
 
 PROFILE_IDS = sorted(PROFILES)
 
@@ -109,7 +116,7 @@ def test_every_creation_method_is_observed():
 
 def test_the_descriptor_renders_for_every_profile(profile):
     """describe() is the caller's only documentation: it must work everywhere."""
-    from pypowsybl_mcp.creation.engine import CreationEngine
+    from pypowsybl_mcp.plugins.grid_extension.creation.engine import CreationEngine
 
     described = CreationEngine().describe(profile.element_type)
 

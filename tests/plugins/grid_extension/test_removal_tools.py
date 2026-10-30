@@ -10,8 +10,11 @@ import pypowsybl as pp
 import pytest
 from cachetools import TTLCache
 
-from pypowsybl_mcp.tools.creation_tools import CreationTools
-from pypowsybl_mcp.tools.removal_tools import RemovalTools, register_removal_tools
+from pypowsybl_mcp.plugins.grid_extension.creation_tools import CreationTools
+from pypowsybl_mcp.plugins.grid_extension.removal_tools import (
+    RemovalTools,
+    register_removal_tools,
+)
 
 
 class MockContext:

@@ -17,10 +17,13 @@ import pypowsybl as pp
 import pytest
 from pypowsybl.network import Network
 
-from pypowsybl_mcp.creation import drift, schema
-from pypowsybl_mcp.creation.engine import CreationEngine
-from pypowsybl_mcp.creation.executors import BranchBays, FeederBay
-from pypowsybl_mcp.creation.profiles import PROFILES, UNPROFILED
+from pypowsybl_mcp.plugins.grid_extension.creation import drift, schema
+from pypowsybl_mcp.plugins.grid_extension.creation.engine import CreationEngine
+from pypowsybl_mcp.plugins.grid_extension.creation.executors import (
+    BranchBays,
+    FeederBay,
+)
+from pypowsybl_mcp.plugins.grid_extension.creation.profiles import PROFILES, UNPROFILED
 
 
 @pytest.fixture

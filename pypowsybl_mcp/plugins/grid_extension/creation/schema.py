@@ -26,7 +26,7 @@ The metadata is descriptive, not authoritative: it says nothing about which
 fields are required, and it will happily describe combinations that make no
 sense (asking for the feeder-bay attributes of a *substation* returns a
 perfectly well-formed field list). Deciding which call is legal for which
-element type is the job of :mod:`pypowsybl_mcp.creation.profiles`.
+element type is the job of :mod:`pypowsybl_mcp.plugins.grid_extension.creation.profiles`.
 """
 
 from __future__ import annotations

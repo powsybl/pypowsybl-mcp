@@ -7,7 +7,7 @@
 """The three MCP tools that create network elements.
 
 They are deliberately thin: everything they do lives in
-:mod:`pypowsybl_mcp.creation`, so that adding an element type is a profile entry
+:mod:`pypowsybl_mcp.plugins.grid_extension.creation`, so that adding an element type is a profile entry
 rather than a new tool. What belongs here is the MCP surface -- session and
 network resolution, load-flow invalidation, and turning an engine result or a
 rejection into the text the caller reads.
@@ -21,9 +21,9 @@ from loguru import logger
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 
-from pypowsybl_mcp.creation.context import CreationError
-from pypowsybl_mcp.creation.drift import startup_check
-from pypowsybl_mcp.creation.engine import CreationEngine
+from pypowsybl_mcp.plugins.grid_extension.creation.context import CreationError
+from pypowsybl_mcp.plugins.grid_extension.creation.drift import startup_check
+from pypowsybl_mcp.plugins.grid_extension.creation.engine import CreationEngine
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 
 #: Minimal attributes of the most-used element types, inlined in the tool

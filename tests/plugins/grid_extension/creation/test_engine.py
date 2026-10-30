@@ -9,8 +9,11 @@
 import pypowsybl as pp
 import pytest
 
-from pypowsybl_mcp.creation.context import CreationError
-from pypowsybl_mcp.creation.engine import CreationEngine, resolve_connection_point
+from pypowsybl_mcp.plugins.grid_extension.creation.context import CreationError
+from pypowsybl_mcp.plugins.grid_extension.creation.engine import (
+    CreationEngine,
+    resolve_connection_point,
+)
 
 
 @pytest.fixture
@@ -848,7 +851,7 @@ def test_only_the_main_table_of_a_schema_only_type_is_accepted(engine, bus_break
 
 
 def test_a_profile_wins_over_the_fallback(engine):
-    from pypowsybl_mcp.creation.profiles import PROFILES
+    from pypowsybl_mcp.plugins.grid_extension.creation.profiles import PROFILES
 
     for name in PROFILES:
         assert not engine.profile_for(name).schema_only
