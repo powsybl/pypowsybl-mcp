@@ -22,6 +22,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.creation.context import CreationError
+from pypowsybl_mcp.creation.drift import startup_check
 from pypowsybl_mcp.creation.engine import CreationEngine
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 
@@ -47,6 +48,9 @@ CHEAT_SHEET = """
 
 
 def register_creation_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
+    # Before any request: a profile the installed pypowsybl no longer matches is
+    # set aside here, and what changed since the profiles were checked is logged.
+    startup_check()
     tools = CreationTools(pypowsybl_proxies)
     tools.register_tools_with_mcp(mcp)
 

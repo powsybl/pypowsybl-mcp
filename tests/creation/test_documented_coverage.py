@@ -47,3 +47,13 @@ def test_every_supported_type_is_listed_in_the_documentation():
 
     for name in [*PROFILES, *UNPROFILED]:
         assert f"`{name}`" in documented
+
+
+def test_the_shipped_snapshot_matches_the_installed_pypowsybl():
+    """The startup check compares against it, so it must be the real coverage."""
+    from pypowsybl_mcp.creation.drift import coverage_snapshot, load_snapshot
+
+    assert load_snapshot() == coverage_snapshot(), (
+        "pypowsybl_mcp/creation/coverage_snapshot.json is out of date. Run: "
+        "python scripts/creation_coverage.py --write"
+    )

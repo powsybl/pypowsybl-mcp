@@ -14,6 +14,10 @@ that states them is generated rather than written by hand:
     uv run python scripts/creation_coverage.py --write  # update the docs
     uv run python scripts/creation_coverage.py --check  # fail if they differ
 
+``--write`` also writes ``pypowsybl_mcp/creation/coverage_snapshot.json``, which
+ships with the package: the server compares the installed pypowsybl with it at
+startup (see ``pypowsybl_mcp/creation/drift.py``).
+
 ``--check`` runs as a test (``tests/creation/test_documented_coverage.py``), so
 a pypowsybl upgrade that adds or renames an element type shows up as a failing
 test naming exactly what the documentation no longer says.
@@ -25,6 +29,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from pypowsybl_mcp.creation.drift import (
+    SNAPSHOT_PATH,
+    coverage_snapshot,
+    load_snapshot,
+    write_snapshot,
+)
 from pypowsybl_mcp.creation.profiles import PROFILES, UNPROFILED
 from pypowsybl_mcp.creation.schema import creatable_element_types
 
@@ -121,16 +131,18 @@ def main() -> int:
         text = DOCS.read_text()
         start, end = text.index(BEGIN), text.index(END) + len(END)
         DOCS.write_text(text[:start] + generated + text[end:])
-        print(f"updated {DOCS}")
+        write_snapshot()
+        print(f"updated {DOCS} and {SNAPSHOT_PATH}")
         return 0
     if arguments.check:
-        if current() != generated:
+        if current() != generated or load_snapshot() != coverage_snapshot():
             print(
-                "docs/tools_reference.md no longer matches the profiles or the "
-                "installed pypowsybl. Run: python scripts/creation_coverage.py --write"
+                "docs/tools_reference.md or the coverage snapshot no longer matches "
+                "the profiles or the installed pypowsybl. Run: "
+                "python scripts/creation_coverage.py --write"
             )
             return 1
-        print("creation coverage documentation is up to date")
+        print("creation coverage documentation and snapshot are up to date")
         return 0
     print(generated)
     return 0

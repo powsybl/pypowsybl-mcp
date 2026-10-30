@@ -34,6 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import cache
 
+from loguru import logger
 from pypowsybl import _pypowsybl as _pp
 
 # SeriesMetadata.type is an int code; these are the four it can take.
@@ -172,7 +173,15 @@ def _creation_methods() -> dict[str, str]:
     from pypowsybl.network import Network, create_empty
 
     captured: dict[str, _pp.ElementType] = {}
-    original = Network._create_elements
+    original = getattr(Network, "_create_elements", None)
+    if original is None:
+        # A private hook, so it may go in an upgrade. Without it no type can be
+        # created schema-only; the startup check reports them as gone.
+        logger.error(
+            "Network._create_elements not found in this pypowsybl: the types "
+            "without a profile cannot be created"
+        )
+        return {}
 
     def spy(self, element_type, dfs, **kwargs):
         captured["type"] = element_type
@@ -212,6 +221,7 @@ def _creation_methods() -> dict[str, str]:
 CREATION_METHODS: dict[str, str] = _creation_methods()
 
 
+@cache
 def creatable_element_types() -> tuple[str, ...]:
     """Element types for which pypowsybl exposes creation metadata.
 
@@ -227,7 +237,7 @@ def creatable_element_types() -> tuple[str, ...]:
             groups = _pp.get_network_elements_creation_dataframes_metadata(
                 getattr(_pp.ElementType, member)
             )
-        except (_pp.PyPowsyblError, TypeError, ValueError):  # pragma: no cover
+        except (_pp.PyPowsyblError, AttributeError, TypeError, ValueError):
             continue
         if groups and any(len(group) for group in groups):
             names.append(member.lower())

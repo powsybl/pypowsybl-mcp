@@ -490,7 +490,10 @@ end-to-end tests that build a real network and run a load flow, as the current t
    was wanted for are delivered by two other means: `tests/creation/test_profiles_consistency.py`
    fails when a profile names an attribute or a callable pypowsybl no longer has, and
    `scripts/creation_coverage.py --check` (run as a test) fails when the documented coverage
-   stops matching the profiles and the installed version.
+   stops matching the profiles and the installed version. The same name checks also run when
+   the server starts (`pypowsybl_mcp/creation/drift.py`), against a coverage snapshot shipped
+   with the package: a deployment on another pypowsybl version logs what changed, and a profile
+   that no longer matches is disabled, its type falling back to schema-only creation.
 5. **Attribute naming.** Raw pypowsybl names, with a short alias table for the everyday ones
    (`bus` → `bus_or_busbar_section_id`, `bus1`/`bus2`, `element_id` for the target of an
    attachment). Keeping the raw names means the descriptor, the documentation and the mined

@@ -38,6 +38,18 @@ from pypowsybl_mcp.creation.schema import (
 )
 
 
+def resolve_call(call: str):
+    """The pypowsybl callable a dotted name such as ``Network.create_loads`` or
+    ``pp.network.create_load_bay`` designates, or None when it no longer exists.
+
+    Profiles name their calls as strings, resolved only when used, so that an
+    upgrade removing one does not stop the server from importing.
+    """
+    owner, _, name = call.rpartition(".")
+    target = pp.network.Network if owner.endswith("Network") else pp.network
+    return getattr(target, name, None)
+
+
 def _frame(rows: list[dict], index: str) -> pd.DataFrame:
     """Build the indexed DataFrame the dataframe-based APIs expect."""
     return pd.DataFrame.from_records(index=index, data=rows)
@@ -86,9 +98,7 @@ class Executor:
         runtime error in front of a user.
         """
         for call in self.calls:
-            owner, _, name = call.rpartition(".")
-            target = pp.network.Network if owner.endswith("Network") else pp.network
-            if not hasattr(target, name):
+            if resolve_call(call) is None:
                 return call
         return None
 
