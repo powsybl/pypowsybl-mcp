@@ -47,6 +47,8 @@ turn.
 - [MCP Client Integration](docs/mcp_client_integration.md): connect Codex, Claude Desktop, Cursor, or a custom agent.
 - [Sessions & State](docs/mcp_sessions.md): session lifecycle, cache TTL, and session pinning.
 - [Monitoring](docs/monitoring.md): the admin HTTP API for active sessions and server health.
+- [Creating and removing elements](docs/element_creation_and_removal.md): how the generic creation and removal
+  tools work, and how they stay in step with pypowsybl.
 - [Plugins](docs/plugins.md): extend the server with your own tools, resources, and prompts.
 
 ## Prerequisites

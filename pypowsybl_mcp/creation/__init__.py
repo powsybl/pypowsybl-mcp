@@ -43,7 +43,7 @@ out. The package is layered accordingly:
     with the tests, run again at startup against the coverage snapshot shipped
     with the package; a profile that no longer matches is disabled.
 
-See ``docs/generic_element_creation_design.md`` for the reasoning, and
+See ``docs/element_creation_and_removal.md`` for how it all works, and
 ``tests/creation/test_profiles_consistency.py`` for the check that keeps the
 overlay honest against the installed pypowsybl.
 """
