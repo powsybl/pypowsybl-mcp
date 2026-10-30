@@ -40,10 +40,10 @@ def test_the_documented_coverage_matches_the_profiles():
 
 
 def test_every_supported_type_is_listed_in_the_documentation():
-    from pypowsybl_mcp.creation.profiles import PROFILES
+    from pypowsybl_mcp.creation.profiles import PROFILES, UNPROFILED
 
     coverage = _load()
     documented = coverage.current()
 
-    for name in PROFILES:
+    for name in [*PROFILES, *UNPROFILED]:
         assert f"`{name}`" in documented

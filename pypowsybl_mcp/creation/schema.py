@@ -156,6 +156,62 @@ def plain_modification_schema(modification_name: str) -> ElementSchema:
     return _schema_from_groups([_pp.get_network_modification_metadata(modification)])
 
 
+def _creation_methods() -> dict[str, str]:
+    """Element type -> the ``Network.create_*`` method that creates it.
+
+    Every such method funnels into ``Network._create_elements(element_type,
+    ...)``, so each one is called once on an empty network with that funnel
+    replaced by a spy, which records the ``ElementType`` and stops before the
+    C layer -- the trick ``utils/element_types.py`` uses for the getters. It
+    runs once, at import, before the server handles any request: the spy
+    patches the class for the whole process while it is in place.
+    """
+    import contextlib
+    import inspect
+
+    from pypowsybl.network import Network, create_empty
+
+    captured: dict[str, _pp.ElementType] = {}
+    original = Network._create_elements
+
+    def spy(self, element_type, dfs, **kwargs):
+        captured["type"] = element_type
+        raise RuntimeError("stopped before the C layer")
+
+    network = create_empty()
+    methods: dict[str, str] = {}
+    Network._create_elements = spy
+    try:
+        for name in sorted(dir(Network)):
+            # create_extensions attaches data to existing elements of any type.
+            if not name.startswith("create_") or name == "create_extensions":
+                continue
+            method = getattr(Network, name)
+            if ".. deprecated::" in (inspect.getdoc(method) or ""):
+                continue
+            required = [
+                parameter
+                for parameter in inspect.signature(method).parameters.values()
+                if parameter.name != "self"
+                and parameter.default is inspect.Parameter.empty
+                and parameter.kind
+                not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+            ]
+            captured.pop("type", None)
+            # The call always raises: from the spy, or from pypowsybl before it.
+            with contextlib.suppress(Exception):
+                getattr(network, name)(*[None] * len(required))
+            if "type" in captured:
+                methods[captured["type"].name.lower()] = name
+    finally:
+        Network._create_elements = original
+    return methods
+
+
+#: element type -> ``Network.create_*`` method, observed on the installed version
+CREATION_METHODS: dict[str, str] = _creation_methods()
+
+
 def creatable_element_types() -> tuple[str, ...]:
     """Element types for which pypowsybl exposes creation metadata.
 

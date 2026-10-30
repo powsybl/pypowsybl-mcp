@@ -85,7 +85,9 @@ class CreationTools(PyPowsyblTool):
                 pypowsybl ElementType lowercased ("load", "two_windings_transformer",
                 "operational_limits"), the same vocabulary as
                 get_network_element_data(). Default: None, which lists every
-                creatable type with a one-line summary.
+                creatable type with a one-line summary; types marked
+                "checked: schema only" have no profile (see
+                create_network_element()).
 
         Returns:
             str: JSON. For one element type:
@@ -174,6 +176,11 @@ class CreationTools(PyPowsyblTool):
               overloaded, and a transformer has no tap changer until one is created
               on it
             - Changes are in memory only: use export_network() to save them
+            - Types without a profile (bus, switch, busbar_section,
+              three_windings_transformer, tie and boundary lines, DC devices)
+              are created from their pypowsybl schema only: no required
+              attributes, no switching equipment; give voltage_level_id with
+              bus_id or node as pypowsybl takes them
 
         Related Tools:
             - describe_element_creation(): What a type needs, before calling

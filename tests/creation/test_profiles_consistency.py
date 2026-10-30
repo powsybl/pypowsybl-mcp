@@ -15,8 +15,8 @@ hand-written half can never drift silently from the generated half.
 
 import pytest
 
-from pypowsybl_mcp.creation.profiles import PROFILES, Connection
-from pypowsybl_mcp.creation.schema import creatable_element_types
+from pypowsybl_mcp.creation.profiles import PROFILES, UNPROFILED, Connection
+from pypowsybl_mcp.creation.schema import CREATION_METHODS, creatable_element_types
 
 PROFILE_IDS = sorted(PROFILES)
 
@@ -149,6 +149,37 @@ def test_batch_order_is_consistent_with_dependencies():
     assert order["two_windings_transformer"] < order["ratio_tap_changer"]
     assert order["line"] < order["operational_limits"]
     assert order["vsc_converter_station"] < order["hvdc_line"]
+
+
+@pytest.mark.parametrize("name", sorted(UNPROFILED))
+def test_every_schema_only_type_has_a_creation_method(name):
+    from pypowsybl.network import Network
+
+    profile = UNPROFILED[name]
+    assert profile.schema_only
+    assert profile.executor.missing_call() is None
+    assert hasattr(Network, profile.executor.method)
+    assert profile.summary
+
+
+def test_profiles_and_fallbacks_cover_every_creatable_type():
+    """Nothing pypowsybl can create is left out unless it has no create_* call."""
+    assert not set(PROFILES) & set(UNPROFILED)
+    left_out = set(creatable_element_types()) - set(PROFILES) - set(UNPROFILED)
+    assert not left_out & set(CREATION_METHODS)
+
+
+def test_every_creation_method_is_observed():
+    """The spy must see every non-deprecated create_* call but create_extensions."""
+    from pypowsybl.network import Network
+
+    observed = set(CREATION_METHODS.values())
+    for profile in PROFILES.values():
+        calls = profile.executor.calls
+        for call in calls:
+            if call.startswith("Network."):
+                assert call.removeprefix("Network.") in observed
+    assert all(hasattr(Network, method) for method in observed)
 
 
 def test_the_descriptor_renders_for_every_profile(profile):

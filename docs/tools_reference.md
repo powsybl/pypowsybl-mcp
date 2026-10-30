@@ -60,6 +60,11 @@ not say: which attributes are required, their units and accepted values, the con
 is legal for that type. Injections and branches go through the *bay* helpers, so the switching equipment the hosting
 topology requires is built automatically and the caller only ever names a bus or busbar section.
 
+The creatable types that have no profile yet are not refused: they are created **from their schema only**, through the
+plain `Network.create_*` call. Attribute names and types are checked, everything else is left to pypowsybl, and no
+switching equipment is built; `describe_element_creation` marks them `checked: schema only`. The tables at the end of
+this page list which types fall in each group.
+
 Since the arguments are an open object rather than a typed signature, three things replace the per-tool JSON schema: a
 cheat sheet of the most-used types inlined in the tool description, `describe_element_creation` for everything else, and
 **errors that carry the descriptor** — a rejected call comes back with the required attributes, units and accepted
@@ -188,7 +193,7 @@ LLM**.
 
 Generated from the profiles and from pypowsybl `1.15.0` by `scripts/creation_coverage.py`.
 
-**18 element types can be created**
+**18 element types have a profile**: required attributes, units, accepted values and rules are checked, and injections and branches are created with their switching equipment.
 
 | `element_type` | pypowsybl call behind it | What it is |
 |----------------|--------------------------|------------|
@@ -211,13 +216,32 @@ Generated from the profiles and from pypowsybl `1.15.0` by `scripts/creation_cov
 | `voltage_level` | `Network.create_voltage_levels`, `pp.network.create_voltage_level_topology` | The busbar system of a site at one nominal voltage, created with the connection points equipment attaches to. |
 | `vsc_converter_station` | `pp.network.create_vsc_converter_station_bay` | The AC end of a voltage-source HVDC link. |
 
-**15 element types expose creation metadata but have no profile yet**, so `create_network_element` refuses them:
+**14 element types have no profile and are created from their schema only**: attribute names and types are checked, the rest is left to pypowsybl, and no switching equipment is built.
+
+| `element_type` | pypowsybl call behind it | What it is |
+|----------------|--------------------------|------------|
+| `area` | `Network.create_areas` | Create areas. |
+| `area_boundaries` | `Network.create_areas_boundaries` | Define boundaries of (existing) areas. |
+| `area_voltage_levels` | `Network.create_areas_voltage_levels` | Associate voltage levels to (existing) areas. |
+| `boundary_line` | `Network.create_boundary_lines` | Creates boundary lines. |
+| `bus` | `Network.create_buses` | Creates buses in bus-breaker voltage levels. |
+| `busbar_section` | `Network.create_busbar_sections` | Creates bus bar sections. |
+| `dc_ground` | `Network.create_dc_grounds` | Creates DC grounds. |
+| `dc_line` | `Network.create_dc_lines` | Creates DC lines. |
+| `dc_node` | `Network.create_dc_nodes` | Creates DC nodes. |
+| `internal_connection` | `Network.create_internal_connections` | Creates internal connections. |
+| `switch` | `Network.create_switches` | Creates switches. |
+| `three_windings_transformer` | `Network.create_3_windings_transformers` | Creates three-winding transformers. |
+| `tie_line` | `Network.create_tie_lines` | Creates tie lines from two boundary lines. |
+| `voltage_source_converter` | `Network.create_voltage_source_converters` | Creates voltage source converter. |
+
+**1 element type expose creation metadata but no `Network.create_*` call**, so `create_network_element` does not support them yet:
 
 ```
-alias, area, area_boundaries, area_voltage_levels, boundary_line, bus, busbar_section, dc_ground, dc_line, dc_node, internal_connection, switch, three_windings_transformer, tie_line, voltage_source_converter
+alias
 ```
 
-Adding one is a profile entry in `pypowsybl_mcp/creation/profiles.py`, not a new tool. The ones left out are either topology primitives that the connection-point model covers already (`bus`, `busbar_section`, `switch`, `internal_connection`), boundary and area bookkeeping (`boundary_line`, `tie_line`, `area*`, `alias`), the detailed DC grid (`dc_*`, `voltage_source_converter`), or `three_windings_transformer`, which has no bay creation upstream.
+Giving a schema-only type a profile is an entry in `pypowsybl_mcp/creation/profiles.py`, not a new tool; the profile then takes over from the fallback.
 
 <!-- end generated creation coverage -->
 

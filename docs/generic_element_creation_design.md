@@ -473,7 +473,8 @@ end-to-end tests that build a real network and run a load flow, as the current t
 1. **Scope of the first profile set.** Eighteen element types, the fourteen the per-type surface
    covered plus `vsc_converter_station`, `lcc_converter_station`, `hvdc_line` and
    `reactive_capability_curve_point` — the last four cost about twenty lines each, which is the
-   point. The fifteen creatable types with no profile are listed in `docs/tools_reference.md`.
+   point. The other creatable types are not refused but created from their schema only (see
+   §9); `docs/tools_reference.md` lists both groups.
 2. **Sugar tools.** None: three generic tools, no typed shortcuts. The cheat sheet inlined in
    `create_network_element`'s description covers the common types without a round trip.
 3. **Batch semantics.** Neither of the two options as stated. Every item is checked against its
@@ -499,7 +500,7 @@ end-to-end tests that build a real network and run a load flow, as the current t
 
 #### 9. What the implementation added to this design
 
-Three things the proposal did not foresee, each forced by something found while building it:
+Four things the proposal did not foresee, each forced by something found while building it:
 
 * **Virtual attributes.** Some calls are unusable when expressed exactly as pypowsybl shapes
   them: the steps of a tap changer are a table of `rho` values, and a limits group is one row per
@@ -513,6 +514,15 @@ Three things the proposal did not foresee, each forced by something found while 
 * **`Connection.BUS`.** `ground` has no bay helper upstream, so it takes a configured bus and is
   refused in node/breaker topology — the case that proves the executor, not the metadata, decides
   what is legal.
+* **A schema-only fallback.** Refusing every type without a profile left `bus`, `switch`,
+  `busbar_section`, `three_windings_transformer`, tie and boundary lines and the DC grid out of
+  reach. Each of them is now given a profile derived from its schema alone — executor
+  `Raw(method)`, with the `Network.create_*` method observed at import by spying on
+  `Network._create_elements` — so only names and types are checked and pypowsybl decides the
+  rest. The descriptor and the report say so, the id check is skipped (the id of an internal
+  connection is its voltage level, that of `area_voltage_levels` an existing area), and only the
+  main dataframe is accepted. A written profile takes over from the fallback; `alias`, created by
+  `add_aliases`, has no `create_*` method and stays unsupported.
 
 And one limitation of the pinned version worth repeating, because it is visible in the profiles:
 a static var compensator has no `OFF` regulation mode and a phase tap changer no `FIXED_TAP`
