@@ -34,9 +34,8 @@ says what would have been lost.
 import pypowsybl as pp
 from cachetools import TTLCache
 from loguru import logger
-from mcp import ServerSession
-from mcp.server import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 
@@ -66,7 +65,7 @@ FEEDER_TYPES = frozenset(
 REMOVAL_RANKS = {"VOLTAGE_LEVEL": 1, "SUBSTATION": 2}
 
 
-def register_removal_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
+def register_removal_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
     tools = RemovalTools(pypowsybl_proxies)
     tools.register_tools_with_mcp(mcp)
 
@@ -160,7 +159,7 @@ class RemovalTools(PyPowsyblTool):
         element_ids: list[str],
         cascade: bool = False,
         network_id: str | None = None,
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> str:
         """
         Remove elements from a network, whatever their type.

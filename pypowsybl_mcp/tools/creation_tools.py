@@ -18,9 +18,8 @@ import json
 import pypowsybl as pp
 from cachetools import TTLCache
 from loguru import logger
-from mcp import ServerSession
-from mcp.server import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server import MCPServer
+from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.creation.context import CreationError
 from pypowsybl_mcp.creation.engine import CreationEngine
@@ -47,7 +46,7 @@ CHEAT_SHEET = """
 """
 
 
-def register_creation_tools(mcp: FastMCP, pypowsybl_proxies: TTLCache):
+def register_creation_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
     tools = CreationTools(pypowsybl_proxies)
     tools.register_tools_with_mcp(mcp)
 
@@ -70,7 +69,7 @@ class CreationTools(PyPowsyblTool):
     async def describe_element_creation(
         self,
         element_type: str | None = None,
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> str:
         """
         List the element types that can be created, or describe one of them.
@@ -121,7 +120,7 @@ class CreationTools(PyPowsyblTool):
         element_type: str,
         attributes: dict,
         network_id: str | None = None,
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> str:
         """
         Create one element of any type in a network.
@@ -206,7 +205,7 @@ class CreationTools(PyPowsyblTool):
         self,
         items: list[dict],
         network_id: str | None = None,
-        ctx: Context[ServerSession, None] = None,  # FastMCP injects this
+        ctx: Context = None,  # MCPServer injects this
     ) -> str:
         """
         Create several elements in one call, in the order their dependencies need.
