@@ -63,8 +63,8 @@ Every element type pypowsybl can create falls in one of three groups. The curren
 
 | Group           | Count (1.15.0) | What is checked                                                                 | Switching equipment |
 |-----------------|----------------|---------------------------------------------------------------------------------|---------------------|
-| **Profiled**    | 18             | Attribute names, types, required attributes, accepted values, rules; connection points are resolved and diagnosed. | Built by the bay helpers for injections and branches. |
-| **Schema only** | 14             | Attribute names and types; everything else is left to pypowsybl, whose error is returned as is. | None: the caller gives `voltage_level_id` with `bus_id` or `node`. |
+| **Profiled**    | 20             | Attribute names, types, required attributes, accepted values, rules; connection points are resolved and diagnosed. | Built by the bay helpers for injections and branches. |
+| **Schema only** | 12             | Attribute names and types; everything else is left to pypowsybl, whose error is returned as is. | None: the caller gives `voltage_level_id` with `bus_id` or `node`. |
 | **Unsupported** | 1 (`alias`)    | Refused: pypowsybl creates aliases with `add_aliases`, not a `create_*` call.   | —                   |
 
 A name that is not creatable at all is refused with a message that says why:
@@ -166,8 +166,8 @@ profile gives none. Mining never changes behavior: required attributes, enumerat
 ##### Schema-only profiles
 
 Every creatable type without a hand-written profile but with a `create_*` method gets one derived from its schema
-alone (`UNPROFILED`, built by `schema_only_profile`). It uses the `Raw` executor on the main dataframe only (the
-generation part of a boundary line, for instance, is not accepted), a generic guidance paragraph, the first line of
+alone (`UNPROFILED`, built by `schema_only_profile`). It uses the `Raw` executor on the main dataframe only (any
+further dataframe of the call is not accepted), a generic guidance paragraph, the first line of
 the pypowsybl docstring as summary, and batch order 30. The engine skips its network checks: the id of such a type may
 name another element (an internal connection is keyed on its voltage level, an `area_voltage_levels` row on an
 existing area), so pypowsybl is left to check ids and references. A hand-written profile always wins over the
@@ -217,8 +217,8 @@ always means the network is unchanged.
 
 | `Connection` | Attributes                                              | Used by                                               |
 |--------------|---------------------------------------------------------|-------------------------------------------------------|
-| `NONE`       | none (containers, or links naming existing elements)    | substation, voltage level, HVDC line, schema-only types |
-| `SINGLE`     | `bus_or_busbar_section_id`                              | loads, generators, batteries, shunts, SVCs, converter stations |
+| `NONE`       | none (containers, or links naming existing elements)    | substation, voltage level, HVDC line, tie line, schema-only types |
+| `SINGLE`     | `bus_or_busbar_section_id`                              | loads, generators, batteries, shunts, SVCs, converter stations, boundary lines |
 | `DOUBLE`     | `bus_or_busbar_section_id_1`, `bus_or_busbar_section_id_2` | lines, two-windings transformers                   |
 | `BUS`        | `bus_or_busbar_section_id`, which must be a configured bus | ground (pypowsybl has no ground bay)              |
 | `TARGET`     | the id of an existing element                           | operational limits, reactive limits, tap changers     |
@@ -257,10 +257,10 @@ topology call fails, the voltage level is removed again, so a corrected call is 
 | Executor        | pypowsybl call                                                    | Types                                                  |
 |-----------------|-------------------------------------------------------------------|--------------------------------------------------------|
 | `FeederBay`     | `pp.network.create_<x>_bay(network, **attributes)`                | load, generator, battery, SVC, VSC and LCC converter stations |
-| `MultiFrameBay` | one bay call with several dataframes                              | shunt compensator (shunt + linear model)               |
+| `MultiFrameBay` | one bay call with several dataframes, each passed only when filled | shunt compensator (shunt + linear or non-linear sections), boundary line (line + optional generation part) |
 | `BranchBays`    | `create_line_bays`, `create_2_windings_transformer_bays`          | line, two-windings transformer                         |
 | `VoltageLevel`  | `Network.create_voltage_levels` + `create_voltage_level_topology` | voltage level                                          |
-| `Raw`           | `Network.create_<x>s(**attributes)`, no switching equipment       | substation, ground, HVDC line, every schema-only type  |
+| `Raw`           | `Network.create_<x>s(**attributes)`, no switching equipment       | substation, ground, HVDC line, tie line, every schema-only type |
 | `RowGroup`      | a header dataframe and a table of rows                            | ratio and phase tap changers                           |
 | `Attachment`    | rows attached to an existing element                              | operational limits, min/max reactive limits, capability curve |
 
@@ -285,6 +285,9 @@ Rules run after defaults and derivations, so they see the final values:
 | `BusBreakerOnly`     | refused in node/breaker topology                                  | ground                                          |
 | `WarnIfDifferent`    | not an error: a note in the report                                | a line between two different nominal voltages   |
 | `RowsRequired`       | a table attribute needs a minimum number of rows                  | at least two tap positions, two curve points    |
+| `ColumnRequired`, `AtMostRows` | every row gives a column; a count bounded by the number of rows | every shunt section has `b`; sections in service |
+| `Exclusive`          | two ways of describing one thing, never both                      | identical shunt sections, or one row per section |
+| `OptionalPart`       | a group of attributes absent, or given as a whole                 | the generation part of a boundary line          |
 
 | Derivation                   | Fills in                                                              |
 |------------------------------|-----------------------------------------------------------------------|
@@ -294,6 +297,7 @@ Rules run after defaults and derivations, so they see the final values:
 | `NominalVoltage`             | a transformer's `rated_u1`/`rated_u2` from the nominal voltages of its ends |
 | `Negated`                    | a battery's `min_p` as `-max_p`                                       |
 | `TapSteps`, `MiddleTap`      | the steps of a tap changer from a range, starting on the middle step  |
+| `SectionModel`               | a shunt's `model_type`: `NON_LINEAR` when `sections` are given, `LINEAR` otherwise |
 | `LimitRows`                  | the rows of a limits group from a permanent rating and temporary ones |
 
 ---
@@ -306,6 +310,7 @@ Some calls take a table rather than a single row. The profile names the attribut
 |-----------------------------------|-----------------|-------------------------------------------------------|
 | `ratio_tap_changer`               | `steps`         | `{rho, r, x, g, b}`, defaults filled per row          |
 | `phase_tap_changer`               | `steps`         | `{alpha, rho, r, x, g, b}`                            |
+| `shunt_compensator` (non-linear)  | `sections`      | `{b, g}` per section, `b` cumulative up to that section |
 | `reactive_capability_curve_point` | `points`        | `{p, min_q, max_q}`, at least two                     |
 | `operational_limits`              | `limits`        | one row per (side, duration)                          |
 
@@ -368,7 +373,7 @@ rejects the whole batch and the network is untouched.
 | 30    | schema-only types (buses, busbar sections, switches, DC nodes, …)     |
 | 40    | injections                                                            |
 | 45    | lines, two-windings transformers                                      |
-| 47    | HVDC lines (after their converter stations)                           |
+| 47    | HVDC lines (after their converter stations), tie lines (after their boundary lines) |
 | 60    | limits, reactive limits, tap changers                                 |
 
 The checks that need the network (an id already taken, a connection point that does not exist) run as each element
@@ -461,7 +466,7 @@ These checks only see names. When upgrading pypowsybl, still review by hand:
    has no `OFF` mode for an SVC and no `FIXED_TAP` mode for a phase shifter, so both use `regulating: false`);
 2. newly required attributes, which nothing flags before a call fails;
 3. new bay helpers or network modifications — a bay for `ground` or `three_windings_transformer` would let them move
-   to a bay executor; `create_boundary_line_bay` already exists for `boundary_line`, which is schema-only today;
+   to a bay executor;
 4. the docstring format the mining relies on;
 5. the identifiable type names in `FEEDER_TYPES` (`removal_tools.py`);
 6. then run the tests, `scripts/creation_coverage.py --write`, and read the diff of `docs/grid_extension.md`.
@@ -476,7 +481,7 @@ These checks only see names. When upgrading pypowsybl, still review by hand:
 - **No rollback.** A batch stopped half way keeps what it created; removal is final.
 - **Schema-only types** get no switching equipment, no required attributes, no accepted values, no id check, and only
   their main dataframe. `area_boundaries`, created at order 30, comes before any line of the same batch.
-- **Only some models.** Shunt compensators are linear only; limits go in the default group only.
+- **Default limits group only.** Operational limits go in the default group; a named group is not the active one.
 - **Name checks are not semantic checks** (§14): enumeration values and required attributes can drift silently.
 - **Knowledge beyond the metadata** — that `x` must not be zero, that a transformer stays in one substation, that a
   branch without limits can never be overloaded — exists only where a profile carries it in a rule or its guidance.

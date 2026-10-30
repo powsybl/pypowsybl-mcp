@@ -226,6 +226,30 @@ class MiddleTap(Derivation):
 
 
 @dataclass(frozen=True)
+class SectionModel(Derivation):
+    """The model of a shunt compensator, read from how its sections are given.
+
+    Identical sections (``b_per_section`` and friends) are the linear model; a
+    table of sections, one row each, is the non-linear one. Deriving it keeps
+    the caller from having to name a model that the attributes already imply.
+    """
+
+    produces: str = "model_type"
+    rows: str = "sections"
+
+    def describe(self) -> str:
+        return (
+            f"'{self.produces}' is NON_LINEAR when '{self.rows}' are given, "
+            "LINEAR otherwise"
+        )
+
+    def apply(self, context: CreationContext) -> None:
+        context.attributes[self.produces] = (
+            "NON_LINEAR" if context.attributes.get(self.rows) else "LINEAR"
+        )
+
+
+@dataclass(frozen=True)
 class LimitRows(Derivation):
     """Turn a permanent rating (and optional temporary ones) into limit rows.
 

@@ -305,6 +305,147 @@ def test_create_hvdc_link(engine, node_breaker):
     assert "HVDC_NEW" in node_breaker.get_hvdc_lines().index
 
 
+def test_a_non_linear_shunt_from_its_sections(engine, node_breaker):
+    report = engine.create(
+        node_breaker,
+        "shunt_compensator",
+        {
+            "id": "SH_NL",
+            "bus": "S1VL2_BBS1",
+            "sections": [{"b": 1e-4}, {"b": 2.5e-4, "g": 0.0}],
+            "section_count": 2,
+        },
+    )
+
+    assert "created shunt_compensator 'SH_NL'" in report
+    shunt = node_breaker.get_shunt_compensators(all_attributes=True).loc["SH_NL"]
+    assert shunt["model_type"] == "NON_LINEAR"
+    # the susceptance of a section is the total with it and those before in
+    assert shunt["b"] == pytest.approx(2.5e-4)
+    sections = node_breaker.get_non_linear_shunt_compensator_sections().loc["SH_NL"]
+    assert sections["g"].tolist() == [0.0, 0.0]
+
+
+def test_a_shunt_is_linear_unless_sections_are_given(engine, node_breaker):
+    engine.create(
+        node_breaker,
+        "shunt_compensator",
+        {"id": "SH_L", "bus": "S1VL2_BBS1", "b_per_section": 1e-4},
+    )
+
+    shunt = node_breaker.get_shunt_compensators(all_attributes=True).loc["SH_L"]
+    assert shunt["model_type"] == "LINEAR"
+
+
+@pytest.mark.parametrize(
+    ("attributes", "message"),
+    [
+        (
+            {"b_per_section": 1e-4, "sections": [{"b": 1e-4}]},
+            "cannot be given together",
+        ),
+        ({"sections": [{"g": 0.0}]}, "Row 1 of 'sections' has no 'b'"),
+        (
+            {"sections": [{"b": 1e-4}], "section_count": 2},
+            "must not exceed the number of rows of 'sections'",
+        ),
+        ({}, "'b_per_section' is required"),
+        ({"sections": [{"b": 1e-4, "bee": 1}]}, "no column 'bee'"),
+    ],
+    ids=["both-models", "section-without-b", "too-many-in-service", "no-model", "typo"],
+)
+def test_shunt_section_mistakes_are_caught(engine, node_breaker, attributes, message):
+    with pytest.raises(CreationError, match=message):
+        engine.create(
+            node_breaker,
+            "shunt_compensator",
+            {"id": "SH_BAD", "bus": "S1VL2_BBS1", **attributes},
+        )
+
+    assert "SH_BAD" not in node_breaker.get_shunt_compensators().index
+
+
+def test_a_boundary_line_is_created_with_its_bay(engine, node_breaker):
+    switches = len(node_breaker.get_switches())
+
+    report = engine.create(
+        node_breaker,
+        "boundary_line",
+        {"id": "BL", "bus": "S1VL2_BBS1", "r": 1.0, "x": 10.0, "p0": 20.0},
+    )
+
+    assert "created boundary_line 'BL'" in report
+    assert len(node_breaker.get_switches()) > switches
+    assert "BL" not in node_breaker.get_boundary_lines_generation().index
+
+
+def test_a_boundary_line_with_a_regulating_generation_part(engine, node_breaker):
+    engine.create(
+        node_breaker,
+        "boundary_line",
+        {
+            "id": "BL",
+            "bus": "S3VL1_BBS",
+            "r": 1.0,
+            "x": 10.0,
+            "min_p": 0.0,
+            "max_p": 100.0,
+            "target_p": 40.0,
+            "voltage_regulator_on": True,
+            "target_v": 400.0,
+        },
+    )
+
+    generation = node_breaker.get_boundary_lines_generation().loc["BL"]
+    assert generation["target_p"] == 40.0
+    assert generation["voltage_regulator_on"]
+    results = pp.loadflow.run_ac(node_breaker)
+    assert results[0].status == pp.loadflow.ComponentStatus.CONVERGED
+
+
+def test_a_partial_generation_part_is_refused(engine, node_breaker):
+    with pytest.raises(CreationError, match="generation part needs 'min_p', 'max_p'"):
+        engine.create(
+            node_breaker,
+            "boundary_line",
+            {"id": "BL", "bus": "S1VL2_BBS1", "r": 1.0, "x": 10.0, "target_p": 5.0},
+        )
+
+
+def test_a_tie_line_comes_after_its_boundary_lines_in_a_batch(engine, node_breaker):
+    done, failed = engine.create_many(
+        node_breaker,
+        [
+            {
+                "element_type": "tie_line",
+                "id": "TL",
+                "boundary_line1_id": "BL1",
+                "boundary_line2_id": "BL2",
+            },
+            {
+                "element_type": "boundary_line",
+                "id": "BL1",
+                "bus": "S1VL2_BBS1",
+                "r": 1.0,
+                "x": 10.0,
+                "pairing_key": "XNODE",
+            },
+            {
+                "element_type": "boundary_line",
+                "id": "BL2",
+                "bus": "S3VL1_BBS",
+                "r": 1.0,
+                "x": 10.0,
+                "pairing_key": "XNODE",
+            },
+        ],
+    )
+
+    assert not failed
+    assert "tie_line" in done[-1]
+    assert "TL" in node_breaker.get_tie_lines().index
+
+
 # ---------------------------------------------------------------------------
 # Attached to an existing element
 # ---------------------------------------------------------------------------
@@ -832,8 +973,24 @@ def test_schema_only_attributes_are_still_checked(engine, bus_breaker):
         )
 
 
-def test_only_the_main_table_of_a_schema_only_type_is_accepted(engine, bus_breaker):
-    """The generation part of a boundary line is a second dataframe."""
+def test_only_the_main_table_of_a_schema_only_type_is_accepted(bus_breaker):
+    """A multi-dataframe type without a profile: only its first dataframe.
+
+    ``boundary_line`` has a profile now, so its schema-only fallback is built
+    explicitly: its generation part is a second dataframe.
+    """
+    from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
+        schema_only_profile,
+    )
+
+    engine = CreationEngine(
+        profiles={},
+        unprofiled={
+            "boundary_line": schema_only_profile(
+                "boundary_line", "create_boundary_lines"
+            )
+        },
+    )
     attributes = {
         "id": "BL",
         "voltage_level_id": "VL4",

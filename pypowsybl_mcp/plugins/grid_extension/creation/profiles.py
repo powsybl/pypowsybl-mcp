@@ -101,6 +101,9 @@ class CreationProfile:
     virtual: dict[str, str] = field(default_factory=dict)
     #: attribute holding a table of rows, when the call takes one
     rows_attribute: str | None = None
+    #: schema group of those rows: the second dataframe of the call by default
+    #: (tap changer steps), the third for the sections of a non-linear shunt
+    rows_group: int = 1
     #: element types this creation may attach to, for Connection.TARGET
     target_types: frozenset[str] = frozenset()
     #: batch ordering: containers, then equipment, then what attaches to it
@@ -323,35 +326,60 @@ _register(
         executor=MultiFrameBay(
             function="create_shunt_compensator_bay",
             main_frame="shunt_df",
-            extra_frames=(("linear_model_df", 1),),
-            fixed={"model_type": "LINEAR"},
+            extra_frames=(("linear_model_df", 1), ("non_linear_model_df", 2)),
+            rows_attribute="sections",
+            rows_frame="non_linear_model_df",
+            row_defaults={"g": 0.0},
         ),
         connection=Connection.SINGLE,
         order=40,
-        required=("b_per_section",),
-        # 'g' and 'b' belong to the non-linear model, which is not exposed;
-        # 'model_type' is fixed to LINEAR by the executor.
+        rows_attribute="sections",
+        rows_group=2,
+        # 'model_type' follows from how the sections are given; 'g' and 'b' are
+        # the columns of the non-linear sections, given under 'sections'.
         managed=(*BAY_MANAGED, "model_type", "g", "b"),
-        defaults={"section_count": 1, "max_section_count": 1, "g_per_section": 0.0},
+        defaults={"section_count": 1},
         units={
             "b_per_section": "S",
             "g_per_section": "S",
+            "b": "S",
+            "g": "S",
             "target_v": "kV",
             "target_deadband": "kV",
         },
         enums={"direction": DIRECTIONS},
-        rules=(
-            rule.AtLeast("max_section_count", 1),
-            rule.AtMost("section_count", "max_section_count"),
-        ),
         derivations=(
+            derive.SectionModel(),
             derive.PositionOrder("position_order"),
             derive.DirectionOnlyInNodeBreaker("direction"),
         ),
+        rules=(
+            rule.Exclusive(
+                ("b_per_section", "g_per_section", "max_section_count"),
+                ("sections",),
+                "identical sections, or one row per section",
+            ),
+            rule.RequiredWhenEquals(
+                "b_per_section",
+                "model_type",
+                "LINEAR",
+                "the susceptance of each identical section, unless 'sections' are given",
+            ),
+            rule.DefaultUnless("max_section_count", 1, "sections"),
+            rule.DefaultUnless("g_per_section", 0.0, "sections"),
+            rule.ColumnRequired("sections", "b"),
+            rule.AtLeast("max_section_count", 1),
+            rule.AtMost("section_count", "max_section_count"),
+            rule.AtMostRows("section_count", "sections"),
+        ),
         guidance=(
-            "Only the linear model (identical sections) is exposed. For a bank rated "
-            "Q MVAr at U kV, b_per_section = Q / U^2 -- 60 MVAr at 63 kV is 0.0151 S. "
-            "The reactive power injected follows the voltage: Q = b*U^2."
+            "Two models. Identical sections (linear): give b_per_section, and "
+            "max_section_count for a bank of several steps. Sections that differ "
+            "(non-linear): give 'sections' as a list of {b, g}, one per section in "
+            "switching order, the susceptance being cumulative up to that section. "
+            "section_count is how many are connected. For a bank rated Q MVAr at "
+            "U kV, b = Q / U^2 -- 60 MVAr at 63 kV is 0.0151 S. The reactive power "
+            "injected follows the voltage: Q = b*U^2."
         ),
         docs=("pp.network.create_shunt_compensator_bay",),
     )
@@ -462,6 +490,77 @@ _register(
             "bus/breaker voltage levels are supported."
         ),
         docs=("Network.create_grounds",),
+    )
+)
+
+GENERATION_PART = (
+    "min_p",
+    "max_p",
+    "target_p",
+    "target_q",
+    "target_v",
+    "voltage_regulator_on",
+)
+
+_register(
+    CreationProfile(
+        element_type="boundary_line",
+        summary=(
+            "A line to a point outside the modeled network (a border X-node), "
+            "with the exchange at its far end."
+        ),
+        executor=MultiFrameBay(
+            function="create_boundary_line_bay",
+            main_frame="df",
+            extra_frames=(("generation_df", 1),),
+        ),
+        connection=Connection.SINGLE,
+        order=40,
+        required=("r", "x"),
+        managed=BAY_MANAGED,
+        defaults={"p0": 0.0, "q0": 0.0, "g": 0.0, "b": 0.0},
+        units={
+            "r": "Ohm",
+            "x": "Ohm",
+            "g": "S",
+            "b": "S",
+            "p0": "MW",
+            "q0": "MVAr",
+            "min_p": "MW",
+            "max_p": "MW",
+            "target_p": "MW",
+            "target_q": "MVAr",
+            "target_v": "kV",
+        },
+        enums={"direction": DIRECTIONS},
+        rules=(
+            rule.NonZero("x", "a zero-impedance line makes the load flow singular"),
+            rule.OptionalPart(
+                "generation part",
+                GENERATION_PART,
+                required=("min_p", "max_p", "target_p"),
+                defaults=(("voltage_regulator_on", False), ("target_q", 0.0)),
+            ),
+            rule.RequiredIf(
+                "target_v",
+                "voltage_regulator_on",
+                "a regulating generation part needs a voltage setpoint",
+            ),
+            rule.Ordered(("min_p", "target_p", "max_p")),
+        ),
+        derivations=(
+            derive.PositionOrder("position_order"),
+            derive.DirectionOnlyInNodeBreaker("direction"),
+        ),
+        guidance=(
+            "The equivalent of what lies beyond the border: p0/q0 is the exchange "
+            "consumed at the far end (positive means power leaving the network). "
+            "Give a generation part (min_p, max_p, target_p, and target_v with "
+            "voltage_regulator_on=True to regulate) when the outside can produce. "
+            "Set pairing_key to later join it with the boundary line of the "
+            "neighboring network into a tie_line."
+        ),
+        docs=("pp.network.create_boundary_line_bay", "Network.create_boundary_lines"),
     )
 )
 
@@ -587,6 +686,23 @@ _register(
             "voltage, target_p the power ordered through the link."
         ),
         docs=("Network.create_hvdc_lines",),
+    )
+)
+
+_register(
+    CreationProfile(
+        element_type="tie_line",
+        summary="A line joining two boundary lines, typically across a border.",
+        executor=Raw("create_tie_lines"),
+        # after the boundary lines it joins, which are created at order 40
+        order=47,
+        required=("boundary_line1_id", "boundary_line2_id"),
+        guidance=(
+            "Pairs two existing boundary lines -- usually one from each of two "
+            "merged networks, sharing a pairing_key -- into one line. The two "
+            "boundary lines keep existing as its halves."
+        ),
+        docs=("Network.create_tie_lines",),
     )
 )
 

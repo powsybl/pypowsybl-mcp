@@ -244,17 +244,22 @@ class VoltageLevel(Executor):
 
 @dataclass(frozen=True)
 class MultiFrameBay(Executor):
-    """A bay whose call takes several DataFrames, e.g. a shunt and its model.
+    """A bay whose call takes several DataFrames, e.g. a shunt and its sections.
 
     ``extra_frames`` maps the keyword of each additional DataFrame to the schema
-    group holding its fields; those fields are single-row, so the caller passes
-    them flat like any other attribute and they are split out here.
+    group holding its fields. A frame is filled either from flat attributes,
+    when its rows are single (the linear model of a shunt, the generation part
+    of a boundary line), or from the table attribute ``rows_attribute`` when it
+    is the frame named ``rows_frame`` (the sections of a non-linear shunt). A
+    frame nothing fills is not passed, so an optional part stays absent.
     """
 
     function: str
     main_frame: str
     extra_frames: tuple[tuple[str, int], ...]
-    fixed: dict = field(default_factory=dict)
+    rows_attribute: str | None = None
+    rows_frame: str | None = None
+    row_defaults: dict = field(default_factory=dict)
 
     @property
     def calls(self) -> tuple[str, ...]:
@@ -269,16 +274,26 @@ class MultiFrameBay(Executor):
     def execute(self, network, element_type, element_id, attributes):
         schema = self.schema(element_type)
         frames = {}
-        taken: set[str] = set()
+        taken: set[str] = {self.rows_attribute} if self.rows_attribute else set()
         for keyword, group in self.extra_frames:
+            if keyword == self.rows_frame:
+                rows = attributes.get(self.rows_attribute) or []
+                if rows:
+                    frames[keyword] = _frame(
+                        [
+                            {"id": element_id, **self.row_defaults, **row}
+                            for row in rows
+                        ],
+                        index="id",
+                    )
+                continue
             names = {item.name for item in schema.group(group)} - {"id"}
             row = {name: value for name, value in attributes.items() if name in names}
-            taken |= set(row)
-            frames[keyword] = _frame([{"id": element_id, **row}], index="id")
+            if row:
+                taken |= set(row)
+                frames[keyword] = _frame([{"id": element_id, **row}], index="id")
         main = {name: value for name, value in attributes.items() if name not in taken}
-        frames[self.main_frame] = _frame(
-            [{"id": element_id, **self.fixed, **main}], index="id"
-        )
+        frames[self.main_frame] = _frame([{"id": element_id, **main}], index="id")
         getattr(pp.network, self.function)(network, **frames)
 
 

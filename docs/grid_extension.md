@@ -87,11 +87,12 @@ snapshot at startup and disables any profile that no longer matches; the report 
 
 Generated from the profiles and from pypowsybl `1.15.0` by `scripts/creation_coverage.py`.
 
-**18 element types have a profile**: required attributes, units, accepted values and rules are checked, and injections and branches are created with their switching equipment.
+**20 element types have a profile**: required attributes, units, accepted values and rules are checked, and injections and branches are created with their switching equipment.
 
 | `element_type` | pypowsybl call behind it | What it is |
 |----------------|--------------------------|------------|
 | `battery` | `pp.network.create_battery_bay` | A storage unit: produces when target_p is positive, absorbs when negative. |
+| `boundary_line` | `pp.network.create_boundary_line_bay` | A line to a point outside the modeled network (a border X-node), with the exchange at its far end. |
 | `generator` | `pp.network.create_generator_bay` | A production unit: a plant, a wind or solar farm. |
 | `ground` | `Network.create_grounds` | An earthing connection on a bus. |
 | `hvdc_line` | `Network.create_hvdc_lines` | A DC link between two converter stations that already exist. |
@@ -106,18 +107,18 @@ Generated from the profiles and from pypowsybl `1.15.0` by `scripts/creation_cov
 | `shunt_compensator` | `pp.network.create_shunt_compensator_bay` | A capacitor bank (positive susceptance) or a reactor (negative). |
 | `static_var_compensator` | `pp.network.create_static_var_compensator_bay` | Continuous reactive control between b_min and b_max. |
 | `substation` | `Network.create_substations` | A geographical site holding voltage levels; no equipment of its own. |
+| `tie_line` | `Network.create_tie_lines` | A line joining two boundary lines, typically across a border. |
 | `two_windings_transformer` | `pp.network.create_2_windings_transformer_bays` | A transformer between two voltage levels of one substation. |
 | `voltage_level` | `Network.create_voltage_levels`, `pp.network.create_voltage_level_topology` | The busbar system of a site at one nominal voltage, created with the connection points equipment attaches to. |
 | `vsc_converter_station` | `pp.network.create_vsc_converter_station_bay` | The AC end of a voltage-source HVDC link. |
 
-**14 element types have no profile and are created from their schema only**: attribute names and types are checked, the rest is left to pypowsybl, and no switching equipment is built.
+**12 element types have no profile and are created from their schema only**: attribute names and types are checked, the rest is left to pypowsybl, and no switching equipment is built.
 
 | `element_type` | pypowsybl call behind it | What it is |
 |----------------|--------------------------|------------|
 | `area` | `Network.create_areas` | Create areas. |
 | `area_boundaries` | `Network.create_areas_boundaries` | Define boundaries of (existing) areas. |
 | `area_voltage_levels` | `Network.create_areas_voltage_levels` | Associate voltage levels to (existing) areas. |
-| `boundary_line` | `Network.create_boundary_lines` | Creates boundary lines. |
 | `bus` | `Network.create_buses` | Creates buses in bus-breaker voltage levels. |
 | `busbar_section` | `Network.create_busbar_sections` | Creates bus bar sections. |
 | `dc_ground` | `Network.create_dc_grounds` | Creates DC grounds. |
@@ -126,7 +127,6 @@ Generated from the profiles and from pypowsybl `1.15.0` by `scripts/creation_cov
 | `internal_connection` | `Network.create_internal_connections` | Creates internal connections. |
 | `switch` | `Network.create_switches` | Creates switches. |
 | `three_windings_transformer` | `Network.create_3_windings_transformers` | Creates three-winding transformers. |
-| `tie_line` | `Network.create_tie_lines` | Creates tie lines from two boundary lines. |
 | `voltage_source_converter` | `Network.create_voltage_source_converters` | Creates voltage source converter. |
 
 **1 element type expose creation metadata but no `Network.create_*` call**, so `create_network_element` does not support them yet:
