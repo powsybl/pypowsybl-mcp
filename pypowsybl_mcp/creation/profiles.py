@@ -52,7 +52,11 @@ from pypowsybl_mcp.creation.executors import (
     RowGroup,
     VoltageLevel,
 )
-from pypowsybl_mcp.creation.schema import ElementSchema
+from pypowsybl_mcp.creation.schema import (
+    CREATION_METHODS,
+    ElementSchema,
+    creatable_element_types,
+)
 
 # Attributes every bay-created injection takes from its connection point.
 BAY_MANAGED = (
@@ -105,6 +109,8 @@ class CreationProfile:
     guidance: str = ""
     #: pypowsybl callables whose docstrings document these attributes
     docs: tuple = ()
+    #: no overlay: built from the introspected schema alone (see UNPROFILED)
+    schema_only: bool = False
 
     @property
     def schema(self) -> ElementSchema:
@@ -789,6 +795,57 @@ _register(
         docs=(Network.create_phase_tap_changers,),
     )
 )
+
+
+# --------------------------------------------------------------------------
+# Without a profile: created from the introspected schema alone
+# --------------------------------------------------------------------------
+
+#: batch position of a schema-only type: right after the voltage levels, as they
+#: are mostly topology (buses, busbar sections, switches, DC nodes) that later
+#: items connect to. Among themselves they keep the order they were given in.
+SCHEMA_ONLY_ORDER = 30
+
+SCHEMA_ONLY_GUIDANCE = (
+    "This element type has no profile, so only its attribute names and their "
+    "types are checked here: which attributes are required, the accepted values "
+    "and the topology rules are left to pypowsybl, whose refusal is returned as "
+    "is. Nothing is derived and no switching equipment is built: give the "
+    "voltage level and the bus (bus/breaker) or node (node/breaker) exactly as "
+    "pypowsybl takes them, and check the ids with get_network_element_data(). "
+    "get_online_resource(class_object='network') has the pypowsybl documentation "
+    "of the call."
+)
+
+
+def _schema_only_profile(element_type: str, method: str) -> CreationProfile:
+    call = getattr(Network, method)
+    doc = (call.__doc__ or "").strip().splitlines()
+    executor = Raw(method, main_frame_only=True)
+    guidance = SCHEMA_ONLY_GUIDANCE
+    if executor.schema(element_type).names != Raw(method).schema(element_type).names:
+        guidance += (
+            " Only the attributes of the main table of the call are accepted; its "
+            "additional tables are not supported here."
+        )
+    return CreationProfile(
+        element_type=element_type,
+        summary=(doc[0].strip() if doc else f"Created with Network.{method}()."),
+        executor=executor,
+        order=SCHEMA_ONLY_ORDER,
+        guidance=guidance,
+        docs=(call,),
+        schema_only=True,
+    )
+
+
+#: element types pypowsybl can create that have no profile, each with a profile
+#: derived from its schema; follows the installed version by construction
+UNPROFILED: dict[str, CreationProfile] = {
+    name: _schema_only_profile(name, CREATION_METHODS[name])
+    for name in creatable_element_types()
+    if name not in PROFILES and name in CREATION_METHODS
+}
 
 
 def profile(element_type: str) -> CreationProfile | None:

@@ -168,6 +168,24 @@ step; pass `steps` explicitly to describe them yourself.
   `lcc_converter_station`) first, then the link naming them; one
   `create_network_elements` call does all three in the right order.
 
+## Element types without a profile
+
+Some types -- `bus`, `busbar_section`, `switch`, `internal_connection`,
+`three_windings_transformer`, `boundary_line`, `tie_line`, the `area*` and
+`dc_*` types, `voltage_source_converter` -- have no profile. They are marked
+`checked: schema only` in `describe_element_creation()` and created straight
+from the pypowsybl schema:
+
+* only attribute names and types are checked; required attributes, accepted
+  values and topology rules are pypowsybl's, and its refusal comes back as is;
+* **no switching equipment is built** and no connection point is resolved: give
+  `voltage_level_id` with `bus_id` (bus/breaker) or `node` (node/breaker), the
+  way pypowsybl takes them;
+* in a batch they are created right after the voltage levels, in the order
+  given, so a new bus can be listed with the load that connects to it.
+
+Prefer a profiled type whenever one does the job.
+
 ## Undoing or retiring equipment
 
 `remove_network_elements(element_ids=[...])` deletes elements of any type, and

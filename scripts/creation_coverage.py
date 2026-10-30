@@ -25,7 +25,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from pypowsybl_mcp.creation.profiles import PROFILES
+from pypowsybl_mcp.creation.profiles import PROFILES, UNPROFILED
 from pypowsybl_mcp.creation.schema import creatable_element_types
 
 DOCS = Path(__file__).resolve().parent.parent / "docs" / "tools_reference.md"
@@ -38,8 +38,9 @@ def block() -> str:
     import pypowsybl as pp
 
     supported = dict(sorted(PROFILES.items()))
+    schema_only = dict(sorted(UNPROFILED.items()))
     everything = set(creatable_element_types())
-    missing = sorted(everything - set(supported))
+    missing = sorted(everything - set(supported) - set(schema_only))
 
     lines = [
         BEGIN,
@@ -49,7 +50,11 @@ def block() -> str:
             "by `scripts/creation_coverage.py`."
         ),
         "",
-        f"**{len(supported)} element types can be created**",
+        (
+            f"**{len(supported)} element types have a profile**: required "
+            "attributes, units, accepted values and rules are checked, and "
+            "injections and branches are created with their switching equipment."
+        ),
         "",
         "| `element_type` | pypowsybl call behind it | What it is |",
         "|----------------|--------------------------|------------|",
@@ -61,23 +66,37 @@ def block() -> str:
     lines += [
         "",
         (
-            f"**{len(missing)} element types expose creation metadata but have no "
-            "profile yet**, so `create_network_element` refuses them:"
+            f"**{len(schema_only)} element types have no profile and are created "
+            "from their schema only**: attribute names and types are checked, the "
+            "rest is left to pypowsybl, and no switching equipment is built."
         ),
         "",
-        "```",
-        ", ".join(missing),
-        "```",
-        "",
+        "| `element_type` | pypowsybl call behind it | What it is |",
+        "|----------------|--------------------------|------------|",
+    ]
+    for name, profile in schema_only.items():
+        calls = ", ".join(f"`{call}`" for call in profile.executor.calls)
+        lines.append(f"| `{name}` | {calls} | {profile.summary} |")
+
+    lines += [""]
+    if missing:
+        lines += [
+            (
+                f"**{len(missing)} element type{'s' if len(missing) > 1 else ''} "
+                "expose creation metadata but no `Network.create_*` call**, so "
+                "`create_network_element` does not support them yet:"
+            ),
+            "",
+            "```",
+            ", ".join(missing),
+            "```",
+            "",
+        ]
+    lines += [
         (
-            "Adding one is a profile entry in "
-            "`pypowsybl_mcp/creation/profiles.py`, not a new tool. The ones left "
-            "out are either topology primitives that the connection-point model "
-            "covers already (`bus`, `busbar_section`, `switch`, "
-            "`internal_connection`), boundary and area bookkeeping "
-            "(`boundary_line`, `tie_line`, `area*`, `alias`), the detailed DC grid "
-            "(`dc_*`, `voltage_source_converter`), or "
-            "`three_windings_transformer`, which has no bay creation upstream."
+            "Giving a schema-only type a profile is an entry in "
+            "`pypowsybl_mcp/creation/profiles.py`, not a new tool; the profile "
+            "then takes over from the fallback."
         ),
         "",
         END,

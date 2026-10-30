@@ -35,6 +35,7 @@ import difflib
 from typing import Any
 
 import pypowsybl as pp
+from pypowsybl import _pypowsybl as _pp
 
 from pypowsybl_mcp.creation.context import (
     NODE_BREAKER,
@@ -45,9 +46,11 @@ from pypowsybl_mcp.creation.context import (
 from pypowsybl_mcp.creation.doc_mining import attribute_docs, unit_in
 from pypowsybl_mcp.creation.profiles import (
     PROFILES,
+    UNPROFILED,
     Connection,
     CreationProfile,
 )
+from pypowsybl_mcp.creation.schema import creatable_element_types
 
 #: everyday names accepted for the canonical pypowsybl attribute
 ALIASES = {
@@ -68,6 +71,9 @@ CONNECTION_ATTRIBUTE = {
     Connection.DOUBLE: ("bus_or_busbar_section_id_1", "bus_or_busbar_section_id_2"),
 }
 
+#: how a type without a profile is checked, shown in its descriptor
+SCHEMA_ONLY = "schema only: attribute names and types; pypowsybl checks the rest"
+
 CONNECTION_HELP = (
     "A busbar section id in a node/breaker voltage level, or a bus of the "
     "bus/breaker view in a bus/breaker one. Not a bus of the bus view (the "
@@ -78,8 +84,19 @@ CONNECTION_HELP = (
 class CreationEngine:
     """Creates any element type from its profile and the introspected schema."""
 
-    def __init__(self, profiles: dict[str, CreationProfile] | None = None):
+    def __init__(
+        self,
+        profiles: dict[str, CreationProfile] | None = None,
+        unprofiled: dict[str, CreationProfile] | None = None,
+    ):
         self.profiles = PROFILES if profiles is None else profiles
+        #: schema-only fallbacks, used for a type that has no profile
+        self.unprofiled = UNPROFILED if unprofiled is None else unprofiled
+
+    @property
+    def supported(self) -> dict[str, CreationProfile]:
+        """Every type that can be created, a profile winning over its fallback."""
+        return {**self.unprofiled, **self.profiles}
 
     # ------------------------------------------------------------------
     # Description
@@ -87,21 +104,35 @@ class CreationEngine:
 
     def profile_for(self, element_type: str) -> CreationProfile:
         name = (element_type or "").strip().lower()
-        profile = self.profiles.get(name)
-        if profile is None:
-            supported = sorted(self.profiles)
-            close = difflib.get_close_matches(name, supported, n=3, cutoff=0.4)
+        supported = self.supported
+        profile = supported.get(name)
+        if profile is not None:
+            return profile
+
+        # Three different reasons, each with its own message: a caller should
+        # not be told "impossible" for something that is only not wired yet.
+        if name in creatable_element_types():
+            reason = (
+                f"'{element_type}' has creation metadata in pypowsybl but no "
+                "Network.create_* call, so this tool does not support it yet."
+            )
+        elif name.upper() in _pp.ElementType.__members__:
+            reason = (
+                f"'{element_type}' cannot be created: pypowsybl computes it from "
+                "other elements or only reads it."
+            )
+        else:
+            close = difflib.get_close_matches(name, sorted(supported), n=3, cutoff=0.4)
             suggestion = (
-                f"Did you mean {', '.join(repr(item) for item in close)}? "
+                f" Did you mean {', '.join(repr(item) for item in close)}?"
                 if close
                 else ""
             )
-            raise CreationError(
-                f"No element type '{element_type}' can be created. {suggestion}"
-                "Call describe_element_creation() to list the supported types",
-                hint={"supported_element_types": supported},
-            )
-        return profile
+            reason = f"No element type '{element_type}' exists.{suggestion}"
+        raise CreationError(
+            f"{reason} Call describe_element_creation() to list the supported types",
+            hint={"supported_element_types": sorted(supported)},
+        )
 
     def describe(self, element_type: str | None = None) -> dict:
         """The descriptor that replaces a per-tool JSON schema."""
@@ -109,14 +140,17 @@ class CreationEngine:
             return {
                 "element_types": [
                     {"element_type": name, "summary": profile.summary}
-                    for name, profile in sorted(self.profiles.items())
+                    | ({"checked": SCHEMA_ONLY} if profile.schema_only else {})
+                    for name, profile in sorted(self.supported.items())
                 ],
                 "usage": (
                     "create_network_element(element_type, attributes) creates one "
                     "element; create_network_elements(items) creates several in one "
                     "call, ordered so that containers come before what they contain. "
                     "Call describe_element_creation(element_type) for the attributes "
-                    "of one type."
+                    "of one type. Types marked 'checked' have no profile: only "
+                    "their attribute names and types are checked before pypowsybl "
+                    "is called."
                 ),
             }
 
@@ -178,6 +212,8 @@ class CreationEngine:
             ),
             "guidance": profile.guidance,
         }
+        if profile.schema_only:
+            descriptor["checked"] = SCHEMA_ONLY
         if profile.rows_attribute:
             descriptor["table_attribute"] = {
                 "name": profile.rows_attribute,
@@ -244,6 +280,11 @@ class CreationEngine:
             if value is not None and name not in profile.virtual
         }
         profile.executor.execute(network, profile.element_type, element_id, payload)
+        if profile.schema_only:
+            context.notes.append(
+                f"{profile.element_type} has no profile, so only its attribute "
+                "names and types were checked before pypowsybl accepted it"
+            )
         return self._report(profile, context, payload)
 
     def create_many(self, network, items: list[dict]) -> tuple[list[str], list[str]]:
@@ -349,6 +390,12 @@ class CreationEngine:
     def _resolve_connections(
         self, profile: CreationProfile, context: CreationContext
     ) -> None:
+        if profile.schema_only:
+            # Nothing says what the id or the references of such a type point
+            # to -- the id of an internal connection is its voltage level, that
+            # of an area_voltage_levels row an existing area -- so pypowsybl is
+            # left to check them.
+            return
         if profile.connection is Connection.TARGET:
             context.target_type = self._check_target(profile, context)
             return
@@ -540,7 +587,14 @@ class CreationEngine:
             )
             where = ""
         else:
-            created = f"created {profile.element_type} '{context.element_id}'"
+            created = (
+                # the id of such a type may name another element (an area, a
+                # voltage level), so say which attribute it is
+                f"created {profile.element_type} with "
+                f"{profile.id_field}='{context.element_id}'"
+                if profile.schema_only
+                else f"created {profile.element_type} '{context.element_id}'"
+            )
             points = [
                 f"'{point.id}' in {point.voltage_level_id}"
                 for point in context.connections

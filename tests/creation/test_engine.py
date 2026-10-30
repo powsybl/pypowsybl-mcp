@@ -755,6 +755,123 @@ def test_attachment_to_a_missing_element(engine, bus_breaker):
 
 
 # ---------------------------------------------------------------------------
+# Element types without a profile
+# ---------------------------------------------------------------------------
+
+
+def test_a_type_without_profile_is_created_from_its_schema(engine, bus_breaker):
+    report = engine.create(
+        bus_breaker, "bus", {"id": "B_NEW", "voltage_level_id": "VL4"}
+    )
+
+    assert "created bus with id='B_NEW'" in report
+    assert "has no profile" in report
+    assert "B_NEW" in bus_breaker.get_bus_breaker_view_buses().index
+
+
+def test_schema_only_equipment_takes_part_in_the_load_flow(engine, bus_breaker):
+    """A new bus, the breaker coupling it, and a load on it: still a valid grid."""
+    done, failed = engine.create_many(
+        bus_breaker,
+        [
+            # listed before the bus it needs: schema-only types come first
+            {"element_type": "load", "id": "L_NEW", "bus": "B_NEW", "p0": 5.0},
+            {"element_type": "bus", "id": "B_NEW", "voltage_level_id": "VL4"},
+            {
+                "element_type": "switch",
+                "id": "SW_NEW",
+                "voltage_level_id": "VL4",
+                "bus1_id": "B4",
+                "bus2_id": "B_NEW",
+                "kind": "BREAKER",
+                "open": "false",
+            },
+        ],
+    )
+
+    assert not failed
+    assert "load" in done[-1]
+    assert not bus_breaker.get_switches().loc["SW_NEW", "open"]
+    results = pp.loadflow.run_ac(bus_breaker)
+    assert results[0].status == pp.loadflow.ComponentStatus.CONVERGED
+    assert bus_breaker.get_loads().loc["L_NEW", "p"] == pytest.approx(5.0)
+
+
+def test_schema_only_types_skip_the_id_check(engine, node_breaker):
+    """Their id may name an existing element: an area, a voltage level."""
+    engine.create(node_breaker, "area", {"id": "A1", "area_type": "ControlArea"})
+    engine.create(
+        node_breaker, "area_voltage_levels", {"id": "A1", "voltage_level_id": "S1VL1"}
+    )
+    report = engine.create(
+        node_breaker,
+        "internal_connection",
+        {"voltage_level_id": "S1VL1", "node1": 100, "node2": 101},
+    )
+
+    assert "voltage_level_id='S1VL1'" in report
+    assert "S1VL1" in node_breaker.get_areas_voltage_levels()["voltage_level_id"].values
+
+
+def test_pypowsybl_decides_what_a_schema_only_type_lacks(engine, bus_breaker):
+    with pytest.raises(pp.PyPowsyblError, match="already contains"):
+        engine.create(bus_breaker, "bus", {"id": "B4", "voltage_level_id": "VL4"})
+
+
+def test_schema_only_attributes_are_still_checked(engine, bus_breaker):
+    with pytest.raises(CreationError, match="Did you mean 'voltage_level_id'"):
+        engine.create(bus_breaker, "bus", {"id": "B_NEW", "voltage_level": "VL4"})
+    with pytest.raises(CreationError, match="'node' of a busbar_section must be a"):
+        engine.create(
+            bus_breaker,
+            "busbar_section",
+            {"id": "BBS", "voltage_level_id": "VL4", "node": "first"},
+        )
+
+
+def test_only_the_main_table_of_a_schema_only_type_is_accepted(engine, bus_breaker):
+    """The generation part of a boundary line is a second dataframe."""
+    attributes = {
+        "id": "BL",
+        "voltage_level_id": "VL4",
+        "bus_id": "B4",
+        **{name: 0.0 for name in ("p0", "q0", "g", "b")},
+        "r": 1.0,
+        "x": 1.0,
+    }
+    with pytest.raises(CreationError, match="has no attribute 'min_p'"):
+        engine.create(bus_breaker, "boundary_line", {**attributes, "min_p": 0.0})
+
+    engine.create(bus_breaker, "boundary_line", attributes)
+    assert "BL" in bus_breaker.get_boundary_lines().index
+    assert "additional tables" in engine.describe("boundary_line")["guidance"]
+
+
+def test_a_profile_wins_over_the_fallback(engine):
+    from pypowsybl_mcp.creation.profiles import PROFILES
+
+    for name in PROFILES:
+        assert not engine.profile_for(name).schema_only
+
+
+def test_describe_marks_the_schema_only_types(engine):
+    listed = {item["element_type"]: item for item in engine.describe()["element_types"]}
+
+    assert "schema only" in listed["switch"]["checked"]
+    assert "checked" not in listed["load"]
+    assert "schema only" in engine.describe("switch")["checked"]
+
+
+def test_a_computed_type_is_told_apart_from_an_unknown_one(engine, bus_breaker):
+    with pytest.raises(CreationError, match="pypowsybl computes it"):
+        engine.create(bus_breaker, "branch", {"id": "X"})
+    with pytest.raises(CreationError, match="does not support it yet"):
+        engine.create(bus_breaker, "alias", {"id": "X"})
+    with pytest.raises(CreationError, match="No element type 'swtich' exists"):
+        engine.create(bus_breaker, "swtich", {"id": "X"})
+
+
+# ---------------------------------------------------------------------------
 # Batches
 # ---------------------------------------------------------------------------
 

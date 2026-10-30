@@ -139,16 +139,26 @@ class BranchBays(Executor):
 
 @dataclass(frozen=True)
 class Raw(Executor):
-    """An element pypowsybl creates without switching equipment."""
+    """An element pypowsybl creates without switching equipment.
+
+    Its attributes are passed as keywords, which only fill the main dataframe
+    of the call: with ``main_frame_only`` the schema leaves out the others (the
+    generation part of a boundary line) rather than accept fields that would
+    then be refused upstream.
+    """
 
     method: str
+    main_frame_only: bool = False
 
     @property
     def calls(self) -> tuple[str, ...]:
         return (f"Network.{self.method}",)
 
     def schema(self, element_type: str) -> ElementSchema:
-        return creation_schema(element_type)
+        schema = creation_schema(element_type)
+        if self.main_frame_only:
+            return ElementSchema(fields=schema.group(0))
+        return schema
 
     def describe(self) -> str:
         return f"created directly with Network.{self.method}()"
