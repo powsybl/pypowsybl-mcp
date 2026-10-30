@@ -95,6 +95,16 @@ def test_docstring_mining_extracts_descriptions_and_units():
     assert unit_in(None) is None
 
 
+def test_docstring_mining_keeps_the_first_description_of_a_name():
+    """pypowsybl 1.15 documents the shunt deadband as a second target_v."""
+    import pypowsybl as pp
+
+    docs = attribute_docs((pp.network.create_shunt_compensator_bay,))
+
+    assert "target voltage" in docs["target_v"]
+    assert "deadband" not in docs["target_v"]
+
+
 def test_docstring_mining_merges_several_functions():
     """A bay helper documents only what it adds, and points at the base API."""
     import pypowsybl as pp
