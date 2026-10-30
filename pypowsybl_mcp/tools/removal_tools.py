@@ -38,6 +38,7 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
+from pypowsybl_mcp.utils.element_types import ELEMENT_TYPE_TO_GETTER
 
 # Element types attached to a bus or busbar section through a bay. Removing one
 # of these also removes the switching equipment that connected it.
@@ -64,6 +65,14 @@ FEEDER_TYPES = frozenset(
 # cascade before its turn.
 REMOVAL_RANKS = {"VOLTAGE_LEVEL": 1, "SUBSTATION": 2}
 
+# Columns through which an element table names the voltage level of each end.
+VOLTAGE_LEVEL_COLUMNS = (
+    "voltage_level_id",
+    "voltage_level1_id",
+    "voltage_level2_id",
+    "voltage_level3_id",
+)
+
 
 def register_removal_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
     tools = RemovalTools(pypowsybl_proxies)
@@ -79,35 +88,95 @@ class RemovalTools(PyPowsyblTool):
             voltage_levels["substation_id"] == substation_id
         ].index.tolist()
 
+    def _cascade(
+        self, network, voltage_level_ids: list[str]
+    ) -> tuple[dict[str, str], set[str]]:
+        """What removing some voltage levels takes down with them.
+
+        Mirrors ``remove_voltage_levels``: every element with an end in one of
+        the voltage levels, the HVDC lines whose converter station goes (with
+        the station at their far end), and the tie lines whose boundary line
+        goes. Every element table is scanned, so a type added upstream is
+        counted without a change here.
+
+        Returns the removed ids with their type, and the subset reaching beyond
+        the voltage levels -- the part a caller is least likely to expect.
+        """
+        identifiables = network.get_identifiables()
+        removed: set[str] = set()
+        beyond: set[str] = set()
+        for getter in sorted(set(ELEMENT_TYPE_TO_GETTER.values())):
+            try:
+                table = getattr(network, getter)()
+            except (pp.PyPowsyblError, ValueError):  # pragma: no cover - defensive
+                continue
+            columns = [name for name in VOLTAGE_LEVEL_COLUMNS if name in table.columns]
+            if not columns:
+                continue
+            ends = table[columns]
+            inside = ends.isin(voltage_level_ids)
+            touching = inside.any(axis=1)
+            removed.update(table.index[touching])
+            beyond.update(table.index[touching & ~(inside | ends.isna()).all(axis=1)])
+
+        hvdc_lines = network.get_hvdc_lines()
+        for line_id, row in hvdc_lines.iterrows():
+            stations = {row["converter_station1_id"], row["converter_station2_id"]}
+            if stations & removed:
+                pulled = {line_id} | (stations - removed)
+                removed.update(pulled | stations)
+                beyond.update(pulled)
+
+        tie_lines = network.get_tie_lines()
+        for line_id, row in tie_lines.iterrows():
+            if {row["boundary_line1_id"], row["boundary_line2_id"]} & removed:
+                removed.add(line_id)
+                beyond.add(line_id)
+
+        types = {
+            element_id: str(identifiables.loc[element_id, "type"])
+            for element_id in removed
+            if element_id in identifiables.index
+        }
+        return types, beyond & set(types)
+
     def _cascade_summary(self, network, voltage_level_ids: list[str]) -> str:
         """Describe what removing some voltage levels would take down with them."""
-        if not voltage_level_ids:
+        types, beyond = self._cascade(network, voltage_level_ids)
+        # Switches are listed as a whole: they are the bays of everything else.
+        switches = sum(1 for kind in types.values() if kind == "SWITCH")
+        equipment = {
+            element_id: kind
+            for element_id, kind in types.items()
+            if kind not in ("SWITCH", "VOLTAGE_LEVEL")
+        }
+        if not equipment and not switches:
             return "nothing else"
 
-        connectables = 0
-        for getter in ("get_loads", "get_generators", "get_busbar_sections"):
-            table = getattr(network, getter)()
-            if "voltage_level_id" in table.columns:
-                connectables += int(
-                    table["voltage_level_id"].isin(voltage_level_ids).sum()
-                )
+        def label(kind: str) -> str:
+            name = kind.lower().replace("_", " ")
+            return f"{name}(es)" if name.endswith(("s", "ch", "x")) else f"{name}(s)"
 
-        branches = []
-        for getter in ("get_lines", "get_2_windings_transformers"):
-            table = getattr(network, getter)()
-            if {"voltage_level1_id", "voltage_level2_id"} <= set(table.columns):
-                touching = table[
-                    table["voltage_level1_id"].isin(voltage_level_ids)
-                    | table["voltage_level2_id"].isin(voltage_level_ids)
-                ]
-                branches.extend(touching.index.tolist())
+        inside: dict[str, int] = {}
+        reaching: dict[str, list[str]] = {}
+        for element_id, kind in sorted(equipment.items()):
+            if element_id in beyond:
+                reaching.setdefault(kind, []).append(element_id)
+            else:
+                inside[kind] = inside.get(kind, 0) + 1
 
-        parts = [f"{connectables} connectable(s)"]
-        if branches:
-            listed = ", ".join(branches[:5])
-            more = f" and {len(branches) - 5} more" if len(branches) > 5 else ""
-            parts.append(f"{len(branches)} branch(es) ({listed}{more})")
-        return ", ".join(parts)
+        parts = [f"{count} {label(kind)}" for kind, count in sorted(inside.items())]
+        if switches:
+            parts.append(f"{switches} switch(es)")
+        summary = ", ".join(parts) if parts else "no equipment of its own"
+        if reaching:
+            listed = []
+            for kind, ids in sorted(reaching.items()):
+                shown = ", ".join(ids[:5])
+                more = f" and {len(ids) - 5} more" if len(ids) > 5 else ""
+                listed.append(f"{len(ids)} {label(kind)} ({shown}{more})")
+            summary += "; and beyond it: " + ", ".join(listed)
+        return summary
 
     def _remove_one(self, network, element_id: str, element_type: str, cascade: bool):
         """Remove a single element, returning the line to report for it."""
@@ -212,9 +281,9 @@ class RemovalTools(PyPowsyblTool):
 
             # Ask first what a voltage level removal would cost
             remove_network_elements(["VL_DC"])
-            → "REFUSED voltage level 'VL_DC': removing it also removes 2
-               connectable(s), 1 branch(es) (LINE_B4_DC). Call again with
-               cascade=True to confirm"
+            → "REFUSED voltage level 'VL_DC': removing it also removes
+               1 bus(es), 1 load(s); and beyond it: 1 line(s) (LINE_B4_DC).
+               Call again with cascade=True to confirm"
 
         Notes:
             - **Only remove equipment when the user explicitly asked for it.**

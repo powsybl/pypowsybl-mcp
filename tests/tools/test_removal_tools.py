@@ -174,8 +174,8 @@ async def test_remove_voltage_level_needs_cascade(
 
     assert "REFUSED voltage level 'VL_DC'" in result
     # The refusal quantifies what the cascade would take down.
-    assert "connectable(s)" in result
-    assert "LINE_B4_DC" in result
+    assert "1 load(s)" in result
+    assert "beyond it: 1 line(s) (LINE_B4_DC)" in result
     assert "cascade=True" in result
     assert "VL_DC" in bus_breaker_network.get_voltage_levels().index
     assert "DATACENTER" in bus_breaker_network.get_loads().index
@@ -293,6 +293,59 @@ async def test_remove_invalidates_loadflow_results(
     await removal_tools.remove_network_elements(["B3-G"], ctx=mock_ctx)
 
     assert "net1" not in proxy.loadflow_results
+
+
+@pytest.mark.asyncio
+async def test_the_cascade_refusal_names_the_hvdc_links_it_would_cut(
+    removal_tools, mock_ctx, node_breaker_network
+):
+    result = await removal_tools.remove_network_elements(
+        ["S1VL2"], network_id="nb", ctx=mock_ctx
+    )
+
+    assert "REFUSED voltage level 'S1VL2'" in result
+    assert "2 hvdc line(s) (HVDC1, HVDC2)" in result
+    assert "1 shunt compensator(s)" in result
+    assert "1 two windings transformer(s) (TWT)" in result
+
+
+CASCADE_NETWORKS = [
+    pp.network.create_ieee14,
+    pp.network.create_four_substations_node_breaker_network,
+    pp.network.create_eurostag_tutorial_example1_network,
+    # converter stations, DC devices and tie lines through boundary lines
+    pp.network.create_dc_detailed_vsc_symmetrical_monopole_network,
+    pp.network.create_dc_detailed_lcc_bipole_metallic_return_network,
+]
+
+
+@pytest.mark.parametrize("factory", CASCADE_NETWORKS, ids=lambda f: f.__name__)
+def test_the_cascade_summary_matches_what_is_actually_removed(removal_tools, factory):
+    """What the refusal announces is what cascade=True then destroys.
+
+    Switches are left out of the comparison: the bays at the far end of a
+    branch go too, and the summary counts only the switches of the voltage
+    level itself.
+    """
+    for voltage_level_id in factory().get_voltage_levels().index:
+        network = factory()
+        before = network.get_identifiables()["type"].astype(str)
+        announced, _ = removal_tools._cascade(network, [voltage_level_id])
+
+        pp.network.remove_voltage_levels(network, voltage_level_ids=[voltage_level_id])
+
+        left = set(network.get_identifiables().index)
+        removed = {
+            element_id
+            for element_id, kind in before.items()
+            if element_id not in left and kind not in ("SWITCH", "VOLTAGE_LEVEL")
+        }
+        expected = {
+            element_id
+            for element_id, kind in announced.items()
+            if kind not in ("SWITCH", "VOLTAGE_LEVEL")
+        }
+        assert expected == removed, voltage_level_id
 
 
 @pytest.mark.asyncio
