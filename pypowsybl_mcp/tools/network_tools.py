@@ -4,7 +4,6 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 import json
-from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
@@ -1312,6 +1311,49 @@ class NetworkTools(PyPowsyblTool):
             logger.error(f"Failed to remove variant: {e}")
             return f"Failed to remove variant: {e!s}"
 
+    def _solve_ac_loadflow(self, proxy, network_id, network):
+        """Solve an AC load flow on the current working variant with the session's
+        parameters and provider; record provenance; return (meta, error|None).
+
+        The check tools call this on every invocation rather than trusting a cached
+        result. A load flow is deterministic, so re-solving an unchanged network
+        never changes a correct answer — it only guarantees the flows reflect the
+        current variant/topology and the session's engine, instead of a stale,
+        failed, DC, or foreign-variant/provider solve left in proxy.loadflow_results.
+        """
+        variant = network.get_working_variant_id()
+        results = pp.loadflow.run_ac(
+            network, proxy.lf_params, provider=proxy.lf_provider
+        )
+        if not all(r.status.name == "CONVERGED" for r in results):
+            # Report non-convergence; do not record — a recorded result always
+            # means a usable, converged solve.
+            return None, {
+                "success": False,
+                "network_id": network_id,
+                "loadflow_executed": True,
+                "loadflow_converged": False,
+                "failed_components": [
+                    {
+                        "component_num": r.connected_component_num,
+                        "status": r.status.name,
+                    }
+                    for r in results
+                    if r.status.name != "CONVERGED"
+                ],
+                "error": "Load flow failed to converge",
+            }
+        meta = proxy.record_loadflow(
+            network_id,
+            converged=True,
+            dc=False,
+            provider=proxy.lf_provider,
+            variant=variant,
+            parameters=json.loads(proxy.lf_params.to_json()),
+            components=len(results),
+        )
+        return {**meta, "executed": True}, None
+
     async def check_voltage_violations(
         self,
         network_id: str | None = None,
@@ -1329,8 +1371,11 @@ class NetworkTools(PyPowsyblTool):
 
         Identifies all buses where voltage magnitude falls outside the acceptable
         operating range. This is a critical check for power system security and
-        equipment protection. Runs an AC load flow only if no load flow results
-        are cached for the network yet; otherwise the cached solution is reused.
+        equipment protection. Solves a fresh AC load flow with the session's
+        parameters/provider on every call, so the voltages checked always reflect
+        the current variant and engine (a load flow is deterministic — re-solving
+        an unchanged network only recomputes the same result). The provenance of
+        the solve used is echoed back in the "loadflow" field.
 
         Bus voltages returned by pypowsybl are expressed in kV, while networks mix
         several nominal voltages (400, 225, 90, 63, 20 kV...). A single threshold is
@@ -1434,41 +1479,14 @@ class NetworkTools(PyPowsyblTool):
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
         try:
-            loadflow_executed = False
-
-            # Check if loadflow needs to be run
-            if network_id not in proxy.loadflow_results:
-                loadflow_executed = True
-                results = pp.loadflow.run_ac(network)
-                all_converged = all(
-                    result.status.name == "CONVERGED" for result in results
-                )
-
-                if not all_converged:
-                    failed_components = [
-                        {
-                            "component_num": result.connected_component_num,
-                            "status": result.status.name,
-                        }
-                        for result in results
-                        if result.status.name != "CONVERGED"
-                    ]
-                    return json.dumps(
-                        {
-                            "success": False,
-                            "network_id": network_id,
-                            "loadflow_executed": True,
-                            "loadflow_converged": False,
-                            "failed_components": failed_components,
-                            "error": "Load flow failed to converge",
-                        },
-                        indent=2,
-                    )
-
-                proxy.loadflow_results[network_id] = {
-                    "converged": True,
-                    "timestamp": datetime.now(UTC).isoformat(),
-                }
+            # Always solve a fresh AC load flow with the session's parameters, so
+            # the voltages checked reflect the current variant and engine — never a
+            # stale, failed, DC, or foreign-provider result left in the cache.
+            loadflow_meta, lf_error = self._solve_ac_loadflow(
+                proxy, network_id, network
+            )
+            if lf_error:
+                return json.dumps(lf_error, indent=2)
 
             # Get buses, enriched with the nominal voltage and the limits of their
             # voltage level, so every comparison happens in kV.
@@ -1562,7 +1580,11 @@ class NetworkTools(PyPowsyblTool):
             summary = {
                 "success": True,
                 "network_id": network_id,
-                "loadflow_executed": loadflow_executed,
+                "loadflow_executed": loadflow_meta["executed"],
+                "loadflow": {
+                    k: loadflow_meta[k]
+                    for k in ("converged", "dc", "provider", "variant", "parameters")
+                },
                 "parameter_limits": {
                     "min": min_voltage,
                     "max": max_voltage,
@@ -1596,7 +1618,7 @@ class NetworkTools(PyPowsyblTool):
             logger.info(
                 f"Voltage check completed for network '{network_id}': {len(violations)} violations found"
             )
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, default=str)
 
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.error(f"Failed to check voltage violations: {e}")
@@ -1621,9 +1643,12 @@ class NetworkTools(PyPowsyblTool):
         """Check branches for current/thermal overloads in the N state.
 
         The current-side twin of check_voltage_violations: it sweeps every branch
-        (no component filter by default), auto-runs an AC load flow if none is
-        cached, and reports every branch loaded above threshold_percent, worst
-        first. Operates on the currently active working variant. It also reports,
+        (no component filter by default), solves a fresh AC load flow with the
+        session's parameters/provider on every call, and reports every branch
+        loaded above threshold_percent, worst first. Operates on the currently
+        active working variant; the solve's provenance is echoed in the "loadflow"
+        field (a load flow is deterministic, so re-solving an unchanged network
+        only recomputes the same result). It also reports,
         separately, any branch carrying a current on a terminal with no permanent
         rating — those terminals cannot be checked, so they are surfaced as a
         coverage gap instead of silently passing (e.g. an unrated three-winding
@@ -1695,33 +1720,14 @@ class NetworkTools(PyPowsyblTool):
         )
 
         try:
-            loadflow_executed = False
-            if network_id not in proxy.loadflow_results:
-                loadflow_executed = True
-                results = pp.loadflow.run_ac(network)
-                if not all(r.status.name == "CONVERGED" for r in results):
-                    return json.dumps(
-                        {
-                            "success": False,
-                            "network_id": network_id,
-                            "loadflow_executed": True,
-                            "loadflow_converged": False,
-                            "failed_components": [
-                                {
-                                    "component_num": r.connected_component_num,
-                                    "status": r.status.name,
-                                }
-                                for r in results
-                                if r.status.name != "CONVERGED"
-                            ],
-                            "error": "Load flow failed to converge",
-                        },
-                        indent=2,
-                    )
-                proxy.loadflow_results[network_id] = {
-                    "converged": True,
-                    "timestamp": datetime.now(UTC).isoformat(),
-                }
+            # Always solve a fresh AC load flow with the session's parameters, so
+            # the currents checked reflect the current variant and engine — never a
+            # stale, failed, DC, or foreign-provider result left in the cache.
+            loadflow_meta, lf_error = self._solve_ac_loadflow(
+                proxy, network_id, network
+            )
+            if lf_error:
+                return json.dumps(lf_error, indent=2)
 
             types = [element_type] if element_type else list(LOADING_BRANCH_TYPES)
             working_variant = network.get_working_variant_id()
@@ -1891,7 +1897,11 @@ class NetworkTools(PyPowsyblTool):
             summary = {
                 "success": True,
                 "network_id": network_id,
-                "loadflow_executed": loadflow_executed,
+                "loadflow_executed": loadflow_meta["executed"],
+                "loadflow": {
+                    k: loadflow_meta[k]
+                    for k in ("converged", "dc", "provider", "variant", "parameters")
+                },
                 "element_types": types,
                 "threshold_percent": threshold_percent,
                 "limit_kind": kind,
@@ -2771,7 +2781,7 @@ class NetworkTools(PyPowsyblTool):
                  - flow_side (explicit description, e.g., "from (p1)")
         """
         try:
-            _, network_id, network = self.resolve_network(ctx, network_id)
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
         except NetworkNotFoundError as e:
             logger.warning(str(e))
             return str(e)
@@ -2799,42 +2809,14 @@ class NetworkTools(PyPowsyblTool):
                 side = "from"
             p_col = col_map[side]
 
-            # Retrieve lines; if p1/p2 are unavailable, attempt an AC loadflow
+            # Always solve a fresh AC load flow with the session's parameters so the
+            # ranking reflects the current variant and engine, then read the lines.
+            loadflow_meta, lf_error = self._solve_ac_loadflow(
+                proxy, network_id, network
+            )
+            if lf_error:
+                return json.dumps(lf_error, indent=2)
             lines = network.get_lines()
-            need_lf = (p_col not in lines.columns) or lines[p_col].isna().all()
-            if need_lf:
-                try:
-                    logger.debug("Running AC loadflow to populate p1/p2 columns")
-                    results = pp.loadflow.run_ac(network)
-                    # A run that does not converge still returns, leaving p1/p2
-                    # as NaN, so the ranking below would be built on meaningless
-                    # scores. Report it instead of pretending to have a result.
-                    failed_components = [
-                        {
-                            "component_num": result.connected_component_num,
-                            "status": result.status.name,
-                        }
-                        for result in results
-                        if result.status.name != "CONVERGED"
-                    ]
-                    if failed_components:
-                        logger.warning(
-                            f"Load flow failed to converge for network '{network_id}'"
-                        )
-                        return json.dumps(
-                            {
-                                "success": False,
-                                "network_id": network_id,
-                                "loadflow_executed": True,
-                                "loadflow_converged": False,
-                                "failed_components": failed_components,
-                                "error": "Load flow failed to converge",
-                            },
-                            indent=2,
-                        )
-                    lines = network.get_lines()  # refresh
-                except (pp.PyPowsyblError, ValueError, KeyError) as e:
-                    logger.warning(f"Loadflow run failed or not available: {e}")
 
             if p_col not in lines.columns:
                 msg = (
@@ -2882,6 +2864,10 @@ class NetworkTools(PyPowsyblTool):
 
             flow_side_desc = f"{side} ({p_col})"
             result = {
+                "loadflow": {
+                    key: loadflow_meta[key]
+                    for key in ("converged", "dc", "provider", "variant", "parameters")
+                },
                 "network_id": network_id,
                 "k": int(k),
                 "flow_side": flow_side_desc,
@@ -2901,7 +2887,7 @@ class NetworkTools(PyPowsyblTool):
                     }
                 )
 
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, default=str)
 
         except (pp.PyPowsyblError, ValueError, KeyError) as e:
             logger.error(f"Failed to compute top active power transit lines: {e}")

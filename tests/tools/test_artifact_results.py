@@ -29,6 +29,19 @@ def mock_ctx():
     return MockContext()
 
 
+@pytest.fixture(autouse=True)
+def _converged_loadflow():
+    """check_voltage_violations now solves an AC load flow on every call; fake a
+    converged solve so the artifact tests exercise the output path, not pypowsybl."""
+    converged = MagicMock()
+    converged.status.name = "CONVERGED"
+    with patch(
+        "pypowsybl_mcp.tools.network_tools.pp.loadflow.run_ac",
+        return_value=[converged],
+    ):
+        yield
+
+
 @pytest.fixture
 def network_tools():
     return NetworkTools(TTLCache(maxsize=10, ttl=3600))
@@ -55,6 +68,7 @@ def network_with_buses(v_mag, nominal_v=400.0):
     """A network whose buses carry the given voltages, in kV."""
     count = len(v_mag)
     network = MagicMock()
+    network.get_working_variant_id.return_value = "InitialState"
     network.get_buses.return_value = pd.DataFrame(
         {
             "v_mag": v_mag,

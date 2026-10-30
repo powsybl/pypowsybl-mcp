@@ -36,6 +36,21 @@ def mock_ctx():
     return MockContext()
 
 
+@pytest.fixture(autouse=True)
+def _converged_loadflow():
+    """The check/transit tools now solve an AC load flow on every call, so fake a
+    converged solve by default — tests exercise the tool logic, not pypowsybl. A
+    test that needs a failed or specific solve re-patches run_ac inside itself
+    (the inner patch nests over this one)."""
+    converged = MagicMock()
+    converged.status.name = "CONVERGED"
+    with patch(
+        "pypowsybl_mcp.tools.network_tools.pp.loadflow.run_ac",
+        return_value=[converged],
+    ):
+        yield
+
+
 @pytest.mark.asyncio
 async def test_create_ieee_network_success(network_tools, mock_ctx):
     with patch("pypowsybl.network.create_ieee14") as mock_create:
@@ -249,6 +264,7 @@ def _mock_network_with_buses(v_mag, nominal_v=400.0, low=None, high=None):
     """Bus voltages are in kV, as pypowsybl returns them."""
     count = len(v_mag)
     mock_net = MagicMock()
+    mock_net.get_working_variant_id.return_value = "InitialState"
     mock_net.get_buses.return_value = pd.DataFrame(
         {
             "v_mag": v_mag,
@@ -2034,7 +2050,10 @@ async def test_check_voltage_violations_runs_loadflow_when_missing(
             network_id="net1", ctx=mock_ctx
         )
 
-    mock_run.assert_called_once_with(mock_net)
+    # Now solved with the session's parameters/provider, not library defaults.
+    mock_run.assert_called_once_with(
+        mock_net, proxy.lf_params, provider=proxy.lf_provider
+    )
     data = json.loads(result)
     assert data["success"] is True
     assert data["loadflow_executed"] is True
@@ -2988,34 +3007,43 @@ async def test_get_top_active_power_transit_lines_unsupported_flow_side(
 
 
 @pytest.mark.asyncio
-async def test_get_top_active_power_transit_lines_runs_loadflow_when_missing(
+async def test_get_top_active_power_transit_lines_solves_with_session_params(
     network_tools, mock_ctx
 ):
+    # The tool now solves a fresh AC load flow on every call, with the session's
+    # parameters/provider, then reads the lines once.
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    # First call: no p1/p2 columns at all -> triggers loadflow.
-    lines_before = pd.DataFrame({"other": [1.0]}, index=["l1"])
-    lines_after = pd.DataFrame({"p1": [42.0], "p2": [-42.0]}, index=["l1"])
-    mock_net.get_lines.side_effect = [lines_before, lines_after]
+    mock_net.get_working_variant_id.return_value = "InitialState"
+    mock_net.get_lines.return_value = pd.DataFrame(
+        {"p1": [42.0], "p2": [-42.0]}, index=["l1"]
+    )
     proxy.networks["net1"] = mock_net
 
-    with patch("pypowsybl_mcp.tools.network_tools.pp.loadflow.run_ac") as mock_run:
+    mock_res = MagicMock()
+    mock_res.status.name = "CONVERGED"
+    with patch(
+        "pypowsybl_mcp.tools.network_tools.pp.loadflow.run_ac", return_value=[mock_res]
+    ) as mock_run:
         result = await network_tools.get_top_active_power_transit_lines(
             network_id="net1", ctx=mock_ctx
         )
 
-    mock_run.assert_called_once_with(mock_net)
+    mock_run.assert_called_once_with(
+        mock_net, proxy.lf_params, provider=proxy.lf_provider
+    )
     data = json.loads(result)
     assert data["elements"][0]["active_power_mw"] == 42.0
 
 
 @pytest.mark.asyncio
-async def test_get_top_active_power_transit_lines_loadflow_failure_tolerated(
+async def test_get_top_active_power_transit_lines_reports_loadflow_error(
     network_tools, mock_ctx
 ):
+    # A load flow that errors is now reported, not tolerated.
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    # p1/p2 never appear, even after the (failing) loadflow attempt.
+    mock_net.get_working_variant_id.return_value = "InitialState"
     mock_net.get_lines.return_value = pd.DataFrame({"other": [1.0]}, index=["l1"])
     proxy.networks["net1"] = mock_net
 
@@ -3027,7 +3055,8 @@ async def test_get_top_active_power_transit_lines_loadflow_failure_tolerated(
             network_id="net1", ctx=mock_ctx
         )
 
-    assert "not available" in result
+    assert "Failed to compute top active power transit lines" in result
+    assert "lf boom" in result
 
 
 @pytest.mark.asyncio
@@ -3111,9 +3140,10 @@ async def test_get_top_active_power_transit_lines_converged_produces_ranking(
     """
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    lines_before = pd.DataFrame({"other": [1.0]}, index=["l1"])
-    lines_after = pd.DataFrame({"p1": [42.0], "p2": [-42.0]}, index=["l1"])
-    mock_net.get_lines.side_effect = [lines_before, lines_after]
+    mock_net.get_working_variant_id.return_value = "InitialState"
+    mock_net.get_lines.return_value = pd.DataFrame(
+        {"p1": [42.0], "p2": [-42.0]}, index=["l1"]
+    )
     proxy.networks["net1"] = mock_net
 
     mock_res = MagicMock()
@@ -3141,19 +3171,17 @@ async def test_get_top_active_power_transit_lines_all_nan_scores_rejected(
     """
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
+    mock_net.get_working_variant_id.return_value = "InitialState"
     mock_net.get_lines.return_value = pd.DataFrame(
         {"p1": [float("nan"), float("nan")], "p2": [float("nan"), float("nan")]},
         index=["l1", "l2"],
     )
     proxy.networks["net1"] = mock_net
 
-    with patch(
-        "pypowsybl_mcp.tools.network_tools.pp.loadflow.run_ac",
-        side_effect=pp.PyPowsyblError("lf boom"),
-    ):
-        result = await network_tools.get_top_active_power_transit_lines(
-            network_id="net1", ctx=mock_ctx
-        )
+    # The solve converges (autouse fake), but p1 is all-NaN -> not a ranking.
+    result = await network_tools.get_top_active_power_transit_lines(
+        network_id="net1", ctx=mock_ctx
+    )
 
     assert "NaN" not in result
     data = json.loads(result)
@@ -3289,7 +3317,7 @@ async def test_check_current_violations_sweeps_line_and_2wt(network_tools, mock_
     )
 
     assert data["success"] is True
-    assert data["loadflow_executed"] is False
+    assert data["loadflow_executed"] is True  # always solves now
     assert data["element_types"] == [
         "line",
         "two_windings_transformer",
@@ -3363,6 +3391,50 @@ async def test_check_current_violations_auto_runs_loadflow(network_tools, mock_c
 
     assert data["loadflow_executed"] is True
     assert data["violation_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_check_current_violations_always_solves_ignoring_stale_cache(
+    network_tools, mock_ctx
+):
+    # Regression for the reported bug: a failed / DC / foreign-variant cache entry
+    # must NOT be trusted. The tool re-solves (with the session's params/provider)
+    # on every call and echoes the fresh solve's provenance.
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = _current_network()
+    proxy.networks["net1"] = mock_net
+    proxy.loadflow_results["net1"] = {
+        "converged": False,
+        "dc": True,
+        "variant": "ghost",
+        "provider": "stale",
+    }
+
+    mock_res = MagicMock()
+    mock_res.status.name = "CONVERGED"
+    with patch(
+        "pypowsybl_mcp.tools.network_tools.pp.loadflow.run_ac", return_value=[mock_res]
+    ) as mock_run:
+        data = json.loads(
+            await network_tools.check_current_violations(
+                network_id="net1", threshold_percent=100, ctx=mock_ctx
+            )
+        )
+
+    # Re-solved despite the cache entry, with the session's params/provider.
+    mock_run.assert_called_once_with(
+        mock_net, proxy.lf_params, provider=proxy.lf_provider
+    )
+    assert data["success"] is True
+    assert data["loadflow_executed"] is True
+    # Provenance reflects the fresh AC solve, not the stale DC record.
+    assert data["loadflow"]["converged"] is True
+    assert data["loadflow"]["dc"] is False
+    assert data["loadflow"]["variant"] == "InitialState"
+    assert data["loadflow"]["provider"] == proxy.lf_provider
+    assert isinstance(data["loadflow"]["parameters"], dict)
+    ids = {v["element_id"] for v in data["violations"]}
+    assert "L1" in ids and "T1" in ids
 
 
 @pytest.mark.asyncio
