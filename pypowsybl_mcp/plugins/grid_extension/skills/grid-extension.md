@@ -227,8 +227,8 @@ isolates the state of the network, not its structure.
 * `describe_element_creation()` with no argument lists every type that can be
   created. If a type is not there, say so instead of inventing an
   `element_type`; `generate_python_script()` can produce pypowsybl code for what
-  the server does not expose. `docs/tools_reference.md` carries the full
-  supported / not-supported table.
+  the server does not expose. `docs/grid_extension.md` carries
+  the full supported / not-supported table.
 * Whether a regulating tap changer or SVC is actually simulated depends on the
   load-flow parameters (transformer voltage control, phase shifter regulation,
   see `get_loadflow_params()`).

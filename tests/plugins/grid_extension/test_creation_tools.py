@@ -11,7 +11,7 @@ import pypowsybl as pp
 import pytest
 from cachetools import TTLCache
 
-from pypowsybl_mcp.tools.creation_tools import (
+from pypowsybl_mcp.plugins.grid_extension.creation_tools import (
     CHEAT_SHEET,
     CreationTools,
     register_creation_tools,

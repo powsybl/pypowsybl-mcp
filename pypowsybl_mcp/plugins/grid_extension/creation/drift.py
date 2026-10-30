@@ -24,7 +24,8 @@ version; the server may well run on another. Two things guard against that:
     logged and served on ``/admin/creation-coverage``.
 
 The checks only see *names*. A changed enumeration or a newly required
-attribute still needs the review described in ``docs/tools_reference.md``.
+attribute still needs the review described in
+``docs/element_creation_and_removal.md``.
 """
 
 from __future__ import annotations
@@ -38,15 +39,15 @@ from typing import Any
 import pypowsybl as pp
 from loguru import logger
 
-from pypowsybl_mcp.creation.executors import resolve_call
-from pypowsybl_mcp.creation.profiles import (
+from pypowsybl_mcp.plugins.grid_extension.creation.executors import resolve_call
+from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
     PROFILES,
     UNPROFILED,
     Connection,
     CreationProfile,
     schema_only_profile,
 )
-from pypowsybl_mcp.creation.schema import (
+from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
     CREATION_METHODS,
     ElementSchema,
     creatable_element_types,
@@ -58,7 +59,7 @@ SNAPSHOT_PATH = Path(__file__).with_name("coverage_snapshot.json")
 LAST_REPORT: dict[str, Any] | None = None
 
 # ---------------------------------------------------------------------------
-# Profile checks, shared with tests/creation/test_profiles_consistency.py
+# Profile checks, shared with tests/plugins/grid_extension/creation/test_profiles_consistency.py
 # ---------------------------------------------------------------------------
 
 

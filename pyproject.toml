@@ -4,6 +4,10 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "pypowsybl-mcp"
 version = "0.1.0.dev1"
@@ -60,6 +64,14 @@ dev = [
     "ruff>=0.16.1",
 ]
 
+# Plugins shipped with the server (pypowsybl_mcp/plugins/), loaded through the
+# same entry points as external ones, so MCP_DISABLED_PLUGINS turns them off.
+[project.entry-points."pypowsybl_mcp.plugins.v1"]
+grid_extension = "pypowsybl_mcp.plugins.grid_extension.plugin:register_plugin_tools"
+
+[project.entry-points."pypowsybl_mcp.resources.v1"]
+grid_extension = "pypowsybl_mcp.plugins.grid_extension.plugin:register_plugin_resources"
+
 [project.urls]
 homepage = "https://github.com/powsybl/pypowsybl-mcp"
 repository = "https://github.com/powsybl/pypowsybl-mcp"
@@ -71,4 +83,9 @@ include = ["pypowsybl_mcp*"]
 exclude = ["data*", "logs*", "tests*", "docs*"]
 
 [tool.setuptools.package-data]
-pypowsybl_mcp = ["config/*.toml", "skills/*.md", "creation/*.json"]
+pypowsybl_mcp = [
+    "config/*.toml",
+    "skills/*.md",
+    "plugins/grid_extension/skills/*.md",
+    "plugins/grid_extension/creation/*.json",
+]

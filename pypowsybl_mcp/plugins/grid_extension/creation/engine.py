@@ -37,21 +37,24 @@ from typing import Any
 import pypowsybl as pp
 from pypowsybl import _pypowsybl as _pp
 
-from pypowsybl_mcp.creation.context import (
+from pypowsybl_mcp.plugins.grid_extension.creation.context import (
     NODE_BREAKER,
     ConnectionPoint,
     CreationContext,
     CreationError,
 )
-from pypowsybl_mcp.creation.doc_mining import attribute_docs, unit_in
-from pypowsybl_mcp.creation.executors import resolve_call
-from pypowsybl_mcp.creation.profiles import (
+from pypowsybl_mcp.plugins.grid_extension.creation.doc_mining import (
+    attribute_docs,
+    unit_in,
+)
+from pypowsybl_mcp.plugins.grid_extension.creation.executors import resolve_call
+from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
     PROFILES,
     UNPROFILED,
     Connection,
     CreationProfile,
 )
-from pypowsybl_mcp.creation.schema import creatable_element_types
+from pypowsybl_mcp.plugins.grid_extension.creation.schema import creatable_element_types
 
 #: everyday names accepted for the canonical pypowsybl attribute
 ALIASES = {

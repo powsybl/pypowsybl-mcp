@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pypowsybl_mcp.creation.context import CreationContext
+from pypowsybl_mcp.plugins.grid_extension.creation.context import CreationContext
 
 # Position orders only have to be unique inside a voltage level, so a global
 # maximum is a safe (if generous) starting point.

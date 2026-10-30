@@ -21,7 +21,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from itertools import pairwise
 
-from pypowsybl_mcp.creation.context import BUS_BREAKER, CreationContext, CreationError
+from pypowsybl_mcp.plugins.grid_extension.creation.context import (
+    BUS_BREAKER,
+    CreationContext,
+    CreationError,
+)
 
 
 class Rule:

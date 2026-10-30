@@ -4,7 +4,7 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
-"""Generate the creation-coverage tables of ``docs/tools_reference.md``.
+"""Generate the creation-coverage tables of ``docs/grid_extension.md``.
 
 What the server can create is decided by the profiles, and what it *could*
 create is decided by the installed pypowsybl. Both change, so the documentation
@@ -14,9 +14,9 @@ that states them is generated rather than written by hand:
     uv run python scripts/creation_coverage.py --write  # update the docs
     uv run python scripts/creation_coverage.py --check  # fail if they differ
 
-``--write`` also writes ``pypowsybl_mcp/creation/coverage_snapshot.json``, which
+``--write`` also writes ``pypowsybl_mcp/plugins/grid_extension/creation/coverage_snapshot.json``, which
 ships with the package: the server compares the installed pypowsybl with it at
-startup (see ``pypowsybl_mcp/creation/drift.py``).
+startup (see ``pypowsybl_mcp/plugins/grid_extension/creation/drift.py``).
 
 ``--check`` runs as a test (``tests/creation/test_documented_coverage.py``), so
 a pypowsybl upgrade that adds or renames an element type shows up as a failing
@@ -29,16 +29,16 @@ import argparse
 import sys
 from pathlib import Path
 
-from pypowsybl_mcp.creation.drift import (
+from pypowsybl_mcp.plugins.grid_extension.creation.drift import (
     SNAPSHOT_PATH,
     coverage_snapshot,
     load_snapshot,
     write_snapshot,
 )
-from pypowsybl_mcp.creation.profiles import PROFILES, UNPROFILED
-from pypowsybl_mcp.creation.schema import creatable_element_types
+from pypowsybl_mcp.plugins.grid_extension.creation.profiles import PROFILES, UNPROFILED
+from pypowsybl_mcp.plugins.grid_extension.creation.schema import creatable_element_types
 
-DOCS = Path(__file__).resolve().parent.parent / "docs" / "tools_reference.md"
+DOCS = Path(__file__).resolve().parent.parent / "docs" / "grid_extension.md"
 BEGIN = "<!-- begin generated creation coverage -->"
 END = "<!-- end generated creation coverage -->"
 
@@ -105,7 +105,7 @@ def block() -> str:
     lines += [
         (
             "Giving a schema-only type a profile is an entry in "
-            "`pypowsybl_mcp/creation/profiles.py`, not a new tool; the profile "
+            "`pypowsybl_mcp/plugins/grid_extension/creation/profiles.py`, not a new tool; the profile "
             "then takes over from the fallback."
         ),
         "",
@@ -137,7 +137,7 @@ def main() -> int:
     if arguments.check:
         if current() != generated or load_snapshot() != coverage_snapshot():
             print(
-                "docs/tools_reference.md or the coverage snapshot no longer matches "
+                "docs/grid_extension.md or the coverage snapshot no longer matches "
                 "the profiles or the installed pypowsybl. Run: "
                 "python scripts/creation_coverage.py --write"
             )

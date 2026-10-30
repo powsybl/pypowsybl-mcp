@@ -39,9 +39,9 @@ from typing import Any
 
 from pypowsybl.network import Network
 
-from pypowsybl_mcp.creation import derivations as derive
-from pypowsybl_mcp.creation import rules as rule
-from pypowsybl_mcp.creation.executors import (
+from pypowsybl_mcp.plugins.grid_extension.creation import derivations as derive
+from pypowsybl_mcp.plugins.grid_extension.creation import rules as rule
+from pypowsybl_mcp.plugins.grid_extension.creation.executors import (
     Attachment,
     BranchBays,
     Executor,
@@ -51,7 +51,7 @@ from pypowsybl_mcp.creation.executors import (
     RowGroup,
     VoltageLevel,
 )
-from pypowsybl_mcp.creation.schema import (
+from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
     CREATION_METHODS,
     ElementSchema,
     creatable_element_types,

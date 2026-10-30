@@ -44,6 +44,6 @@ out. The package is layered accordingly:
     with the package; a profile that no longer matches is disabled.
 
 See ``docs/element_creation_and_removal.md`` for how it all works, and
-``tests/creation/test_profiles_consistency.py`` for the check that keeps the
+``tests/plugins/grid_extension/creation/test_profiles_consistency.py`` for the check that keeps the
 overlay honest against the installed pypowsybl.
 """

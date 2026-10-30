@@ -8,8 +8,11 @@
 
 import pytest
 
-from pypowsybl_mcp.creation.doc_mining import attribute_docs, unit_in
-from pypowsybl_mcp.creation.schema import (
+from pypowsybl_mcp.plugins.grid_extension.creation.doc_mining import (
+    attribute_docs,
+    unit_in,
+)
+from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
     creatable_element_types,
     creation_schema,
     modification_schema,
