@@ -183,6 +183,23 @@ async def test_create_clears_cached_loadflow_results(creation_tools, mock_ctx, n
 
 
 @pytest.mark.asyncio
+async def test_a_rejected_creation_keeps_loadflow_results(
+    creation_tools, mock_ctx, network
+):
+    proxy = creation_tools.get_proxy("test-session")
+    proxy.loadflow_results["net1"] = "valid results"
+
+    await creation_tools.create_network_element(
+        "load", {"id": "X", "bus": "B4", "pO": 1.0}, ctx=mock_ctx
+    )
+    await creation_tools.create_network_elements(
+        [{"element_type": "load", "id": "X", "bus": "B4"}], ctx=mock_ctx
+    )
+
+    assert proxy.loadflow_results["net1"] == "valid results"
+
+
+@pytest.mark.asyncio
 async def test_create_a_whole_site_in_one_call(creation_tools, mock_ctx, network):
     result = await creation_tools.create_network_elements(DATACENTER_SITE, ctx=mock_ctx)
 

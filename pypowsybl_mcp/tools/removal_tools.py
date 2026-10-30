@@ -337,8 +337,6 @@ class RemovalTools(PyPowsyblTool):
         # Containers last, so a cascade never deletes an id still to be processed.
         ordered = sorted(requested, key=lambda i: REMOVAL_RANKS.get(types[i], 0))
 
-        proxy.invalidate_loadflow(network_id)
-
         report: list[str] = []
         for element_id in ordered:
             element_type = types[element_id]
@@ -365,9 +363,11 @@ class RemovalTools(PyPowsyblTool):
         info = f"Removal report for network '{network_id}':\n" + "\n".join(
             f"- {line}" for line in report
         )
-        if any(
-            line.startswith("removed") for line in report
-        ):  # something actually changed
+        # A failed removal may have gone half way, so it counts as a change too;
+        # refusals and unknown ids leave the network, and its results, intact.
+        if any(line.startswith(("removed", "FAILED")) for line in report):
+            proxy.invalidate_loadflow(network_id)
+        if any(line.startswith("removed") for line in report):
             info += "\nRun run_loadflow() to compute the new network state"
         logger.success(info)
         return info

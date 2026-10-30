@@ -195,8 +195,9 @@ isolates the state of the network, not its structure.
 
 ## Practical notes
 
-* Every creation and removal clears the cached load-flow results: re-run
-  `run_loadflow()` before reading any flow or voltage.
+* Every creation and removal that changes the network clears the cached
+  load-flow results: re-run `run_loadflow()` before reading any flow or voltage.
+  A rejected call leaves them in place.
 * Ids must be free across the whole network, whatever the element type.
 * `create_network_elements` checks every item against its schema before creating
   anything -- attribute names, required attributes, types, accepted values and

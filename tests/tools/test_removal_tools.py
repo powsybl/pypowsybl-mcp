@@ -296,6 +296,18 @@ async def test_remove_invalidates_loadflow_results(
 
 
 @pytest.mark.asyncio
+async def test_a_refused_or_unknown_removal_keeps_loadflow_results(
+    removal_tools, mock_ctx, bus_breaker_network
+):
+    proxy = removal_tools.get_proxy("test-session")
+    proxy.loadflow_results["net1"] = "valid results"
+
+    await removal_tools.remove_network_elements(["VL1", "NOPE"], ctx=mock_ctx)
+
+    assert proxy.loadflow_results["net1"] == "valid results"
+
+
+@pytest.mark.asyncio
 async def test_the_cascade_refusal_names_the_hvdc_links_it_would_cut(
     removal_tools, mock_ctx, node_breaker_network
 ):
