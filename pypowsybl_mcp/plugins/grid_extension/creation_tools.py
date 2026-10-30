@@ -181,7 +181,7 @@ class CreationTools(PyPowsyblTool):
               on it
             - Changes are in memory only: use export_network() to save them
             - Types without a profile (bus, switch, busbar_section,
-              three_windings_transformer, tie and boundary lines, DC devices)
+              three_windings_transformer, areas, DC devices)
               are created from their pypowsybl schema only: no required
               attributes, no switching equipment; give voltage_level_id with
               bus_id or node as pypowsybl takes them

@@ -337,3 +337,136 @@ class RowsRequired(Rule):
                 f"'{self.attribute}' needs at least {self.minimum} entries, got "
                 f"{len(rows)}{because}"
             )
+
+
+@dataclass(frozen=True)
+class Exclusive(Rule):
+    """Two ways of describing the same thing, of which only one may be used.
+
+    E.g. the sections of a shunt compensator: identical sections (linear model)
+    or one row per section (non-linear model), never both.
+    """
+
+    first: tuple[str, ...]
+    second: tuple[str, ...]
+    because: str = ""
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return (*self.first, *self.second)
+
+    def describe(self) -> str:
+        return (
+            f"give either {self._names(self.first)} or {self._names(self.second)}, "
+            "not both"
+        )
+
+    @staticmethod
+    def _names(names: tuple[str, ...]) -> str:
+        return " / ".join(f"'{name}'" for name in names)
+
+    def apply(self, context: CreationContext) -> None:
+        first = [name for name in self.first if context.has(name)]
+        second = [name for name in self.second if context.has(name)]
+        if first and second:
+            because = f" ({self.because})" if self.because else ""
+            raise CreationError(
+                f"{self._names(tuple(first))} and {self._names(tuple(second))} "
+                f"cannot be given together{because}"
+            )
+
+
+@dataclass(frozen=True)
+class OptionalPart(Rule):
+    """Attributes left out altogether, or given as a consistent whole.
+
+    E.g. the generation part of a boundary line: none of its attributes means
+    no generation, but once one is given, ``required`` must all be there, and
+    ``defaults`` fill in the rest.
+    """
+
+    part: str
+    names: tuple[str, ...]
+    required: tuple[str, ...]
+    defaults: tuple[tuple[str, object], ...] = ()
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return self.names
+
+    def describe(self) -> str:
+        required = ", ".join(f"'{name}'" for name in self.required)
+        return (
+            f"the {self.part} is optional; once one of its attributes is given, "
+            f"{required} are required"
+        )
+
+    def apply(self, context: CreationContext) -> None:
+        if not any(context.has(name) for name in self.names):
+            return
+        for name, value in self.defaults:
+            if not context.has(name):
+                context.attributes[name] = value
+        missing = [name for name in self.required if not context.has(name)]
+        if missing:
+            raise CreationError(
+                f"The {self.part} needs "
+                + ", ".join(f"'{name}'" for name in missing)
+                + " once any of "
+                + ", ".join(f"'{name}'" for name in self.names)
+                + " is given"
+            )
+
+
+@dataclass(frozen=True)
+class ColumnRequired(Rule):
+    """Every row of a table attribute must give ``column``."""
+
+    attribute: str
+    column: str
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return (self.attribute, self.column)
+
+    def describe(self) -> str:
+        return f"every row of '{self.attribute}' needs '{self.column}'"
+
+    def apply(self, context: CreationContext) -> None:
+        for position, row in enumerate(
+            context.attributes.get(self.attribute) or [], start=1
+        ):
+            if row.get(self.column) is None:
+                raise CreationError(
+                    f"Row {position} of '{self.attribute}' has no '{self.column}': "
+                    "every row needs one"
+                )
+
+
+@dataclass(frozen=True)
+class AtMostRows(Rule):
+    """A count that cannot exceed the number of rows of a table attribute."""
+
+    field: str
+    attribute: str
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return (self.field, self.attribute)
+
+    def describe(self) -> str:
+        return (
+            f"'{self.field}' must not exceed the number of rows of '{self.attribute}'"
+        )
+
+    def apply(self, context: CreationContext) -> None:
+        rows = context.attributes.get(self.attribute)
+        if (
+            rows
+            and context.has(self.field)
+            and context.attributes[self.field] > len(rows)
+        ):
+            raise CreationError(
+                f"'{self.field}' ({context.attributes[self.field]}) must not exceed "
+                f"the number of rows of '{self.attribute}' ({len(rows)})"
+            )

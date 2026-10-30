@@ -160,19 +160,27 @@ step; pass `steps` explicitly to describe them yourself.
   study: add `minmax_reactive_limits` or a
   `reactive_capability_curve_point` list.
 * `battery` -- `min_p` defaults to `-max_p`, a symmetric charge/discharge range.
-* `shunt_compensator` -- linear model only; for a bank rated Q MVAr at U kV,
-  `b_per_section = Q / U^2`. Positive is a capacitor, negative a reactor.
+* `shunt_compensator` -- identical sections: `b_per_section` (and
+  `max_section_count`); sections that differ: `sections` as a list of `{b, g}`,
+  where each `b` is the total with that section and the ones before it in. For
+  a bank rated Q MVAr at U kV, `b = Q / U^2`. Positive is a capacitor, negative
+  a reactor.
 * `static_var_compensator` -- continuous reactive control; there is no `OFF`
   mode in this pypowsybl version, use `regulating: false`.
 * `hvdc_line` -- create the two `vsc_converter_station` (or
   `lcc_converter_station`) first, then the link naming them; one
   `create_network_elements` call does all three in the right order.
+* `boundary_line` -- the equivalent of what lies beyond a border: `p0`/`q0` is
+  the exchange at its far end. Add a generation part (`min_p`, `max_p`,
+  `target_p`, optionally regulating with `target_v`) when the outside can
+  produce. Two boundary lines sharing a `pairing_key` can then be joined into a
+  `tie_line`, in the same batch.
 
 ## Element types without a profile
 
 Some types -- `bus`, `busbar_section`, `switch`, `internal_connection`,
-`three_windings_transformer`, `boundary_line`, `tie_line`, the `area*` and
-`dc_*` types, `voltage_source_converter` -- have no profile. They are marked
+`three_windings_transformer`, the `area*` and `dc_*` types,
+`voltage_source_converter` -- have no profile. They are marked
 `checked: schema only` in `describe_element_creation()` and created straight
 from the pypowsybl schema:
 

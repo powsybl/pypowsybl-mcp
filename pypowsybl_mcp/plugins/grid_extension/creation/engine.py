@@ -182,7 +182,11 @@ class CreationEngine:
         for item in schema.fields:
             if item.name in managed or item.name == profile.rows_attribute:
                 continue
-            if item.group > 0 and profile.rows_attribute:
+            if (
+                profile.rows_attribute
+                and item.group > 0
+                and item.group == profile.rows_group
+            ):
                 # rows of the table attribute, described under it instead
                 continue
             entry = field_entry(item.name, item.kind)
@@ -223,7 +227,7 @@ class CreationEngine:
                 "name": profile.rows_attribute,
                 "columns": [
                     field_entry(item.name, item.kind)
-                    for item in schema.group(1)
+                    for item in schema.group(profile.rows_group)
                     if item.name != schema.index_name
                 ]
                 or [
@@ -507,12 +511,13 @@ class CreationEngine:
     def _row_fields(self, profile: CreationProfile) -> dict:
         """Columns a row of the table attribute may set, by name.
 
-        The rows are the second dataframe of the call when there is one (the
-        steps of a tap changer), otherwise the only one (the points of a curve,
-        the limits of a branch), keyed on the id the engine fills in itself.
+        The rows are the dataframe group the profile names (the steps of a tap
+        changer, the sections of a non-linear shunt), or the only one of a call
+        that has a single group (the points of a curve, the limits of a branch),
+        keyed on the id the engine fills in itself.
         """
         schema = profile.schema
-        fields = schema.group(1) or schema.fields
+        fields = schema.group(profile.rows_group) or schema.fields
         return {item.name: item for item in fields if item.name != schema.index_name}
 
     def _check_rows(self, profile: CreationProfile, context: CreationContext) -> None:

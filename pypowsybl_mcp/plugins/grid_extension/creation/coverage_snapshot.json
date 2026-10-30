@@ -17,6 +17,31 @@
       "target_q",
       "voltage_level_id"
     ],
+    "boundary_line": [
+      "b",
+      "bus_id",
+      "bus_or_busbar_section_id",
+      "connectable_bus_id",
+      "direction",
+      "feeder_type",
+      "g",
+      "id",
+      "max_p",
+      "min_p",
+      "name",
+      "node",
+      "p0",
+      "pairing_key",
+      "position_order",
+      "q0",
+      "r",
+      "target_p",
+      "target_q",
+      "target_v",
+      "voltage_level_id",
+      "voltage_regulator_on",
+      "x"
+    ],
     "generator": [
       "bus_id",
       "bus_or_busbar_section_id",
@@ -204,6 +229,12 @@
       "name",
       "tso"
     ],
+    "tie_line": [
+      "boundary_line1_id",
+      "boundary_line2_id",
+      "id",
+      "name"
+    ],
     "two_windings_transformer": [
       "b",
       "bus_or_busbar_section_id_1",
@@ -273,21 +304,6 @@
     "area_voltage_levels": [
       "id",
       "voltage_level_id"
-    ],
-    "boundary_line": [
-      "b",
-      "bus_id",
-      "connectable_bus_id",
-      "g",
-      "id",
-      "name",
-      "node",
-      "p0",
-      "pairing_key",
-      "q0",
-      "r",
-      "voltage_level_id",
-      "x"
     ],
     "bus": [
       "id",
@@ -370,12 +386,6 @@
       "x1",
       "x2",
       "x3"
-    ],
-    "tie_line": [
-      "boundary_line1_id",
-      "boundary_line2_id",
-      "id",
-      "name"
     ],
     "voltage_source_converter": [
       "bus1_id",
