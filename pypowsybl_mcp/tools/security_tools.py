@@ -471,10 +471,15 @@ class SecurityTools(PyPowsyblTool):
                 - success (bool): Whether analysis completed successfully
                 - network_id (str): Network identifier
                 - pre_contingency (dict): Pre-contingency state and violations
-                - post_contingency (dict): Post-contingency summary, with a count of
-                  each violation type (violation_types_breakdown, all_violations_count)
+                - post_contingency (dict): Post-contingency summary — total_violations
+                  (count matching the active filters, i.e. above threshold_percent
+                  when set), violations_above_threshold (same count, named explicitly,
+                  present only when threshold_percent is set), and the full,
+                  unfiltered census (violation_types_breakdown, all_violations_count)
                 - ranked_violations (list): The violations of every contingency in one
-                  list, most loaded first, each with its loading and overload in percent
+                  list, most loaded first, each with its loading and overload in percent;
+                  capped at top_violations. ranked_violations_truncated (bool) and hint
+                  are added when that cap cut the list
                 - top_violating_contingencies (list): Small ranked subset in summary mode
                 - contingencies_with_violations (list): Detailed violation information in detail mode
                 - error (str): Error message (if failed)
@@ -665,6 +670,11 @@ class SecurityTools(PyPowsyblTool):
                 "all_violations_count": all_violations_count,
                 "violation_types_breakdown": violation_types_breakdown,
             }
+            if threshold_percent is not None:
+                # Spell out the above-threshold count: total_violations is already
+                # filtered to it, but all_violations_count sits right beside it, so
+                # name it explicitly to remove any ambiguity.
+                post_contingency_data["violations_above_threshold"] = total_violations
 
             result = {
                 "success": True,
@@ -714,6 +724,15 @@ class SecurityTools(PyPowsyblTool):
             result["ranked_violations"] = self._flatten_ranked_violations(
                 contingencies_with_violations_list, top_violations
             )
+            # total_violations is the full flattened count, so this is an exact
+            # truncation test — say when the top_violations cap cut the list.
+            if total_violations > top_violations:
+                result["ranked_violations_truncated"] = True
+                result["hint"] = (
+                    f"Showing the top {top_violations} of {total_violations} "
+                    "violations in ranked_violations; raise top_violations or use "
+                    "return_as='artifact_json' for the full list."
+                )
 
             if mode == "summary":
                 # Keep only the most relevant contingencies to avoid huge payloads.

@@ -407,6 +407,68 @@ async def test_run_security_analysis_threshold_filters_every_view(sa_tools, mock
 
 
 @pytest.mark.asyncio
+async def test_run_security_analysis_reports_violations_above_threshold(
+    sa_tools, mock_ctx
+):
+    # An explicit above-threshold count sits next to the full census.
+    post = {
+        "C1": _PostResult(
+            [
+                _make_violation("lineA", 100.0, 150.0, "CURRENT"),  # 150 > 120, kept
+                _make_violation("lineB", 100.0, 110.0, "CURRENT"),  # 110 <= 120, out
+            ]
+        ),
+    }
+    data = await _run_sa(
+        sa_tools, mock_ctx, post, limit_type="CURRENT", threshold_percent=120
+    )
+
+    pc = data["post_contingency"]
+    assert pc["violations_above_threshold"] == 1
+    assert pc["total_violations"] == 1
+    assert pc["all_violations_count"] == 2  # full census unaffected
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_no_above_threshold_field_without_threshold(
+    sa_tools, mock_ctx
+):
+    post = {"C1": _PostResult([_make_violation("lineA", 100.0, 150.0, "CURRENT")])}
+    data = await _run_sa(sa_tools, mock_ctx, post, limit_type="CURRENT")
+
+    assert "violations_above_threshold" not in data["post_contingency"]
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_flags_ranked_truncation(sa_tools, mock_ctx):
+    # Three overloads but top_violations=2: the ranked list is cut and says so.
+    post = {
+        "C1": _PostResult([_make_violation("lineA", 100.0, 150.0, "CURRENT")]),
+        "C2": _PostResult([_make_violation("lineB", 100.0, 140.0, "CURRENT")]),
+        "C3": _PostResult([_make_violation("lineC", 100.0, 130.0, "CURRENT")]),
+    }
+    data = await _run_sa(
+        sa_tools, mock_ctx, post, limit_type="CURRENT", top_violations=2
+    )
+
+    assert len(data["ranked_violations"]) == 2
+    assert data["post_contingency"]["total_violations"] == 3
+    assert data["ranked_violations_truncated"] is True
+    assert "top 2 of 3" in data["hint"]
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_no_truncation_flag_under_cap(sa_tools, mock_ctx):
+    post = {"C1": _PostResult([_make_violation("lineA", 100.0, 150.0, "CURRENT")])}
+    data = await _run_sa(
+        sa_tools, mock_ctx, post, limit_type="CURRENT", top_violations=20
+    )
+
+    assert "ranked_violations_truncated" not in data
+    assert "hint" not in data
+
+
+@pytest.mark.asyncio
 async def test_run_security_analysis_threshold_filters_detail_mode(sa_tools, mock_ctx):
     # Detail mode's contingencies_with_violations is filtered too: C2's only
     # violation is sub-threshold, so the whole contingency leaves the list.
