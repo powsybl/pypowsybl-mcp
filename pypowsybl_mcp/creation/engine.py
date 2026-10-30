@@ -249,8 +249,9 @@ class CreationEngine:
     def create_many(self, network, items: list[dict]) -> tuple[list[str], list[str]]:
         """Create several elements, ordered so dependencies come first.
 
-        Every item is checked against its schema before anything is created, so
-        a typo in the last one does not leave the first half applied. Checks
+        Every item is checked against its schema before anything is created
+        (see :meth:`_precheck`), so a mistake in the last one does not leave the
+        first half applied. Checks
         that need the network -- an id already taken, a connection point that
         does not exist yet because an earlier item creates it -- can only run
         at the moment each element is created, so they still stop the batch
@@ -558,18 +559,32 @@ class CreationEngine:
         return f"{created}{details}{where}{extra or ''}{notes}"
 
     def _precheck(self, profile: CreationProfile, payload: dict, position: int) -> None:
-        """Schema-level checks that need no network, run before anything is created."""
+        """Schema-level checks that need no network, run before anything is created.
+
+        Everything :meth:`create` checks without looking at the network runs
+        here too -- unknown attributes, the id, the required attributes, types
+        and enumerated values, the rows of a table attribute -- so the only
+        mistakes that can stop a batch half way are the ones that depend on
+        what is already in the network.
+        """
         given = self._normalise(profile, payload)
-        given.pop(profile.id_field, None)
+        element_id = given.pop(profile.id_field, None)
         try:
             self._reject_unknown(profile, given)
+            if element_id is None:
+                raise CreationError(
+                    f"'{profile.id_field}' is required for a {profile.element_type}"
+                )
+            context = CreationContext(
+                network=None,
+                element_type=profile.element_type,
+                element_id=str(element_id),
+                attributes=given,
+            )
+            self._check_required(profile, context)
+            self._check_values(profile, context)
         except CreationError as error:
             raise CreationError(f"item {position}: {error!s}", error.hint) from error
-        if profile.id_field not in self._normalise(profile, payload):
-            raise CreationError(
-                f"item {position}: '{profile.id_field}' is required for a "
-                f"{profile.element_type}"
-            )
 
 
 def _coerce(item, value, element_type: str):

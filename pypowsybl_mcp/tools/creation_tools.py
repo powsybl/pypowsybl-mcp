@@ -247,7 +247,9 @@ class CreationTools(PyPowsyblTool):
 
         Notes:
             - Every item is checked against its schema **before** anything is
-              created, so a typo in the last one leaves the network untouched
+              created -- attribute names, required attributes, types, accepted
+              values and table rows -- so such a mistake in the last item leaves
+              the network untouched
             - Checks that need the network — an id already taken, a connection
               point that does not exist — can only run as each element is created,
               so they stop the batch there; the report says how far it got and

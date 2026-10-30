@@ -477,7 +477,8 @@ end-to-end tests that build a real network and run a load flow, as the current t
 2. **Sugar tools.** None: three generic tools, no typed shortcuts. The cheat sheet inlined in
    `create_network_element`'s description covers the common types without a round trip.
 3. **Batch semantics.** Neither of the two options as stated. Every item is checked against its
-   schema *before* anything is created, so a typo leaves the network untouched; the checks that
+   schema *before* anything is created — attribute names, required attributes, types, enumerated
+   values and table rows — so such a mistake leaves the network untouched; the checks that
    need the network (an id already taken, a connection point an earlier item was supposed to
    create) can only run as each element is created, so they stop the batch there and the report
    says how far it got. A true rollback would mean deep-copying the network, which is not worth
