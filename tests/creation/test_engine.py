@@ -351,6 +351,55 @@ def test_ratio_tap_changer_generates_its_steps(engine, site):
     assert steps.iloc[-1]["rho"] == pytest.approx(1.1)
 
 
+def test_a_misspelt_step_column_is_rejected_not_dropped(engine, site):
+    with pytest.raises(CreationError, match="no column 'rh0'. Did you mean 'rho'"):
+        engine.create(
+            site,
+            "ratio_tap_changer",
+            {"element_id": "TR", "steps": [{"rh0": 0.9}, {"rh0": 1.0}]},
+        )
+
+    assert "TR" not in site.get_ratio_tap_changers().index
+
+
+def test_step_values_are_checked_and_coerced(engine, site):
+    with pytest.raises(CreationError, match="'rho' of a ratio_tap_changer"):
+        engine.create(
+            site,
+            "ratio_tap_changer",
+            {"element_id": "TR", "steps": [{"rho": "high"}, {"rho": 1.0}]},
+        )
+
+    engine.create(
+        site,
+        "ratio_tap_changer",
+        {"element_id": "TR", "steps": [{"rho": "0.95"}, {"rho": 1.05}]},
+    )
+    assert site.get_ratio_tap_changer_steps().loc["TR"].iloc[0]["rho"] == 0.95
+
+
+def test_rows_must_be_a_list_of_objects(engine, site):
+    with pytest.raises(CreationError, match="must be a list of objects"):
+        engine.create(
+            site, "ratio_tap_changer", {"element_id": "TR", "steps": [0.9, 1.1]}
+        )
+
+
+def test_ragged_curve_points_are_rejected_with_the_missing_column(engine, bus_breaker):
+    with pytest.raises(CreationError, match="Row 2 of 'points' has no 'min_q'"):
+        engine.create(
+            bus_breaker,
+            "reactive_capability_curve_point",
+            {
+                "element_id": "B1-G",
+                "points": [
+                    {"p": 0.0, "min_q": -100.0, "max_q": 100.0},
+                    {"p": 500.0, "max_q": 50.0},
+                ],
+            },
+        )
+
+
 def test_ratio_tap_changer_accepts_explicit_steps(engine, site):
     engine.create(
         site,

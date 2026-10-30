@@ -429,23 +429,98 @@ class CreationEngine:
     def _check_values(self, profile: CreationProfile, context: CreationContext) -> None:
         schema = profile.schema
         for name, value in list(context.attributes.items()):
-            if value is None:
+            if value is None or name == profile.rows_attribute:
                 continue
-            legal = profile.enums.get(name)
-            if legal:
-                normalised = str(value).strip().upper()
-                if normalised not in legal:
-                    raise CreationError(
-                        f"'{normalised}' is not a valid {name} for a "
-                        f"{profile.element_type}. Accepted values: " + ", ".join(legal),
-                        hint={name: list(legal)},
+            context.attributes[name] = self._checked_value(
+                profile, name, value, schema.field(name)
+            )
+        self._check_rows(profile, context)
+
+    def _checked_value(self, profile: CreationProfile, name: str, value, item):
+        """A value checked against its enumeration, or coerced to its type."""
+        legal = profile.enums.get(name)
+        if legal:
+            normalised = str(value).strip().upper()
+            if normalised not in legal:
+                raise CreationError(
+                    f"'{normalised}' is not a valid {name} for a "
+                    f"{profile.element_type}. Accepted values: " + ", ".join(legal),
+                    hint={name: list(legal)},
+                )
+            return normalised
+        if item is None:
+            return value
+        return _coerce(item, value, profile.element_type)
+
+    def _row_fields(self, profile: CreationProfile) -> dict:
+        """Columns a row of the table attribute may set, by name.
+
+        The rows are the second dataframe of the call when there is one (the
+        steps of a tap changer), otherwise the only one (the points of a curve,
+        the limits of a branch), keyed on the id the engine fills in itself.
+        """
+        schema = profile.schema
+        fields = schema.group(1) or schema.fields
+        return {item.name: item for item in fields if item.name != schema.index_name}
+
+    def _check_rows(self, profile: CreationProfile, context: CreationContext) -> None:
+        """Check the rows of a table attribute the way top-level attributes are.
+
+        Without this a misspelt column is silently dropped -- a step given as
+        ``{"rh0": 0.9}`` becomes a step at the default ratio -- and a column
+        missing from one row only is rejected upstream as missing altogether.
+        """
+        name = profile.rows_attribute
+        rows = context.attributes.get(name) if name else None
+        if rows is None:
+            return
+        fields = self._row_fields(profile)
+        hint = {"table_attribute": name, "columns": sorted(fields)}
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise CreationError(
+                f"'{name}' of a {profile.element_type} must be a list of objects, "
+                f"one per row, with the columns {', '.join(sorted(fields))}",
+                hint=hint,
+            )
+
+        checked = []
+        for position, row in enumerate(rows, start=1):
+            values = {}
+            for key, value in row.items():
+                column = str(key).strip()
+                item = fields.get(column)
+                if item is None:
+                    close = difflib.get_close_matches(column, sorted(fields), n=3)
+                    suggestion = (
+                        f" Did you mean {', '.join(repr(entry) for entry in close)}?"
+                        if close
+                        else ""
                     )
-                context.attributes[name] = normalised
-                continue
-            item = schema.field(name)
-            if item is None or name == profile.rows_attribute:
-                continue
-            context.attributes[name] = _coerce(item, value, profile.element_type)
+                    raise CreationError(
+                        f"Row {position} of '{name}' has no column '{column}'."
+                        f"{suggestion}",
+                        hint=hint,
+                    )
+                values[column] = (
+                    None
+                    if value is None
+                    else self._checked_value(profile, column, value, item)
+                )
+            checked.append(values)
+
+        if profile.executor.uniform_rows:
+            columns = set().union(*checked) if checked else set()
+            for position, row in enumerate(checked, start=1):
+                missing = sorted(columns - set(row))
+                if missing:
+                    raise CreationError(
+                        f"Row {position} of '{name}' has no "
+                        + ", ".join(f"'{column}'" for column in missing)
+                        + ", which other rows give: every row must give the same "
+                        "columns",
+                        hint=hint,
+                    )
+        context.attributes[name] = checked
 
     def _report(
         self, profile: CreationProfile, context: CreationContext, payload: dict
