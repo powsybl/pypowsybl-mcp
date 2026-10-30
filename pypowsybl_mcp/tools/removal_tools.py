@@ -303,7 +303,8 @@ class RemovalTools(PyPowsyblTool):
 
         Related Tools:
             - set_line_status(): Open a branch instead of deleting it (N-1 study)
-            - create_load() / create_line() / ...: The inverse operations
+            - create_network_element() / create_network_elements(): The inverse
+              operations
             - get_network_element_data(): Find the exact ids to remove
             - run_loadflow(): Recompute the state after removal
             - export_network(): Save the reduced network
