@@ -4,15 +4,52 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
+from unittest.mock import MagicMock
+
 import pandas as pd
 import pytest
 
 from pypowsybl_mcp.utils.element_data_filter import (
+    FilterError,
     apply_element_filter,
     attach_current_limits,
+    attach_substation_geotags,
     attach_tap_changer_data,
+    attach_voltage_limits,
     compute_metric,
+    dimensioning_terminal,
+    element_nominal_voltage,
+    unrated_loaded_sides,
 )
+
+
+def _geo_network(*, with_region=True, converters=False):
+    """A MagicMock network wired with substation/voltage-level geography.
+
+    S1 -> FR (region PARIS), S2 -> ES (region ES). Voltage levels VL1/VL2 sit on
+    S1/S2. When `converters` is set, converter stations CS1/CS2 live on VL1/VL2.
+    """
+    net = MagicMock()
+    sub_cols = {"country": ["FR", "ES"]}
+    if with_region:
+        sub_cols["regionCvg"] = ["PARIS", "ES"]
+    net.get_substations.return_value = pd.DataFrame(sub_cols, index=["S1", "S2"])
+    net.get_voltage_levels.return_value = pd.DataFrame(
+        {
+            "substation_id": ["S1", "S2"],
+            "low_voltage_limit": [380.0, 210.0],
+            "high_voltage_limit": [420.0, 240.0],
+        },
+        index=["VL1", "VL2"],
+    )
+    if converters:
+        net.get_vsc_converter_stations.return_value = pd.DataFrame(
+            {"voltage_level_id": ["VL1"]}, index=["CS1"]
+        )
+        net.get_lcc_converter_stations.return_value = pd.DataFrame(
+            {"voltage_level_id": ["VL2"]}, index=["CS2"]
+        )
+    return net
 
 
 def _operational_limits():
@@ -35,9 +72,8 @@ def test_filter_on_existing_column():
     out = apply_element_filter(
         df,
         element_type="generator",
-        metric="p",
-        filter_op=">=",
-        filter_value=5,
+        conditions=[{"field": "p", "op": ">=", "value": 5}],
+        order_by="-p",
     )
 
     # Sorted by descending p, so the biggest one comes first.
@@ -54,9 +90,8 @@ def test_filter_loading_percent_for_generators():
     out = apply_element_filter(
         df,
         element_type="generator",
-        metric="loading_percent",
-        filter_op=">",
-        filter_value=90,
+        conditions=[{"field": "loading_percent", "op": ">", "value": 90}],
+        order_by="-loading_percent",
     )
 
     assert list(out.index) == ["g4", "g3"]
@@ -73,9 +108,8 @@ def test_filter_lines_use_worst_side():
     out = apply_element_filter(
         df,
         element_type="line",
-        metric="p_abs",
-        filter_op="gt",
-        filter_value=100,
+        conditions=[{"field": "p_abs", "op": "gt", "value": 100}],
+        order_by="-p_abs",
     )
 
     assert list(out.index) == ["line_2"]
@@ -85,27 +119,220 @@ def test_filter_lines_use_worst_side():
 def test_unknown_operator_is_rejected():
     df = pd.DataFrame({"p": [1.0]}, index=["g1"])
 
-    with pytest.raises(ValueError, match="filter_op"):
+    with pytest.raises(FilterError, match="op"):
         apply_element_filter(
             df,
             element_type="generator",
-            metric="p",
-            filter_op="??",
-            filter_value=1,
+            conditions=[{"field": "p", "op": "??", "value": 1}],
         )
 
 
 def test_non_numeric_threshold_is_rejected():
     df = pd.DataFrame({"p": [1.0]}, index=["g1"])
 
-    with pytest.raises(ValueError, match="filter_value must be a number"):
+    with pytest.raises(FilterError, match="value must be a number"):
         apply_element_filter(
             df,
             element_type="generator",
-            metric="p",
-            filter_op=">",
-            filter_value="not-a-number",
+            conditions=[{"field": "p", "op": ">", "value": "not-a-number"}],
         )
+
+
+def test_filter_column_vs_column_with_ref():
+    # i1 above its own per-row rating: a leaf comparing two columns via ref.
+    df = pd.DataFrame(
+        {"i1": [80.0, 250.0], "i2": [0.0, 0.0], "permanent_limit1": [100.0, 200.0]},
+        index=["line_1", "line_2"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "i1", "op": ">", "ref": "permanent_limit1"}],
+    )
+
+    assert list(out.index) == ["line_2"]
+
+
+def test_filter_categorical_equality_passes_strings_through():
+    df = pd.DataFrame({"country": ["FR", "BE", "FR"]}, index=["l1", "l2", "l3"])
+
+    out = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "country", "op": "==", "value": "FR"}],
+    )
+
+    assert sorted(out.index) == ["l1", "l3"]
+
+
+def test_filter_membership_in_and_not_in():
+    df = pd.DataFrame(
+        {"country": ["FR", "BE", "DE", "ES"]}, index=["l1", "l2", "l3", "l4"]
+    )
+
+    inside = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "country", "op": "in", "value": ["FR", "BE"]}],
+    )
+    outside = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "country", "op": "not_in", "value": ["FR", "BE"]}],
+    )
+
+    assert sorted(inside.index) == ["l1", "l2"]
+    assert sorted(outside.index) == ["l3", "l4"]
+
+
+def test_membership_op_requires_a_list_value():
+    df = pd.DataFrame({"country": ["FR"]}, index=["l1"])
+
+    with pytest.raises(FilterError, match="list"):
+        apply_element_filter(
+            df,
+            element_type="line",
+            conditions=[{"field": "country", "op": "in", "value": "FR"}],
+        )
+
+
+def test_equality_coerces_a_stringified_number_on_a_numeric_column():
+    # An LLM/JSON caller sends 225 as the string "225" against a numeric column.
+    df = pd.DataFrame({"nominal_v": [225.0, 400.0, 225.0]}, index=["a", "b", "c"])
+
+    kept = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "nominal_v", "op": "==", "value": "225"}],
+    )
+    dropped = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "nominal_v", "op": "!=", "value": "225"}],
+    )
+
+    assert sorted(kept.index) == ["a", "c"]
+    assert sorted(dropped.index) == ["b"]
+
+
+def test_membership_coerces_stringified_numbers_on_a_numeric_column():
+    df = pd.DataFrame({"nominal_v": [225.0, 400.0, 63.0]}, index=["a", "b", "c"])
+
+    out = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "nominal_v", "op": "in", "value": ["225", "400"]}],
+    )
+
+    assert sorted(out.index) == ["a", "b"]
+
+
+def test_equality_on_a_string_column_keeps_numeric_looking_strings():
+    # A categorical column must still compare as strings, not coerce to numbers.
+    df = pd.DataFrame({"regionCvg": ["225", "PARIS", "225"]}, index=["a", "b", "c"])
+
+    out = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "regionCvg", "op": "==", "value": "225"}],
+    )
+
+    assert sorted(out.index) == ["a", "c"]
+
+
+def test_equality_on_bool_column_is_not_numeric_coerced():
+    # bool is a numeric dtype in pandas; it must NOT trigger number coercion.
+    df = pd.DataFrame({"connected": [True, False, True]}, index=["a", "b", "c"])
+
+    # Actual booleans compare correctly.
+    on = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "connected", "op": "==", "value": True}],
+    )
+    # A stringified "0" is not coerced into a numeric that matches the False rows.
+    stringy = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "connected", "op": "==", "value": "0"}],
+    )
+
+    assert sorted(on.index) == ["a", "c"]
+    assert list(stringy.index) == []
+
+
+def test_flat_list_is_implicit_and():
+    df = pd.DataFrame(
+        {"p": [10.0, 60.0, 80.0], "q": [5.0, 5.0, 50.0]},
+        index=["a", "b", "c"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="generator",
+        conditions=[
+            {"field": "p", "op": ">", "value": 50},
+            {"field": "q", "op": ">", "value": 10},
+        ],
+    )
+
+    assert list(out.index) == ["c"]
+
+
+def test_any_group_is_or():
+    df = pd.DataFrame(
+        {"p": [10.0, 60.0, 5.0], "q": [5.0, 5.0, 50.0]},
+        index=["a", "b", "c"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="generator",
+        conditions={
+            "any": [
+                {"field": "p", "op": ">", "value": 50},
+                {"field": "q", "op": ">", "value": 10},
+            ]
+        },
+        order_by="p",
+    )
+
+    assert sorted(out.index) == ["b", "c"]
+
+
+def test_conditions_accepts_a_json_string():
+    df = pd.DataFrame({"p": [1.0, 10.0]}, index=["a", "b"])
+
+    out = apply_element_filter(
+        df,
+        element_type="generator",
+        conditions='[{"field": "p", "op": ">", "value": 5}]',
+    )
+
+    assert list(out.index) == ["b"]
+
+
+def test_bad_json_conditions_is_rejected():
+    df = pd.DataFrame({"p": [1.0]}, index=["a"])
+
+    with pytest.raises(FilterError, match="valid JSON"):
+        apply_element_filter(df, element_type="generator", conditions="[{not json}]")
+
+
+def test_empty_group_is_rejected():
+    df = pd.DataFrame({"p": [1.0]}, index=["a"])
+
+    with pytest.raises(FilterError, match="non-empty"):
+        apply_element_filter(df, element_type="generator", conditions={"all": []})
+
+
+def test_conditions_leaf_count_cap():
+    df = pd.DataFrame({"p": [1.0]}, index=["a"])
+    too_many = [{"field": "p", "op": ">", "value": 0} for _ in range(101)]
+
+    with pytest.raises(FilterError, match="too many conditions"):
+        apply_element_filter(df, element_type="generator", conditions=too_many)
 
 
 def test_unknown_metric_lists_available_columns():
@@ -155,9 +382,8 @@ def test_loading_percent_uses_current_limit1_from_operational_limits():
     out = apply_element_filter(
         df,
         element_type="line",
-        metric="loading_percent",
-        filter_op=">",
-        filter_value=90,
+        conditions=[{"field": "loading_percent", "op": ">", "value": 90}],
+        order_by="-loading_percent",
     )
 
     assert list(out.index) == ["line_1"]
@@ -310,14 +536,434 @@ def test_compute_metric_q_abs_single_sided_without_q_column_is_nan():
     assert values.isna().all()
 
 
-def test_apply_element_filter_requires_metric():
+def test_apply_element_filter_requires_conditions():
     df = pd.DataFrame({"p": [1.0]}, index=["g1"])
 
-    with pytest.raises(ValueError, match="metric is required"):
+    with pytest.raises(FilterError, match="conditions is required"):
+        apply_element_filter(df, element_type="generator", conditions=None)
+
+
+def test_leaf_needs_exactly_one_of_value_or_ref():
+    df = pd.DataFrame({"p": [1.0], "max_p": [2.0]}, index=["g1"])
+
+    with pytest.raises(FilterError, match="exactly one of 'value' or 'ref'"):
         apply_element_filter(
             df,
             element_type="generator",
-            metric="",
-            filter_op=">",
-            filter_value=1,
+            conditions=[{"field": "p", "op": ">", "value": 1, "ref": "max_p"}],
         )
+
+
+def test_loading_percent_two_sided_rates_each_side_against_its_own_limit():
+    # A transformer: side 1 at 100 A / 200 A = 50%, side 2 at 300 A / 400 A = 75%.
+    # The worst side is 75%, NOT max(100, 300) / 200 = 150% (the old single-limit bug).
+    df = pd.DataFrame(
+        {
+            "i1": [100.0],
+            "i2": [300.0],
+            "permanent_limit1": [200.0],
+            "permanent_limit2": [400.0],
+        },
+        index=["t1"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="two_windings_transformer",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
+    )
+
+    assert out.loc["t1", "loading_percent"] == pytest.approx(75.0)
+
+
+def test_loading_percent_three_terminals_uses_worst_winding():
+    # A 3-winding transformer: terminal count is read from i1/i2/i3, and the worst
+    # winding (i3 300 A / 300 A = 100%) wins over the other two.
+    df = pd.DataFrame(
+        {
+            "i1": [100.0],
+            "i2": [150.0],
+            "i3": [300.0],
+            "permanent_limit1": [400.0],
+            "permanent_limit2": [400.0],
+            "permanent_limit3": [300.0],
+        },
+        index=["t3"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="three_windings_transformer",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
+    )
+
+    assert out.loc["t3", "loading_percent"] == pytest.approx(100.0)
+
+
+def test_loading_percent_single_limit_falls_back_to_worst_current():
+    # Only a side-1 rating (a line's single conductor Imax): the worst-end current
+    # is divided by that shared limit -> 180/200 = 90%, side 2 borrowing limit1.
+    df = pd.DataFrame(
+        {"i1": [100.0], "i2": [180.0], "permanent_limit1": [200.0]},
+        index=["l1"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
+    )
+
+    assert out.loc["l1", "loading_percent"] == pytest.approx(90.0)
+
+
+def test_loading_percent_transformer_rescales_borrowed_limit_by_voltage():
+    # A 2WT rated on side 1 only (400 kV / 200 kV). Side 2 has no rating and
+    # borrows side 1's 1000 A -> rescaled by the voltage ratio to 1000 * 400/200
+    # = 2000 A, NOT a direct 1000 A. So i2 = 1400 A loads 70%, not the false 140%
+    # a line-style direct borrow would report for the LV winding.
+    df = pd.DataFrame(
+        {
+            "i1": [300.0],
+            "i2": [1400.0],
+            "permanent_limit1": [1000.0],
+            "rated_u1": [400.0],
+            "rated_u2": [200.0],
+        },
+        index=["t1"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="two_windings_transformer",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
+    )
+
+    assert out.loc["t1", "loading_percent"] == pytest.approx(70.0)
+
+
+def test_dimensioning_terminal_rescales_one_sided_transformer_limit():
+    # Same one-sided 2WT: the LV winding (side 2) dimensions the row, and limit_a
+    # is the side-1 rating already rescaled to the side-2 voltage (2000 A), so
+    # i_a / limit_a * 100 reproduces the 70% loading above.
+    row = {
+        "i1": 300.0,
+        "i2": 1400.0,
+        "permanent_limit1": 1000.0,
+        "rated_u1": 400.0,
+        "rated_u2": 200.0,
+    }
+
+    i_a, limit_a = dimensioning_terminal(row, "permanent", "two_windings_transformer")
+
+    assert i_a == pytest.approx(1400.0)
+    assert limit_a == pytest.approx(2000.0)
+    assert i_a / limit_a * 100 == pytest.approx(70.0)
+
+
+def test_loading_percent_borrows_shared_limit_per_row_in_mixed_table():
+    # The regression: L has only a side-1 rating, but line M defines a side-2
+    # rating, so the permanent_limit2 column EXISTS and is NaN for L. L's worst
+    # current is on side 2 (1120 > 1050); it must still be rated against L's shared
+    # Imax (1000) -> 112%, not dropped as |i2|/NaN. A per-column borrow would miss it.
+    df = pd.DataFrame(
+        {
+            "i1": [1050.0, 500.0],
+            "i2": [1120.0, 400.0],
+            "permanent_limit1": [1000.0, float("nan")],
+            "permanent_limit2": [float("nan"), 900.0],
+        },
+        index=["L", "M"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 100}],
+    )
+
+    assert list(out.index) == ["L"]
+    assert out.loc["L", "loading_percent"] == pytest.approx(112.0)
+
+
+def test_loading_percent_and_dimensioning_terminal_agree_on_mixed_table():
+    # loading_percent (vectorised) and dimensioning_terminal (row-wise) must pick
+    # the same denominator, so i_a / limit_a * 100 == loading_percent.
+    row = {
+        "i1": 1050.0,
+        "i2": 1120.0,
+        "permanent_limit1": 1000.0,
+        "permanent_limit2": float("nan"),
+    }
+    df = pd.DataFrame([row], index=["L"])
+
+    loading = compute_metric(df, "loading_percent", "line").loc["L"]
+    i_a, limit_a = dimensioning_terminal(row, "permanent")
+
+    assert i_a / limit_a * 100 == pytest.approx(loading)
+    assert loading == pytest.approx(112.0)
+
+
+def test_dimensioning_terminal_picks_the_worst_side():
+    # side 1: 100/200 = 50%, side 2: 300/400 = 75% -> side 2 dimensions the row.
+    row = {
+        "i1": 100.0,
+        "i2": 300.0,
+        "permanent_limit1": 200.0,
+        "permanent_limit2": 400.0,
+    }
+
+    i_a, limit_a = dimensioning_terminal(row, "permanent")
+
+    assert i_a == pytest.approx(300.0)
+    assert limit_a == pytest.approx(400.0)
+
+
+def test_dimensioning_terminal_single_limit_is_shared():
+    # Only a side-1 rating (a line's Imax): worst current over the shared limit.
+    row = {"i1": 100.0, "i2": 180.0, "permanent_limit1": 200.0}
+
+    i_a, limit_a = dimensioning_terminal(row, "permanent")
+
+    assert i_a == pytest.approx(180.0)
+    assert limit_a == pytest.approx(200.0)
+
+
+def test_dimensioning_terminal_none_without_a_resolvable_limit():
+    assert dimensioning_terminal({"i1": 100.0, "i2": 100.0}, "permanent") == (
+        None,
+        None,
+    )
+
+
+def test_loading_percent_temporary_is_referenceable():
+    # temporary_limit1 is the temporary denominator; falls back to permanent
+    # only when absent. Here line_1 loads 100/120 ~ 83%, line_2 100/50 = 200%.
+    df = pd.DataFrame(
+        {
+            "i1": [100.0, 100.0],
+            "i2": [0.0, 0.0],
+            "temporary_limit1": [120.0, 50.0],
+        },
+        index=["line_1", "line_2"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="line",
+        conditions=[{"field": "loading_percent_temporary", "op": ">", "value": 100}],
+    )
+
+    assert list(out.index) == ["line_2"]
+    assert out.loc["line_2", "loading_percent_temporary"] == pytest.approx(200.0)
+
+
+def test_attach_geotags_injection_single_columns():
+    df = pd.DataFrame({"voltage_level_id": ["VL1", "VL2"]}, index=["LOAD1", "LOAD2"])
+
+    out = attach_substation_geotags(df, _geo_network(), "load")
+
+    assert list(out["country"]) == ["FR", "ES"]
+    assert list(out["regionCvg"]) == ["PARIS", "ES"]
+
+
+def test_attach_geotags_branch_two_sided_columns():
+    df = pd.DataFrame(
+        {"voltage_level1_id": ["VL1"], "voltage_level2_id": ["VL2"]},
+        index=["L_FR_ES"],
+    )
+
+    out = attach_substation_geotags(df, _geo_network(), "line")
+
+    assert out.loc["L_FR_ES", "country1"] == "FR"
+    assert out.loc["L_FR_ES", "country2"] == "ES"
+
+
+def test_attach_geotags_hvdc_resolves_via_converter_stations():
+    df = pd.DataFrame(
+        {"converter_station1_id": ["CS1"], "converter_station2_id": ["CS2"]},
+        index=["HVDC1"],
+    )
+
+    out = attach_substation_geotags(df, _geo_network(converters=True), "hvdc_line")
+
+    assert out.loc["HVDC1", "country1"] == "FR"
+    assert out.loc["HVDC1", "country2"] == "ES"
+
+
+def test_attach_geotags_missing_region_property_yields_empty_column():
+    df = pd.DataFrame({"voltage_level_id": ["VL1"]}, index=["LOAD1"])
+
+    out = attach_substation_geotags(df, _geo_network(with_region=False), "load")
+
+    # country still resolves; regionCvg is present but empty (NA), never an error.
+    assert out.loc["LOAD1", "country"] == "FR"
+    assert pd.isna(out.loc["LOAD1", "regionCvg"])
+
+
+def test_attach_geotags_substation_type_is_unchanged():
+    df = pd.DataFrame({"country": ["FR"]}, index=["S1"])
+
+    out = attach_substation_geotags(df, _geo_network(), "substation")
+
+    assert out is df
+
+
+def test_attach_voltage_limits_on_bus_rows():
+    df = pd.DataFrame(
+        {"v_mag": [410.0, 215.0], "voltage_level_id": ["VL1", "VL2"]},
+        index=["B1", "B2"],
+    )
+
+    out = attach_voltage_limits(df, _geo_network(), "bus")
+
+    assert out.loc["B1", "high_voltage_limit"] == pytest.approx(420.0)
+    assert out.loc["B2", "low_voltage_limit"] == pytest.approx(210.0)
+
+
+def test_attach_voltage_limits_non_bus_is_unchanged():
+    df = pd.DataFrame({"p": [1.0]}, index=["g1"])
+
+    out = attach_voltage_limits(df, _geo_network(), "generator")
+
+    assert out is df
+
+
+def test_element_nominal_voltage_three_winding_uses_highest_leg():
+    # A 3WT reads the HIGHEST of its three legs (read from voltage_level{1,2,3}_id)
+    # so a 400/225/90 kV unit classifies at 400, not at its tertiary.
+    vl = {"VL1": 400.0, "VL2": 225.0, "VL3": 90.0}
+    row = {
+        "voltage_level1_id": "VL1",
+        "voltage_level2_id": "VL2",
+        "voltage_level3_id": "VL3",
+    }
+
+    assert element_nominal_voltage("three_windings_transformer", row, vl) == 400.0
+
+
+def test_element_nominal_voltage_three_winding_skips_unknown_leg():
+    # An unresolvable leg (VL2 missing from the map) drops out of the NaN-aware
+    # fold rather than poisoning the result; the higher known leg still wins.
+    vl = {"VL1": 400.0, "VL3": 90.0}
+    row = {
+        "voltage_level1_id": "VL1",
+        "voltage_level2_id": "VL2",  # unknown
+        "voltage_level3_id": "VL3",
+    }
+
+    assert element_nominal_voltage("three_windings_transformer", row, vl) == 400.0
+
+
+def test_loading_percent_three_winding_does_not_borrow_unrated_leg():
+    # Legs 1&2 rated 400 A, leg 3 UNRATED. A 2WT would borrow a rescaled rating
+    # for the unrated side, but a 3WT is a star with independent ratings: leg 3
+    # must NOT be given a fabricated limit. It stays NaN (skipped), so loading is
+    # the worst RATED leg (100/400 = 25%), never a borrowed value that could mask
+    # the 5000 A on leg 3.
+    df = pd.DataFrame(
+        {
+            "i1": [100.0],
+            "i2": [100.0],
+            "i3": [5000.0],
+            "permanent_limit1": [400.0],
+            "permanent_limit2": [400.0],
+            # no permanent_limit3
+            "rated_u1": [400.0],
+            "rated_u2": [225.0],
+            "rated_u3": [90.0],
+        },
+        index=["t3"],
+    )
+
+    out = apply_element_filter(
+        df,
+        element_type="three_windings_transformer",
+        conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
+    )
+
+    assert out.loc["t3", "loading_percent"] == pytest.approx(25.0)
+
+
+def test_dimensioning_terminal_three_winding_skips_unrated_leg():
+    # Same shape: dimensioning_terminal must agree with loading_percent and report
+    # a truly-rated winding (100 A / 400 A), not the unrated leg 3 dressed in a
+    # fabricated borrowed limit.
+    row = {
+        "i1": 100.0,
+        "i2": 100.0,
+        "i3": 5000.0,
+        "permanent_limit1": 400.0,
+        "permanent_limit2": 400.0,
+        "rated_u1": 400.0,
+        "rated_u2": 225.0,
+        "rated_u3": 90.0,
+    }
+
+    i_a, limit_a = dimensioning_terminal(row, "permanent", "three_windings_transformer")
+
+    assert (i_a, limit_a) == (100.0, 400.0)
+
+
+def test_unrated_loaded_sides_three_winding_flags_the_unrated_leg():
+    # Legs 1&2 rated, leg 3 carries 350 A but has no rating. A 3WT never borrows
+    # across legs, so only leg 3 is unreachable by the overload check.
+    row = {
+        "i1": 100.0,
+        "i2": 100.0,
+        "i3": 350.0,
+        "permanent_limit1": 400.0,
+        "permanent_limit2": 400.0,
+        "rated_u1": 400.0,
+        "rated_u2": 225.0,
+        "rated_u3": 90.0,
+    }
+
+    assert unrated_loaded_sides(row, "three_windings_transformer") == [3]
+
+
+def test_unrated_loaded_sides_empty_when_fully_rated():
+    row = {
+        "i1": 100.0,
+        "i2": 100.0,
+        "i3": 100.0,
+        "permanent_limit1": 400.0,
+        "permanent_limit2": 400.0,
+        "permanent_limit3": 300.0,
+    }
+
+    assert unrated_loaded_sides(row, "three_windings_transformer") == []
+
+
+def test_unrated_loaded_sides_line_borrow_covers_the_unrated_side():
+    # A line shares one Imax: side 2 borrows side 1's rating, so neither side is
+    # flagged — borrowing is valid for a 2-terminal branch.
+    row = {"i1": 100.0, "i2": 100.0, "permanent_limit1": 200.0}
+
+    assert unrated_loaded_sides(row, "line") == []
+
+
+def test_unrated_loaded_sides_line_with_no_rating_flags_both_sides():
+    row = {"i1": 100.0, "i2": 100.0}
+
+    assert unrated_loaded_sides(row, "line") == [1, 2]
+
+
+def test_unrated_sides_metric_counts_unreachable_terminals_per_row():
+    # Row "ok" fully rated -> 0; row "gap" has a NaN leg-3 limit -> 1.
+    df = pd.DataFrame(
+        {
+            "i1": [100.0, 100.0],
+            "i2": [100.0, 100.0],
+            "i3": [100.0, 100.0],
+            "permanent_limit1": [400.0, 400.0],
+            "permanent_limit2": [400.0, 400.0],
+            "permanent_limit3": [300.0, float("nan")],
+        },
+        index=["ok", "gap"],
+    )
+
+    out = compute_metric(df, "unrated_sides", "three_windings_transformer")
+
+    assert out.loc["ok"] == 0
+    assert out.loc["gap"] == 1

@@ -7,6 +7,7 @@
 import copy
 import tempfile
 import tomllib
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -164,6 +165,39 @@ class PyPowsyblMCPServerProxy:
         results stale. A no-op when nothing is cached for the network.
         """
         self.loadflow_results.pop(network_id, None)
+
+    def record_loadflow(
+        self,
+        network_id: str,
+        *,
+        converged: bool,
+        dc: bool,
+        provider: str,
+        variant: str,
+        parameters: dict,
+        components: int,
+    ) -> dict:
+        """Store and return the provenance of a load-flow solve.
+
+        One place the cache record shape is defined, so every solver (run_loadflow
+        and the check tools) records the same fields: the variant solved, the
+        provider and mode (``dc``) actually used, and a frozen snapshot of the
+        parameters. ``dc`` is the mode actually run (the run_ac/run_dc call), not
+        ``Parameters.dc``. ``parameters`` must be a plain value — e.g.
+        ``json.loads(params.to_json())`` — never a live Parameters object, which
+        update_loadflow_params mutates in place.
+        """
+        record = {
+            "converged": converged,
+            "dc": dc,
+            "provider": provider,
+            "variant": variant,
+            "parameters": parameters,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "components": components,
+        }
+        self.loadflow_results[network_id] = record
+        return record
 
     def get_plugin_result(self, key: str) -> Any | None:
         """Thread-safe retrieval of a plugin-owned cached result by key."""

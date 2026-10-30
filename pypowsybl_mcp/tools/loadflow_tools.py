@@ -5,7 +5,6 @@
 #  SPDX-License-Identifier: MPL-2.0
 
 import json
-from datetime import UTC, datetime
 
 import pypowsybl as pp
 from cachetools import TTLCache
@@ -392,14 +391,17 @@ class LoadflowTools(PyPowsyblTool):
             # Check if all components converged
             all_converged = all(result.status.name == "CONVERGED" for result in results)
 
-            # Store results
-            proxy.loadflow_results[network_id] = {
-                "converged": all_converged,
-                "dc": dc,
-                "provider": provider,
-                "timestamp": datetime.now(UTC).isoformat(),
-                "components": len(results),
-            }
+            # Store results (same provenance shape the check tools record): the
+            # variant solved and a frozen snapshot of the parameters used.
+            proxy.record_loadflow(
+                network_id,
+                converged=all_converged,
+                dc=dc,
+                provider=provider,
+                variant=network.get_working_variant_id(),
+                parameters=json.loads(loadflow_params.to_json()),
+                components=len(results),
+            )
 
             # Get bus data
             buses = network.get_buses()

@@ -5,7 +5,7 @@
 #  SPDX-License-Identifier: MPL-2.0
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -44,7 +44,6 @@ def test_register_security_tools_excludes_private_helpers():
 
     assert "run_security_analysis" in mcp.tools
     assert "create_contingencies_list" in mcp.tools
-    assert "get_overloaded_elements" in mcp.tools
 
     # Private helpers must never be registered as MCP tools (a leading
     # underscore alone does not exclude a method — see docs/plugins.md).
@@ -60,8 +59,6 @@ def test_register_security_tools_excludes_private_helpers():
         "_resolve_contingencies",
         "_compute_ranked_contingencies",
         "_flatten_ranked_violations",
-        "_overloaded_in_normal_operation",
-        "_overloaded_after_contingencies",
     ]:
         assert helper not in mcp.tools
 
@@ -171,141 +168,6 @@ async def test_create_contingencies_list_pagination(sa_tools, mock_ctx):
     assert data["filtered_count"] == 5
     assert len(data["contingencies"]) == 2
     assert data["pagination"]["cursor"] == "1"
-
-
-@pytest.mark.asyncio
-async def test_get_overloaded_elements_study_n(sa_tools, mock_ctx):
-    proxy = sa_tools.get_proxy("test-session")
-    proxy.networks["net1"] = MagicMock()
-    proxy.current_network_id = "net1"
-
-    filter_response = json.dumps(
-        {
-            "success": True,
-            "network_id": "net1",
-            "variant_id": "InitialState",
-            "limit_kind": "permanent",
-            "elements": {
-                "l1": {"loading_percent": 110.0, "i1": 110.0},
-            },
-        }
-    )
-
-    with patch(
-        "pypowsybl_mcp.tools.security_tools.NetworkTools.get_network_element_data",
-        new=AsyncMock(return_value=filter_response),
-    ):
-        result = await sa_tools.get_overloaded_elements(
-            network_id="net1",
-            study="n",
-            threshold_percent=100,
-            ctx=mock_ctx,
-        )
-
-    data = json.loads(result)
-    assert data["success"] is True
-    assert data["study"] == "n"
-    assert data["matched_count"] == 1
-    assert data["overloaded"][0]["element_id"] == "l1"
-    assert data["overloaded"][0]["loading_percent"] == pytest.approx(110.0)
-
-
-@pytest.mark.asyncio
-async def test_get_overloaded_elements_study_n1(sa_tools, mock_ctx):
-    proxy = sa_tools.get_proxy("test-session")
-    proxy.networks["net1"] = MagicMock()
-    proxy.current_network_id = "net1"
-    proxy.loadflow_results["net1"] = {"converged": True}
-
-    sa_response = json.dumps(
-        {
-            "success": True,
-            "network_id": "net1",
-            "post_contingency": {
-                "total_contingencies": 2,
-                "contingencies_with_violations": 1,
-            },
-            "contingencies_with_violations": [
-                {
-                    "contingency_id": "l1_contingency",
-                    "status": "CONVERGED",
-                    "violations": [
-                        {
-                            "subject_id": "l3",
-                            "limit_type": "CURRENT",
-                            "limit": 100.0,
-                            "value": 105.0,
-                            "loading_percent": 105.0,
-                            "excess_percent": 5.0,
-                        },
-                        {
-                            "subject_id": "l4",
-                            "limit_type": "CURRENT",
-                            "limit": 100.0,
-                            "value": 90.0,
-                            "loading_percent": 90.0,
-                            "excess_percent": -10.0,
-                        },
-                    ],
-                }
-            ],
-        }
-    )
-
-    with patch.object(
-        sa_tools,
-        "run_security_analysis",
-        new=AsyncMock(return_value=sa_response),
-    ):
-        result = await sa_tools.get_overloaded_elements(
-            network_id="net1",
-            study="n1",
-            threshold_percent=100,
-            contingencies=[{"element_id": "l1", "contingency_id": "l1_contingency"}],
-            ctx=mock_ctx,
-        )
-
-    data = json.loads(result)
-    assert data["success"] is True
-    assert data["study"] == "n1"
-    assert data["matched_count"] == 1
-    assert data["overloaded"][0]["element_id"] == "l3"
-    assert data["overloaded"][0]["loading_percent"] == pytest.approx(105.0)
-    assert data["overloaded"][0]["contingency_id"] == "l1_contingency"
-
-
-@pytest.mark.asyncio
-async def test_get_overloaded_elements_n1_requires_loadflow(sa_tools, mock_ctx):
-    proxy = sa_tools.get_proxy("test-session")
-    proxy.networks["net1"] = MagicMock()
-    proxy.current_network_id = "net1"
-
-    result = await sa_tools.get_overloaded_elements(
-        network_id="net1",
-        study="n1",
-        ctx=mock_ctx,
-    )
-
-    data = json.loads(result)
-    assert data["success"] is False
-    assert "loadflow" in data["error"].lower()
-
-
-@pytest.mark.asyncio
-async def test_get_overloaded_elements_rejects_unknown_study(sa_tools, mock_ctx):
-    proxy = sa_tools.get_proxy("test-session")
-    proxy.networks["net1"] = MagicMock()
-    proxy.current_network_id = "net1"
-
-    result = await sa_tools.get_overloaded_elements(
-        network_id="net1",
-        study="n2",
-        ctx=mock_ctx,
-    )
-
-    data = json.loads(result)
-    assert data["success"] is False
-    assert "n2" in data["error"]
 
 
 @pytest.mark.asyncio
@@ -492,42 +354,196 @@ async def test_run_security_analysis_ranked_violations(sa_tools, mock_ctx):
     }
 
 
-@pytest.mark.asyncio
-async def test_get_overloaded_elements_n1_returns_violations(sa_tools, mock_ctx):
-    """After an N-1 event the overloaded lines must show up, not come back empty."""
+async def _run_sa(sa_tools, mock_ctx, post_results, pre_violations=None, **kwargs):
+    """Run run_security_analysis against mocked pre/post results, return the JSON."""
     proxy = sa_tools.get_proxy("test-session")
     mock_net = MagicMock()
     mock_net._handle = MagicMock()
     proxy.networks["net1"] = mock_net
     proxy.current_network_id = "net1"
-    proxy.loadflow_results["net1"] = {"converged": True}
 
     with patch("pypowsybl_mcp.tools.security_tools.pp.security") as mock_security:
         mock_sa = MagicMock()
         mock_security.create_analysis.return_value = mock_sa
         mock_results = MagicMock()
-        mock_results.pre_contingency_result = MagicMock(limit_violations=[])
+        mock_results.pre_contingency_result = MagicMock(
+            limit_violations=pre_violations or []
+        )
         mock_results.pre_contingency_result.status.name = "CONVERGED"
-        mock_results.post_contingency_results = {
-            "C1": _PostResult([_make_violation("line_A", 100.0, 130.0, "CURRENT")]),
-        }
+        mock_results.post_contingency_results = post_results
         mock_sa.run_ac.return_value = mock_results
 
-        result = await sa_tools.get_overloaded_elements(
+        result = await sa_tools.run_security_analysis(
             network_id="net1",
-            element_type="line",
-            study="n1",
-            threshold_percent=100.0,
             contingencies=[{"element_id": "l1", "contingency_id": "C1"}],
             ctx=mock_ctx,
+            **kwargs,
         )
+    return json.loads(result)
 
-    data = json.loads(result)
-    assert data["success"] is True
-    assert data["study"] == "n1"
-    assert data["matched_count"] == 1
-    assert data["overloaded"][0]["element_id"] == "line_A"
-    assert data["overloaded"][0]["loading_percent"] == pytest.approx(130.0)
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_threshold_filters_every_view(sa_tools, mock_ctx):
+    # C1 has a 150% overload, C2 a 130% one. threshold=135 keeps only C1's
+    # violation everywhere, not just in ranked_violations.
+    post = {
+        "C1": _PostResult([_make_violation("lineA", 100.0, 150.0, "CURRENT")]),
+        "C2": _PostResult([_make_violation("lineC", 100.0, 130.0, "CURRENT")]),
+    }
+    data = await _run_sa(
+        sa_tools, mock_ctx, post, limit_type="CURRENT", threshold_percent=135
+    )
+
+    assert [v["subject_id"] for v in data["ranked_violations"]] == ["lineA"]
+    # top_violating_contingencies and the counts drop C2 too (0 violations left).
+    top = data["top_violating_contingencies"]
+    assert [c["contingency_id"] for c in top] == ["C1"]
+    assert top[0]["violation_count"] == 1
+    assert data["post_contingency"]["total_violations"] == 1
+    assert data["post_contingency"]["contingencies_with_violations"] == 1
+    # ...but the breakdown stays the full census of the study.
+    assert data["post_contingency"]["violation_types_breakdown"] == {"CURRENT": 2}
+    assert data["post_contingency"]["all_violations_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_reports_violations_above_threshold(
+    sa_tools, mock_ctx
+):
+    # An explicit above-threshold count sits next to the full census.
+    post = {
+        "C1": _PostResult(
+            [
+                _make_violation("lineA", 100.0, 150.0, "CURRENT"),  # 150 > 120, kept
+                _make_violation("lineB", 100.0, 110.0, "CURRENT"),  # 110 <= 120, out
+            ]
+        ),
+    }
+    data = await _run_sa(
+        sa_tools, mock_ctx, post, limit_type="CURRENT", threshold_percent=120
+    )
+
+    pc = data["post_contingency"]
+    assert pc["violations_above_threshold"] == 1
+    assert pc["total_violations"] == 1
+    assert pc["all_violations_count"] == 2  # full census unaffected
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_no_above_threshold_field_without_threshold(
+    sa_tools, mock_ctx
+):
+    post = {"C1": _PostResult([_make_violation("lineA", 100.0, 150.0, "CURRENT")])}
+    data = await _run_sa(sa_tools, mock_ctx, post, limit_type="CURRENT")
+
+    assert "violations_above_threshold" not in data["post_contingency"]
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_flags_ranked_truncation(sa_tools, mock_ctx):
+    # Three overloads but top_violations=2: the ranked list is cut and says so.
+    post = {
+        "C1": _PostResult([_make_violation("lineA", 100.0, 150.0, "CURRENT")]),
+        "C2": _PostResult([_make_violation("lineB", 100.0, 140.0, "CURRENT")]),
+        "C3": _PostResult([_make_violation("lineC", 100.0, 130.0, "CURRENT")]),
+    }
+    data = await _run_sa(
+        sa_tools, mock_ctx, post, limit_type="CURRENT", top_violations=2
+    )
+
+    assert len(data["ranked_violations"]) == 2
+    assert data["post_contingency"]["total_violations"] == 3
+    assert data["ranked_violations_truncated"] is True
+    assert "top 2 of 3" in data["hint"]
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_no_truncation_flag_under_cap(sa_tools, mock_ctx):
+    post = {"C1": _PostResult([_make_violation("lineA", 100.0, 150.0, "CURRENT")])}
+    data = await _run_sa(
+        sa_tools, mock_ctx, post, limit_type="CURRENT", top_violations=20
+    )
+
+    assert "ranked_violations_truncated" not in data
+    assert "hint" not in data
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_threshold_filters_detail_mode(sa_tools, mock_ctx):
+    # Detail mode's contingencies_with_violations is filtered too: C2's only
+    # violation is sub-threshold, so the whole contingency leaves the list.
+    post = {
+        "C1": _PostResult([_make_violation("lineA", 100.0, 150.0, "CURRENT")]),
+        "C2": _PostResult([_make_violation("lineC", 100.0, 130.0, "CURRENT")]),
+    }
+    data = await _run_sa(
+        sa_tools,
+        mock_ctx,
+        post,
+        limit_type="CURRENT",
+        threshold_percent=135,
+        mode="detail",
+    )
+
+    ids = [c["contingency_id"] for c in data["contingencies_with_violations"]]
+    assert ids == ["C1"]
+    assert data["returned_details"] == 1
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_threshold_spares_voltage_violations(
+    sa_tools, mock_ctx
+):
+    # With limit_type=None all types flow through, and the threshold is CURRENT
+    # only: a LOW_VOLTAGE row (loading < 100) survives while a sub-threshold
+    # CURRENT row is dropped.
+    post = {
+        "C1": _PostResult(
+            [
+                _make_violation("busLow", 0.95, 0.90, "LOW_VOLTAGE"),  # ~94.7%
+                _make_violation("lineA", 100.0, 150.0, "CURRENT"),  # 150%
+                _make_violation("lineB", 100.0, 110.0, "CURRENT"),  # 110%
+            ]
+        ),
+    }
+    data = await _run_sa(sa_tools, mock_ctx, post, threshold_percent=120)
+
+    subjects = {v["subject_id"] for v in data["ranked_violations"]}
+    assert "busLow" in subjects  # voltage kept despite loading < 100
+    assert "lineA" in subjects  # CURRENT 150% kept
+    assert "lineB" not in subjects  # CURRENT 110% dropped
+    assert data["post_contingency"]["total_violations"] == 2
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_threshold_below_100_keeps_all_overloads(
+    sa_tools, mock_ctx
+):
+    # The SA only reports elements already over their limit, so everything it
+    # reports is above 100%: a threshold below 100 is a no-op, it cannot surface
+    # near-limit branches.
+    post = {
+        "C1": _PostResult(
+            [
+                _make_violation("lineA", 100.0, 105.0, "CURRENT"),
+                _make_violation("lineB", 100.0, 130.0, "CURRENT"),
+            ]
+        ),
+    }
+    data = await _run_sa(
+        sa_tools, mock_ctx, post, limit_type="CURRENT", threshold_percent=90
+    )
+
+    assert {v["subject_id"] for v in data["ranked_violations"]} == {"lineA", "lineB"}
+    assert data["post_contingency"]["total_violations"] == 2
+
+
+@pytest.mark.asyncio
+async def test_run_security_analysis_rejects_negative_threshold(sa_tools, mock_ctx):
+    data = await _run_sa(sa_tools, mock_ctx, {}, threshold_percent=-5)
+
+    assert data["success"] is False
+    assert ">= 0" in data["error"]
 
 
 # --- run_security_analysis: input validation / edge cases ---
@@ -774,222 +790,3 @@ async def test_create_contingencies_list_pagination_invalid_cursor(sa_tools, moc
     data = json.loads(result)
     assert data["success"] is False
     assert "cursor" in data["error"].lower()
-
-
-# --- get_overloaded_elements: input validation / edge cases ---
-
-
-@pytest.mark.asyncio
-async def test_get_overloaded_elements_no_network_selected(sa_tools, mock_ctx):
-    result = await sa_tools.get_overloaded_elements(network_id=None, ctx=mock_ctx)
-    data = json.loads(result)
-    assert data["success"] is False
-    assert "no current network" in data["error"].lower()
-
-
-@pytest.mark.asyncio
-async def test_get_overloaded_elements_uses_current_network_id(sa_tools, mock_ctx):
-    proxy = sa_tools.get_proxy("test-session")
-    proxy.networks["net1"] = MagicMock()
-    proxy.current_network_id = "net1"
-
-    filter_response = json.dumps(
-        {
-            "success": True,
-            "network_id": "net1",
-            "variant_id": "InitialState",
-            "limit_kind": "permanent",
-            "elements": {},
-        }
-    )
-
-    with patch(
-        "pypowsybl_mcp.tools.security_tools.NetworkTools.get_network_element_data",
-        new=AsyncMock(return_value=filter_response),
-    ):
-        result = await sa_tools.get_overloaded_elements(
-            network_id=None, study="n", ctx=mock_ctx
-        )
-
-    data = json.loads(result)
-    assert data["success"] is True
-    assert data["network_id"] == "net1"
-
-
-@pytest.mark.asyncio
-async def test_get_overloaded_elements_network_not_found(sa_tools, mock_ctx):
-    result = await sa_tools.get_overloaded_elements(network_id="missing", ctx=mock_ctx)
-    data = json.loads(result)
-    assert data["success"] is False
-    assert "missing" in data["error"]
-
-
-@pytest.mark.asyncio
-async def test_get_overloaded_elements_invalid_threshold(sa_tools, mock_ctx):
-    proxy = sa_tools.get_proxy("test-session")
-    proxy.networks["net1"] = MagicMock()
-    proxy.current_network_id = "net1"
-
-    result = await sa_tools.get_overloaded_elements(
-        network_id="net1", threshold_percent="not-a-number", ctx=mock_ctx
-    )
-    data = json.loads(result)
-    assert data["success"] is False
-    assert "threshold_percent" in data["error"]
-
-
-@pytest.mark.asyncio
-async def test_overloaded_in_normal_operation_invalid_json(sa_tools, mock_ctx):
-    proxy = sa_tools.get_proxy("test-session")
-    proxy.networks["net1"] = MagicMock()
-    proxy.current_network_id = "net1"
-
-    with patch(
-        "pypowsybl_mcp.tools.security_tools.NetworkTools.get_network_element_data",
-        new=AsyncMock(return_value="not valid json"),
-    ):
-        result = await sa_tools.get_overloaded_elements(
-            network_id="net1", study="n", ctx=mock_ctx
-        )
-
-    data = json.loads(result)
-    assert data["success"] is False
-    assert data["network_id"] == "net1"
-
-
-@pytest.mark.asyncio
-async def test_overloaded_in_normal_operation_upstream_failure(sa_tools, mock_ctx):
-    proxy = sa_tools.get_proxy("test-session")
-    proxy.networks["net1"] = MagicMock()
-    proxy.current_network_id = "net1"
-
-    failure_response = json.dumps(
-        {"success": False, "error": "element_type 'bogus' is not supported"}
-    )
-
-    with patch(
-        "pypowsybl_mcp.tools.security_tools.NetworkTools.get_network_element_data",
-        new=AsyncMock(return_value=failure_response),
-    ):
-        result = await sa_tools.get_overloaded_elements(
-            network_id="net1", study="n", element_type="bogus", ctx=mock_ctx
-        )
-
-    assert result == failure_response
-
-
-@pytest.mark.asyncio
-async def test_overloaded_after_contingencies_auto_generates_list(sa_tools, mock_ctx):
-    """When contingencies is omitted for study=n1, the tool auto-builds it."""
-    proxy = sa_tools.get_proxy("test-session")
-    mock_net = MagicMock()
-    mock_net._handle = MagicMock()
-    proxy.networks["net1"] = mock_net
-    proxy.current_network_id = "net1"
-    proxy.loadflow_results["net1"] = {"converged": True}
-
-    contingencies_response = json.dumps(
-        {
-            "success": True,
-            "contingencies": [{"element_id": "l1", "contingency_id": "l1_contingency"}],
-        }
-    )
-    sa_response = json.dumps(
-        {
-            "success": True,
-            "post_contingency": {
-                "total_contingencies": 1,
-                "contingencies_with_violations": 1,
-            },
-            "contingencies_with_violations": [
-                {
-                    "contingency_id": "l1_contingency",
-                    "status": "CONVERGED",
-                    "violations": [
-                        {
-                            "subject_id": "l1",
-                            "limit_type": "CURRENT",
-                            "limit": 100.0,
-                            "value": 120.0,
-                            "loading_percent": 120.0,
-                            "excess_percent": 20.0,
-                        }
-                    ],
-                }
-            ],
-        }
-    )
-
-    with (
-        patch.object(
-            sa_tools,
-            "create_contingencies_list",
-            new=AsyncMock(return_value=contingencies_response),
-        ) as mock_create,
-        patch.object(
-            sa_tools, "run_security_analysis", new=AsyncMock(return_value=sa_response)
-        ),
-    ):
-        result = await sa_tools.get_overloaded_elements(
-            network_id="net1", study="n1", threshold_percent=100.0, ctx=mock_ctx
-        )
-
-    mock_create.assert_awaited_once()
-    data = json.loads(result)
-    assert data["success"] is True
-    assert data["matched_count"] == 1
-    assert data["overloaded"][0]["element_id"] == "l1"
-
-
-@pytest.mark.asyncio
-async def test_overloaded_after_contingencies_auto_generation_failure(
-    sa_tools, mock_ctx
-):
-    proxy = sa_tools.get_proxy("test-session")
-    mock_net = MagicMock()
-    mock_net._handle = MagicMock()
-    proxy.networks["net1"] = mock_net
-    proxy.current_network_id = "net1"
-    proxy.loadflow_results["net1"] = {"converged": True}
-
-    failure_response = json.dumps(
-        {"success": False, "error": "Unsupported element type 'weird'"}
-    )
-
-    with patch.object(
-        sa_tools,
-        "create_contingencies_list",
-        new=AsyncMock(return_value=failure_response),
-    ):
-        result = await sa_tools.get_overloaded_elements(
-            network_id="net1", study="n1", element_type="weird", ctx=mock_ctx
-        )
-
-    assert result == failure_response
-
-
-@pytest.mark.asyncio
-async def test_overloaded_after_contingencies_security_analysis_failure(
-    sa_tools, mock_ctx
-):
-    proxy = sa_tools.get_proxy("test-session")
-    mock_net = MagicMock()
-    mock_net._handle = MagicMock()
-    proxy.networks["net1"] = mock_net
-    proxy.current_network_id = "net1"
-    proxy.loadflow_results["net1"] = {"converged": True}
-
-    failure_response = json.dumps({"success": False, "error": "solver crashed"})
-
-    with patch.object(
-        sa_tools, "run_security_analysis", new=AsyncMock(return_value=failure_response)
-    ):
-        result = await sa_tools.get_overloaded_elements(
-            network_id="net1",
-            study="n1",
-            threshold_percent=100.0,
-            contingencies=[{"element_id": "l1", "contingency_id": "C1"}],
-            ctx=mock_ctx,
-        )
-
-    assert result == failure_response

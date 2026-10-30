@@ -30,12 +30,15 @@ This document lists all MCP tools exposed by the PyPowsybl MCP server, grouped b
 
 | Tool                                 | Description                                                                 |
 |--------------------------------------|-----------------------------------------------------------------------------|
-| `get_network_element_data`           | Return tabular data for a given element type (buses, lines, generators, …); pass `get_only_ids=True` for just the element IDs. |
+| `get_network_element_data`           | Return tabular data for a given element type (buses, lines, generators, …); pass `conditions` to filter, `attach` to enrich, `get_only_ids=True` for just the element IDs. |
+| `compare_variants`                   | Diff one element type's table between two variants (added/removed/changed); scope with variant-independent `conditions`. |
 | `get_top_active_power_transit_lines` | Return the lines with the highest active power transit.                     |
-| `check_voltage_violations`           | List buses whose voltage is outside acceptable bounds.                      |
+| `check_voltage_violations`           | List buses whose voltage is outside acceptable bounds (N state).            |
+| `check_current_violations`           | List branches loaded above a threshold in the N state (line + 2WT, worst first). |
 
-`get_network_element_data` and `check_voltage_violations` also take `return_as="artifact"` to hand a large table over
-as a file instead of inlining it — see [Returning a big result as a file](#returning-a-big-result-as-a-file-return_asartifact).
+`get_network_element_data`, `check_voltage_violations`, `check_current_violations`, `compare_variants` and
+`run_security_analysis` also take `return_as="artifact_json"` / `"artifact_csv"` to hand a large table over
+as a file instead of inlining it — see [Returning a big result as a file](#returning-a-big-result-as-a-file).
 
 ##### Network modification
 
@@ -84,9 +87,8 @@ as a file instead of inlining it — see [Returning a big result as a file](#ret
 
 | Tool                        | Description                                                                  |
 |-----------------------------|------------------------------------------------------------------------------|
-| `run_security_analysis`     | Run N-1 (or N-k) security analysis using a contingency list.                 |
+| `run_security_analysis`     | Run N-1 (or N-k) security analysis using a contingency list; pass `threshold_percent` (with `limit_type="CURRENT"`) to keep only overloads. |
 | `create_contingencies_list` | Automatically generate a contingency list from the current network topology. |
-| `get_overloaded_elements`   | Find elements above a loading threshold in normal (N) or N-1 operation.      |
 
 ---
 
@@ -148,6 +150,18 @@ LLM**.
 | `read_resource`       | Read back a documentation page already fetched this session with `get_online_resource`, from the cache.   |
 
 ---
+
+#### Returning a big result as a file
+
+Read tools that can produce a large table — `get_network_element_data`, `check_voltage_violations`,
+`check_current_violations`, `compare_variants` and `run_security_analysis` — accept
+`return_as="artifact_json"` or `return_as="artifact_csv"` (default `"inline"`). Instead of inlining the
+rows, the server writes them to a temporary file and answers with the summary counts, the column list, a
+short preview and a download URL. Nothing is truncated, and the full table is fetched over plain HTTP by
+whoever needs it rather than travelling through the client's context.
+
+The format is carried in `return_as` itself — `artifact_json` for JSON, `artifact_csv` for CSV. There is no
+separate `artifact_format` argument.
 
 #### Notes
 
