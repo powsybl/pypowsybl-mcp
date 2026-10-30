@@ -196,14 +196,20 @@ class VoltageLevel(Executor):
         level = {
             name: value for name, value in attributes.items() if name not in topology
         }
-        network.create_voltage_levels(id=element_id, **level)
-
         sections = int(topology.get("section_count") or 1)
         if sections > 1 and not topology.get("switch_kinds"):
             # One switch between consecutive sections; a disconnector is the
             # conservative choice, as a breaker implies protection equipment.
             topology["switch_kinds"] = ", ".join(["DISCONNECTOR"] * (sections - 1))
-        pp.network.create_voltage_level_topology(network, id=element_id, **topology)
+
+        network.create_voltage_levels(id=element_id, **level)
+        try:
+            pp.network.create_voltage_level_topology(network, id=element_id, **topology)
+        except Exception:
+            # Left in place, an empty voltage level could host nothing and its
+            # id would make the corrected call fail as a duplicate.
+            pp.network.remove_voltage_levels(network, voltage_level_ids=[element_id])
+            raise
 
     def report_extra(self, network, element_type, element_id):
         # The ids of the connection points are what every following creation

@@ -93,6 +93,27 @@ def test_create_voltage_level_reports_its_connection_points(engine, bus_breaker)
     assert "VL_DC_1_1" in bus_breaker.get_bus_breaker_view_buses().index
 
 
+def test_a_voltage_level_whose_topology_fails_is_not_left_behind(engine, bus_breaker):
+    engine.create(bus_breaker, "substation", {"id": "S_DC"})
+    attributes = {
+        "id": "VL_DC",
+        "substation_id": "S_DC",
+        "nominal_v": 135.0,
+        "topology_kind": "NODE_BREAKER",
+        "section_count": 2,
+    }
+
+    with pytest.raises(pp.PyPowsyblError):
+        engine.create(
+            bus_breaker, "voltage_level", {**attributes, "switch_kinds": "NOPE"}
+        )
+
+    assert "VL_DC" not in bus_breaker.get_voltage_levels().index
+    # so the corrected call is not refused as a duplicate id
+    engine.create(bus_breaker, "voltage_level", attributes)
+    assert "VL_DC" in bus_breaker.get_voltage_levels().index
+
+
 def test_create_node_breaker_voltage_level_with_several_busbars(engine, node_breaker):
     engine.create(node_breaker, "substation", {"id": "S_NEW"})
 
