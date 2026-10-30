@@ -150,8 +150,17 @@ async def test_create_one_element(creation_tools, mock_ctx, network):
         ctx=mock_ctx,
     )
 
-    assert "In network 'net1'" in result
-    assert "created load 'DATACENTER'" in result
+    reply = json.loads(result)
+    assert reply["success"]
+    assert reply["network_id"] == "net1"
+    assert reply["element_type"] == "load"
+    assert reply["methods"] == ["pp.network.create_load_bay"]
+    assert reply["created_ids"] == ["DATACENTER"]
+    assert reply["updated_ids"] == []
+    assert reply["created_count"] == 1
+    assert reply["errors"] == []
+    assert "created load 'DATACENTER'" in reply["message"]
+    assert reply["loadflow_invalidated"]
     assert network.get_loads().loc["DATACENTER", "p0"] == 300.0
 
 
@@ -162,12 +171,16 @@ async def test_a_rejection_carries_the_descriptor(creation_tools, mock_ctx, netw
         "load", {"id": "X", "bus_or_busbar_section_id": "B4"}, ctx=mock_ctx
     )
 
-    assert "Failed to create a load" in result
-    assert "needs 'p0'" in result
-    # the descriptor comes back with the error, as JSON the caller can read
-    hint = json.loads(result.split("\n", 1)[1])
-    assert hint["element_type"] == "load"
-    assert [item["name"] for item in hint["required"]] == ["p0"]
+    reply = json.loads(result)
+    assert not reply["success"]
+    assert reply["created_count"] == 0
+    assert not reply["loadflow_invalidated"]
+    assert "Failed to create a load" in reply["message"]
+    (error,) = reply["errors"]
+    assert "needs 'p0'" in error["problem"]
+    # the descriptor comes back with the error, so the call can be corrected
+    assert error["hint"]["element_type"] == "load"
+    assert [item["name"] for item in error["hint"]["required"]] == ["p0"]
 
 
 @pytest.mark.asyncio
@@ -254,6 +267,67 @@ async def test_a_batch_with_a_typo_creates_nothing(creation_tools, mock_ctx, net
 
 
 @pytest.mark.asyncio
+async def test_a_rejected_batch_reports_every_mistake_at_once(
+    creation_tools, mock_ctx, network
+):
+    result = await creation_tools.create_network_elements(
+        [
+            {"element_type": "load", "id": "A", "bus": "B4"},
+            {"element_type": "substation", "id": "S_OK"},
+            {"element_type": "lod", "id": "B"},
+            "not an object",
+        ],
+        ctx=mock_ctx,
+    )
+
+    reply = json.loads(result)
+    assert not reply["success"]
+    assert reply["items"] == []
+    assert reply["not_created_count"] == 4
+    assert [error["item"] for error in reply["errors"]] == [1, 3, 4]
+    assert "needs 'p0'" in reply["errors"][0]["problem"]
+    assert "Did you mean 'load'" in reply["errors"][1]["problem"]
+    assert "S_OK" not in network.get_substations().index
+
+
+@pytest.mark.asyncio
+async def test_limits_update_the_branch_rather_than_create_an_element(
+    creation_tools, mock_ctx, network
+):
+    result = await creation_tools.create_network_element(
+        "operational_limits",
+        {"element_id": "L1-2-1", "permanent_limit": 500.0},
+        ctx=mock_ctx,
+    )
+
+    reply = json.loads(result)
+    assert reply["success"]
+    assert reply["created_ids"] == []
+    assert reply["updated_ids"] == ["L1-2-1"]
+    assert reply["created_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_every_reply_has_the_same_keys(creation_tools, mock_ctx, network):
+    """A fixed shape, whatever the outcome."""
+    ok = json.loads(
+        await creation_tools.create_network_element(
+            "substation", {"id": "S_NEW"}, ctx=mock_ctx
+        )
+    )
+    rejected = json.loads(
+        await creation_tools.create_network_element("load", {"id": "X"}, ctx=mock_ctx)
+    )
+    unknown_network = json.loads(
+        await creation_tools.create_network_element(
+            "substation", {"id": "S2"}, network_id="nope", ctx=mock_ctx
+        )
+    )
+
+    assert ok.keys() == rejected.keys() == unknown_network.keys()
+
+
+@pytest.mark.asyncio
 async def test_a_batch_stopped_midway_says_how_far_it_got(
     creation_tools, mock_ctx, network
 ):
@@ -265,9 +339,15 @@ async def test_a_batch_stopped_midway_says_how_far_it_got(
         ctx=mock_ctx,
     )
 
-    assert "created substation 'SUB_DC'" in result
-    assert "STOPPED" in result
-    assert "1 item(s) not created" in result
+    reply = json.loads(result)
+    assert not reply["success"]
+    assert reply["created_ids"] == ["SUB_DC"]
+    assert reply["not_created_count"] == 1
+    assert reply["stopped_at"] == 2
+    assert [item["status"] for item in reply["items"]] == ["created", "failed"]
+    assert reply["errors"][0]["item"] == 2
+    assert "not found" in reply["errors"][0]["problem"]
+    assert "stopped at item 2" in reply["message"]
     assert "SUB_DC" in network.get_substations().index
 
 
@@ -331,5 +411,8 @@ async def test_a_pypowsybl_rejection_stops_a_batch(
         ctx=mock_ctx,
     )
 
-    assert "STOPPED" in result
-    assert "bay refused" in result
+    reply = json.loads(result)
+    assert reply["stopped_at"] == 2
+    assert "bay refused" in reply["errors"][0]["problem"]
+    # pypowsybl may have applied part of the refused call
+    assert reply["loadflow_invalidated"]

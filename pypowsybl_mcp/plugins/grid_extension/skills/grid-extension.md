@@ -98,7 +98,7 @@ Around it:
 1. `get_network_info()` and `run_loadflow()` **before** the extension, so the
    impact can be attributed to it.
 2. The call above. Items may be listed in any order. A new voltage level
-   generates its connection points and the report gives their ids
+   generates its connection points and the reply gives their ids
    (`VL_DC_1_1` here) -- the pattern is `<voltage level>_<busbar>_<section>`, and
    later items in the same call can reference them.
 3. `run_loadflow()` -- does it still converge?
@@ -230,7 +230,8 @@ isolates the state of the network, not its structure.
   table rows such as tap-changer steps -- so such a mistake leaves the network
   untouched. A failure that only the
   network can detect (an id already taken, a connection point that does not
-  exist) stops the batch there and the report says how far it got.
+  exist) stops the batch there; the reply says how far it got (`stopped_at`,
+  and the `status` of each item).
 * Everything happens in memory. `export_network()` saves the extended grid.
 * `describe_element_creation()` with no argument lists every type that can be
   created. If a type is not there, say so instead of inventing an
