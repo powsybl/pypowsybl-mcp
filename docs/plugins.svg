@@ -43,7 +43,7 @@
 
     <!-- Registry strip -->
     <rect x="70" y="210" width="940" height="68" rx="10" fill="#e0e7ff" stroke="#4f46e5" stroke-width="1.5"/>
-    <text x="90" y="234" font-size="13.5" font-weight="700" fill="#312e81">FastMCP server — unified registries (tools ·
+    <text x="90" y="234" font-size="13.5" font-weight="700" fill="#312e81">MCPServer — unified registries (tools ·
         resources · prompts)
     </text>
     <text x="90" y="253" font-size="12" fill="#4338ca">built-in + every loaded plugin's tools/resources/prompts —

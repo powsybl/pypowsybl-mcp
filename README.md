@@ -18,6 +18,12 @@ turn.
   sensitivity analysis, session management, and code export.
 - Load networks from local files or remote URLs, or create standard IEEE test networks directly from the MCP client.
 - Inspect and modify network elements, open/close switches, manage variants, and compare alternative operating states.
+- Extend a grid from the MCP client with one generic, introspection-driven tool: substations, voltage levels,
+  loads, generators, batteries, shunts, SVCs, lines, transformers, HVDC links, limits and tap changers — the
+  attributes of each type are read from the installed `pypowsybl`, so a whole connection study (a new datacenter,
+  say) is one call. Elements can be removed again, with their switching equipment. These tools come from the
+  [grid-extension plugin](docs/grid_extension.md), shipped with the server and active by default; studies that
+  never build equipment (real-time ones) turn it off with `MCP_DISABLED_PLUGINS=grid_extension`.
 - Run AC/DC load flows, adjust session-specific load-flow parameters, and switch load-flow providers when available.
 - Run contingency and sensitivity studies, including N-1 security analysis, PTDF, DCDF, PSDF, and custom sensitivity
   workflows.
@@ -41,6 +47,8 @@ turn.
 - [MCP Client Integration](docs/mcp_client_integration.md): connect Codex, Claude Desktop, Cursor, or a custom agent.
 - [Sessions & State](docs/mcp_sessions.md): session lifecycle, cache TTL, and session pinning.
 - [Monitoring](docs/monitoring.md): the admin HTTP API for active sessions and server health.
+- [Grid extension plugin](docs/grid_extension.md): the element creation and removal tools, and
+  [how they work](docs/element_creation_and_removal.md).
 - [Plugins](docs/plugins.md): extend the server with your own tools, resources, and prompts.
 
 ## Prerequisites

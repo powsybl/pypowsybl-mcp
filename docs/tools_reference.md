@@ -46,6 +46,13 @@ as a file instead of inlining it — see [Returning a big result as a file](#ret
 | `set_switch_status`  | Open or close a switch in the network (breaker, disconnector, load-break switch). |
 | `set_tap_position`   | Move a transformer's ratio or phase tap changer to a new position.                |
 
+##### Network extension and reduction
+
+Creating and removing elements (`describe_element_creation`, `create_network_element`, `create_network_elements`,
+`remove_network_elements`) is provided by the **grid-extension plugin**, shipped in this repository and active by
+default: see [grid_extension.md](grid_extension.md). Turn it off with
+`MCP_DISABLED_PLUGINS=grid_extension`.
+
 ##### Variants
 
 | Tool                  | Description                                         |
