@@ -179,8 +179,9 @@ picks the right removal from the type it finds in the network:
 * An **HVDC line** goes with its converter stations.
 * A **voltage level** or a **substation** takes down everything it contains, and
   for a voltage level the far end of its lines and transformers as well. Both
-  are refused unless `cascade=True`; the refusal says how many connectables and
-  which branches would go, so ask first, then confirm.
+  are refused unless `cascade=True`; the refusal lists what would go -- the
+  equipment inside, and by id what lies beyond it: branches, HVDC links with
+  their far-end converter station, tie lines -- so ask first, then confirm.
 * A **switch, bus or busbar section** is removed as is -- prefer removing the
   equipment itself, since deleting topology can disconnect things silently.
 
