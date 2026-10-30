@@ -4,6 +4,7 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
+import json
 from unittest.mock import MagicMock
 
 import pypowsybl as pp
@@ -70,6 +71,12 @@ def node_breaker_network(removal_tools):
     network = pp.network.create_four_substations_node_breaker_network()
     proxy.register_network("nb", network)
     return network
+
+
+def _item(result: str, element_id: str) -> dict:
+    """The item of a removal reply for one requested id."""
+    (item,) = [item for item in json.loads(result)["items"] if item["id"] == element_id]
+    return item
 
 
 async def _datacenter_site(creation_tools, ctx):
@@ -175,11 +182,16 @@ async def test_remove_voltage_level_needs_cascade(
 
     result = await removal_tools.remove_network_elements(["VL_DC"], ctx=mock_ctx)
 
-    assert "REFUSED voltage level 'VL_DC'" in result
-    # The refusal quantifies what the cascade would take down.
-    assert "1 load(s)" in result
-    assert "beyond it: 1 line(s) (LINE_B4_DC)" in result
-    assert "cascade=True" in result
+    item = _item(result, "VL_DC")
+    assert item["status"] == "refused"
+    assert "voltage level 'VL_DC' not removed" in item["problem"]
+    # The refusal quantifies what the cascade would take down, as text and data.
+    assert "1 load(s)" in item["problem"]
+    assert "beyond it: 1 line(s) (LINE_B4_DC)" in item["problem"]
+    assert "cascade=True" in item["problem"]
+    assert item["cascade"]["inside"]["load"] == 1
+    assert item["cascade"]["beyond"] == {"line": ["LINE_B4_DC"]}
+    assert not json.loads(result)["success"]
     assert "VL_DC" in bus_breaker_network.get_voltage_levels().index
     assert "DATACENTER" in bus_breaker_network.get_loads().index
 
@@ -192,8 +204,10 @@ async def test_remove_substation_needs_cascade(
 
     result = await removal_tools.remove_network_elements(["SUB_DC"], ctx=mock_ctx)
 
-    assert "REFUSED substation 'SUB_DC'" in result
-    assert "VL_DC" in result
+    item = _item(result, "SUB_DC")
+    assert item["status"] == "refused"
+    assert "substation 'SUB_DC' not removed" in item["problem"]
+    assert "VL_DC" in item["problem"]
     assert "SUB_DC" in bus_breaker_network.get_substations().index
 
 
@@ -212,7 +226,10 @@ async def test_cascade_removes_a_whole_site_in_any_order(
     assert "removed line 'LINE_B4_DC'" in result
     assert "removed voltage level 'VL_DC'" in result
     assert "removed substation 'SUB_DC'" in result
-    assert "NOT FOUND" not in result
+    reply = json.loads(result)
+    assert reply["success"]
+    assert reply["removed_count"] == 4
+    assert reply["errors"] == []
     assert "SUB_DC" not in bus_breaker_network.get_substations().index
     assert "VL_DC" not in bus_breaker_network.get_voltage_levels().index
     # The original case is intact and still solvable.
@@ -254,8 +271,10 @@ async def test_remove_reports_unknown_id_without_aborting(
 ):
     result = await removal_tools.remove_network_elements(["NOPE", "B3-G"], ctx=mock_ctx)
 
-    assert "NOT FOUND 'NOPE'" in result
-    assert "removed generator 'B3-G'" in result
+    assert _item(result, "NOPE")["status"] == "not_found"
+    assert _item(result, "B3-G")["status"] == "removed"
+    assert json.loads(result)["removed_ids"] == ["B3-G"]
+    assert [error["id"] for error in json.loads(result)["errors"]] == ["NOPE"]
     assert "B3-G" not in bus_breaker_network.get_generators().index
 
 
@@ -265,8 +284,10 @@ async def test_remove_refuses_the_network_itself(
 ):
     result = await removal_tools.remove_network_elements(["ieee14cdf"], ctx=mock_ctx)
 
-    assert "this is the network itself" in result
-    assert "remove_network()" in result
+    item = _item(result, "ieee14cdf")
+    assert item["status"] == "refused"
+    assert "is the network itself" in item["problem"]
+    assert "remove_network()" in item["problem"]
 
 
 @pytest.mark.asyncio
@@ -318,7 +339,9 @@ async def test_the_cascade_refusal_names_the_hvdc_links_it_would_cut(
         ["S1VL2"], network_id="nb", ctx=mock_ctx
     )
 
-    assert "REFUSED voltage level 'S1VL2'" in result
+    item = _item(result, "S1VL2")
+    assert item["status"] == "refused"
+    assert item["cascade"]["beyond"]["hvdc_line"] == ["HVDC1", "HVDC2"]
     assert "2 hvdc line(s) (HVDC1, HVDC2)" in result
     assert "1 shunt compensator(s)" in result
     assert "1 two windings transformer(s) (TWT)" in result
@@ -361,6 +384,26 @@ def test_the_cascade_summary_matches_what_is_actually_removed(removal_tools, fac
             if kind not in ("SWITCH", "VOLTAGE_LEVEL")
         }
         assert expected == removed, voltage_level_id
+
+
+@pytest.mark.asyncio
+async def test_every_removal_reply_has_the_same_keys(
+    removal_tools, mock_ctx, bus_breaker_network
+):
+    removed = json.loads(
+        await removal_tools.remove_network_elements(["B3-G"], ctx=mock_ctx)
+    )
+    nothing = json.loads(await removal_tools.remove_network_elements([], ctx=mock_ctx))
+    unknown_network = json.loads(
+        await removal_tools.remove_network_elements(
+            ["B3-G"], network_id="nope", ctx=mock_ctx
+        )
+    )
+
+    assert removed.keys() == nothing.keys() == unknown_network.keys()
+    (item,) = removed["items"]
+    assert item["methods"] == ["pp.network.remove_feeder_bays"]
+    assert removed["success"] and not nothing["success"]
 
 
 @pytest.mark.asyncio
@@ -410,8 +453,11 @@ async def test_pypowsybl_rejection_is_reported_per_element(
 
     result = await removal_tools.remove_network_elements(["B2-L", "B3-G"], ctx=mock_ctx)
 
-    assert "FAILED 'B2-L': removal refused" in result
-    assert "removed generator 'B3-G'" in result
+    assert _item(result, "B2-L")["status"] == "failed"
+    assert "removal refused" in _item(result, "B2-L")["problem"]
+    assert _item(result, "B3-G")["status"] == "removed"
+    # pypowsybl may have removed part of B2-L's bay before refusing
+    assert json.loads(result)["loadflow_invalidated"]
     assert "B2-L" in bus_breaker_network.get_loads().index
     assert "B3-G" not in bus_breaker_network.get_generators().index
 
@@ -423,4 +469,4 @@ async def test_bus_view_bus_is_not_an_element_to_remove(
     """'VL1_0' is computed from the topology: it is not an identifiable."""
     result = await removal_tools.remove_network_elements(["VL1_0"], ctx=mock_ctx)
 
-    assert "NOT FOUND 'VL1_0'" in result
+    assert _item(result, "VL1_0")["status"] == "not_found"

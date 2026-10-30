@@ -102,7 +102,7 @@ def test_a_profile_out_of_date_falls_back_to_schema_only(registries, tmp_path):
         "load",
         {"id": "L_NEW", "voltage_level_id": "VL4", "bus_id": "B4", "p0": 1.0, "q0": 0},
     )
-    assert "has no profile" in created
+    assert "has no profile" in str(created)
     assert "L_NEW" in network.get_loads().index
 
 

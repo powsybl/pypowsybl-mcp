@@ -32,6 +32,7 @@ replaces the per-tool JSON schema of a one-tool-per-type surface.
 from __future__ import annotations
 
 import difflib
+from dataclasses import dataclass, field
 from typing import Any
 
 import pypowsybl as pp
@@ -39,6 +40,7 @@ from pypowsybl import _pypowsybl as _pp
 
 from pypowsybl_mcp.plugins.grid_extension.creation.context import (
     NODE_BREAKER,
+    BatchRejected,
     ConnectionPoint,
     CreationContext,
     CreationError,
@@ -83,6 +85,86 @@ CONNECTION_HELP = (
     "bus/breaker view in a bus/breaker one. Not a bus of the bus view (the "
     "'VL1_0'-style ids load-flow results report)."
 )
+
+
+@dataclass(frozen=True)
+class CreationResult:
+    """What one creation did, for the report and for the JSON reply."""
+
+    element_type: str
+    element_id: str
+    #: "created" for a new element, "updated" when the call added data to one
+    #: that already existed (limits, a tap changer, an area's voltage levels)
+    status: str
+    #: the pypowsybl calls behind it
+    methods: tuple[str, ...]
+    #: one line saying what happened, where it is connected, with units
+    message: str
+    #: ids pypowsybl generated with it that later calls need
+    connection_points: tuple[str, ...] = ()
+    #: warnings that did not block the creation
+    notes: tuple[str, ...] = ()
+
+    @property
+    def text(self) -> str:
+        """The message with its notes, as one line."""
+        return self.message + "".join(f". Note: {note}" for note in self.notes)
+
+    def __str__(self) -> str:
+        return self.text
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "element_type": self.element_type,
+            "id": self.element_id,
+            "status": self.status,
+            "methods": list(self.methods),
+            "message": self.message,
+            "connection_points": list(self.connection_points),
+            "notes": list(self.notes),
+            "problem": None,
+            "hint": None,
+        }
+
+
+@dataclass
+class BatchResult:
+    """What a batch did: one entry per item, in the order they were applied."""
+
+    #: one dict per item, the same keys whatever its status: ``item`` (its
+    #: position in the batch) and the keys of :meth:`CreationResult.as_dict`;
+    #: applied items first, then the one that failed, then those not attempted
+    items: list[dict] = field(default_factory=list)
+    #: position of the item that stopped the batch, if one did
+    stopped_at: int | None = None
+    #: whether pypowsybl refused the failed item part-way, possibly applying some
+    partly_applied: bool = False
+
+    def _ids(self, status: str) -> list[str]:
+        return [item["id"] for item in self.items if item["status"] == status]
+
+    @property
+    def created_ids(self) -> list[str]:
+        return self._ids("created")
+
+    @property
+    def updated_ids(self) -> list[str]:
+        return self._ids("updated")
+
+    @property
+    def success(self) -> bool:
+        return self.stopped_at is None
+
+    @property
+    def not_created_count(self) -> int:
+        return sum(
+            1 for item in self.items if item["status"] in ("failed", "not_attempted")
+        )
+
+    @property
+    def changed(self) -> bool:
+        """Whether the network may differ from before the batch."""
+        return bool(self.created_ids or self.updated_ids) or self.partly_applied
 
 
 class CreationEngine:
@@ -258,8 +340,8 @@ class CreationEngine:
     # Creation
     # ------------------------------------------------------------------
 
-    def create(self, network, element_type: str, attributes: dict) -> str:
-        """Create one element and return the line to report for it."""
+    def create(self, network, element_type: str, attributes: dict) -> CreationResult:
+        """Create one element; ``str()`` of the result is the line to report."""
         profile = self.profile_for(element_type)
         given = self._normalise(profile, attributes)
         element_id = self._take_id(profile, given)
@@ -287,54 +369,106 @@ class CreationEngine:
             for name, value in context.attributes.items()
             if value is not None and name not in profile.virtual
         }
+        # Attachments always add to an existing element; a schema-only type may
+        # too (an area given voltage levels), which only the network can tell.
+        existed = profile.connection is Connection.TARGET or (
+            profile.schema_only and element_id in network.get_identifiables().index
+        )
         profile.executor.execute(network, profile.element_type, element_id, payload)
         if profile.schema_only:
             context.notes.append(
                 f"{profile.element_type} has no profile, so only its attribute "
                 "names and types were checked before pypowsybl accepted it"
             )
-        return self._report(profile, context, payload)
+        return self._result(profile, context, payload, existed)
 
-    def create_many(self, network, items: list[dict]) -> tuple[list[str], list[str]]:
+    def create_many(self, network, items: list[dict]) -> BatchResult:
         """Create several elements, ordered so dependencies come first.
 
         Every item is checked against its schema before anything is created
-        (see :meth:`_precheck`), so a mistake in the last one does not leave the
-        first half applied. Checks
-        that need the network -- an id already taken, a connection point that
-        does not exist yet because an earlier item creates it -- can only run
-        at the moment each element is created, so they still stop the batch
-        where they fail, and the report says exactly how far it got.
+        (see :meth:`_precheck`), and every mistake found there is reported at
+        once by :class:`BatchRejected`, so a mistake in the last item does not
+        leave the first half applied. Checks that need the network -- an id
+        already taken, a connection point that does not exist yet because an
+        earlier item creates it -- can only run at the moment each element is
+        created, so they still stop the batch where they fail, and the result
+        says exactly how far it got.
         """
         prepared = []
+        errors: list[dict] = []
         for position, item in enumerate(items, start=1):
             if not isinstance(item, dict):
-                raise CreationError(
-                    f"Item {position} is not an object: each item is a dictionary "
-                    "with 'element_type' and the attributes of that element"
+                errors.append(
+                    _item_error(
+                        position,
+                        None,
+                        None,
+                        "not an object: each item is a dictionary with "
+                        "'element_type' and the attributes of that element",
+                    )
                 )
+                continue
             payload = dict(item)
             element_type = payload.pop("element_type", None)
+            element_id = payload.get("id", payload.get("element_id"))
             if not element_type:
-                raise CreationError(
-                    f"Item {position} has no 'element_type': every item must name "
-                    "the kind of element to create"
+                errors.append(
+                    _item_error(
+                        position,
+                        None,
+                        element_id,
+                        "no 'element_type': every item must name the kind of "
+                        "element to create",
+                    )
                 )
-            profile = self.profile_for(element_type)
-            self._precheck(profile, payload, position)
-            prepared.append((profile, payload, position))
+                continue
+            try:
+                profile = self.profile_for(element_type)
+                self._precheck(profile, payload)
+            except CreationError as error:
+                errors.append(
+                    _item_error(
+                        position, element_type, element_id, str(error), error.hint
+                    )
+                )
+                continue
+            prepared.append((profile, payload, position, element_id))
+        if errors:
+            raise BatchRejected(errors)
 
         prepared.sort(key=lambda entry: (entry[0].order, entry[2]))
 
-        done: list[str] = []
-        failed: list[str] = []
-        for profile, payload, position in prepared:
+        result = BatchResult()
+        for index, (profile, payload, position, element_id) in enumerate(prepared):
             try:
-                done.append(self.create(network, profile.element_type, payload))
+                created = self.create(network, profile.element_type, payload)
             except (CreationError, pp.PyPowsyblError, ValueError, KeyError) as error:
-                failed.append(f"item {position} ({profile.element_type}): {error!s}")
+                result.stopped_at = position
+                result.partly_applied = not isinstance(error, CreationError)
+                result.items.append(
+                    _batch_item(
+                        position,
+                        profile,
+                        element_id,
+                        "failed",
+                        str(error),
+                        problem=str(error),
+                        hint=getattr(error, "hint", None),
+                    )
+                )
+                result.items += [
+                    _batch_item(
+                        later_position,
+                        later,
+                        later_id,
+                        "not_attempted",
+                        f"not attempted: the batch stopped at item {position}",
+                    )
+                    for later, _, later_position, later_id in prepared[index + 1 :]
+                ]
                 break
-        return done, failed
+            result.items.append({"item": position, **created.as_dict()})
+        return result
 
     # ------------------------------------------------------------------
     # Steps
@@ -579,9 +713,13 @@ class CreationEngine:
                     )
         context.attributes[name] = checked
 
-    def _report(
-        self, profile: CreationProfile, context: CreationContext, payload: dict
-    ) -> str:
+    def _result(
+        self,
+        profile: CreationProfile,
+        context: CreationContext,
+        payload: dict,
+        existed: bool,
+    ) -> CreationResult:
         shown = []
         for name in profile.required:
             if name in payload:
@@ -615,13 +753,21 @@ class CreationEngine:
             else:
                 where = ""
 
-        extra = profile.executor.report_extra(
+        generated = profile.executor.generated_ids(
             context.network, profile.element_type, context.element_id
         )
-        notes = "".join(f". Note: {note}" for note in context.notes)
-        return f"{created}{details}{where}{extra or ''}{notes}"
+        extra = f", connection points: {', '.join(generated)}" if generated else ""
+        return CreationResult(
+            element_type=profile.element_type,
+            element_id=context.element_id,
+            status="updated" if existed else "created",
+            methods=profile.executor.calls,
+            message=f"{created}{details}{where}{extra}",
+            connection_points=tuple(generated),
+            notes=tuple(context.notes),
+        )
 
-    def _precheck(self, profile: CreationProfile, payload: dict, position: int) -> None:
+    def _precheck(self, profile: CreationProfile, payload: dict) -> None:
         """Schema-level checks that need no network, run before anything is created.
 
         Everything :meth:`create` checks without looking at the network runs
@@ -632,22 +778,48 @@ class CreationEngine:
         """
         given = self._normalise(profile, payload)
         element_id = given.pop(profile.id_field, None)
-        try:
-            self._reject_unknown(profile, given)
-            if element_id is None:
-                raise CreationError(
-                    f"'{profile.id_field}' is required for a {profile.element_type}"
-                )
-            context = CreationContext(
-                network=None,
-                element_type=profile.element_type,
-                element_id=str(element_id),
-                attributes=given,
+        self._reject_unknown(profile, given)
+        if element_id is None:
+            raise CreationError(
+                f"'{profile.id_field}' is required for a {profile.element_type}"
             )
-            self._check_required(profile, context)
-            self._check_values(profile, context)
-        except CreationError as error:
-            raise CreationError(f"item {position}: {error!s}", error.hint) from error
+        context = CreationContext(
+            network=None,
+            element_type=profile.element_type,
+            element_id=str(element_id),
+            attributes=given,
+        )
+        self._check_required(profile, context)
+        self._check_values(profile, context)
+
+
+def _batch_item(
+    position, profile, element_id, status, message, problem=None, hint=None
+) -> dict:
+    """An item of a batch that was not applied, with the keys of an applied one."""
+    return {
+        "item": position,
+        "element_type": profile.element_type,
+        "id": None if element_id is None else str(element_id),
+        "status": status,
+        "methods": list(profile.executor.calls),
+        "message": message,
+        "connection_points": [],
+        "notes": [],
+        "problem": problem,
+        "hint": hint,
+    }
+
+
+def _item_error(position, element_type, element_id, problem, hint=None) -> dict:
+    """One rejected batch item, in the shape of the JSON reply."""
+    return {
+        "item": position,
+        "element_type": element_type,
+        "id": None if element_id is None else str(element_id),
+        "problem": problem,
+        "hint": hint,
+    }
 
 
 def _coerce(item, value, element_type: str):

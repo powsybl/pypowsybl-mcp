@@ -28,6 +28,21 @@ class CreationError(ValueError):
         self.hint = hint
 
 
+class BatchRejected(CreationError):
+    """A batch refused before anything was created, with every item's mistake.
+
+    ``errors`` holds one entry per rejected item -- ``item`` (its 1-based
+    position), ``element_type``, ``id``, ``problem`` and ``hint`` -- so a
+    caller can fix them all at once rather than one per round trip.
+    """
+
+    def __init__(self, errors: list[dict]):
+        super().__init__(
+            "; ".join(f"item {error['item']}: {error['problem']}" for error in errors)
+        )
+        self.errors = errors
+
+
 @dataclass(frozen=True)
 class ConnectionPoint:
     """A validated bus or busbar section an element can be attached to."""

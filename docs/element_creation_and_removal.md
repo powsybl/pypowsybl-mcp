@@ -195,15 +195,31 @@ fallback.
    coerced to the field type (`"0.95"` becomes `0.95`); the rows of a table attribute are checked the same way (§9).
 8. **Apply defaults, then derivations, then rules** (§8).
 9. **Call pypowsybl** through the executor, with the attributes that are set, virtual ones excluded.
-10. **Report** — what was created, the values of its required attributes with their units, where it is connected,
-    anything the executor adds (the connection points of a new voltage level), and notes from rules or from the
-    schema-only path.
+10. **Report** — a `CreationResult`: whether an element was created or an existing one updated, the pypowsybl
+    calls used, a one-line message (the required values with their units, where it is connected), the ids the
+    executor generated (the connection points of a new voltage level), and notes from rules or from the schema-only
+    path. The tools turn it into the JSON reply of §10.
 
 For example:
 
 ```text
 create_network_element("load", {"id": "DATACENTER", "bus": "VL_DC_1_1", "p0": 300.0, "q0": 60.0})
-→ In network 'net1': created load 'DATACENTER' (p0=300.0 MW) connected to 'VL_DC_1_1' in VL_DC
+```
+```json
+{
+  "success": true,
+  "network_id": "net1",
+  "element_type": "load",
+  "methods": ["pp.network.create_load_bay"],
+  "created_ids": ["DATACENTER"],
+  "updated_ids": [],
+  "created_count": 1,
+  "connection_points": [],
+  "notes": [],
+  "errors": [],
+  "message": "created load 'DATACENTER' (p0=300.0 MW) connected to 'VL_DC_1_1' in VL_DC",
+  "loadflow_invalidated": true
+}
 ```
 
 Steps 1 to 8 raise `CreationError` before anything reaches pypowsybl. Executors never raise it, so a `CreationError`
@@ -247,7 +263,8 @@ A voltage level without connection points can host nothing, so creating one is t
 `Network.create_voltage_levels`, then `create_voltage_level_topology`, which fills it with buses (bus/breaker) or
 busbar sections (node/breaker). Defaults give one busbar and one section, in `BUS_BREAKER` topology; with several
 sections, the switches between them default to disconnectors. pypowsybl generates the ids of the connection points
-(`VL_DC_1_1` for busbar 1, section 1) and the report lists them, since every following creation needs them. If the
+(`VL_DC_1_1` for busbar 1, section 1) and the reply lists them in `connection_points`, since every following creation
+needs them. If the
 topology call fails, the voltage level is removed again, so a corrected call is not refused as a duplicate id.
 
 ---
@@ -283,7 +300,7 @@ Rules run after defaults and derivations, so they see the final values:
 | `DistinctEnds`       | the two ends of a branch are different connection points          | line, transformer                               |
 | `SameSubstation`     | both ends in one substation                                       | two-windings transformer                        |
 | `BusBreakerOnly`     | refused in node/breaker topology                                  | ground                                          |
-| `WarnIfDifferent`    | not an error: a note in the report                                | a line between two different nominal voltages   |
+| `WarnIfDifferent`    | not an error: a note in the reply                                 | a line between two different nominal voltages   |
 | `RowsRequired`       | a table attribute needs a minimum number of rows                  | at least two tap positions, two curve points    |
 | `ColumnRequired`, `AtMostRows` | every row gives a column; a count bounded by the number of rows | every shunt section has `b`; sections in service |
 | `Exclusive`          | two ways of describing one thing, never both                      | identical shunt sections, or one row per section |
@@ -331,7 +348,7 @@ to stop faking it.
 
 ---
 
-#### 10. Describing a type, and what errors carry
+#### 10. Describing a type, errors and replies
 
 `describe_element_creation()` lists every creatable type with its summary; schema-only types carry
 `checked: schema only`. `describe_element_creation(element_type)` returns the descriptor:
@@ -348,10 +365,29 @@ to stop faking it.
 | `rules`, `derived`              | the constraints checked and the values computed                         |
 | `checked`                       | present on schema-only types                                            |
 
-Rejections carry the part of the descriptor that would have avoided them: the accepted attributes for an unknown
-name, the full descriptor for a missing required attribute, the accepted values for a bad enumeration, the
-columns for a bad row, the connection attributes when one is missing, the accepted target types for a wrong
-attachment, the supported types for an unknown type.
+Rejections carry the part of the descriptor that would have avoided them, as the `hint` of each entry of `errors`:
+the accepted attributes for an unknown name, the full descriptor for a missing required attribute, the accepted
+values for a bad enumeration, the columns for a bad row, the connection attributes when one is missing, the accepted
+target types for a wrong attachment, the supported types for an unknown type.
+
+##### The replies
+
+The three mutation tools answer in JSON, adapted from the design note's proposal, with the **same keys whatever the
+outcome**, and a one-line `message` for a human or a model to read:
+
+| Key | `create_network_element` | `create_network_elements` | `remove_network_elements` |
+|-----|--------------------------|---------------------------|---------------------------|
+| `success` | the element is in the network as requested | every item was applied | every requested id was removed |
+| `network_id` | ✓ | ✓ | ✓ |
+| ids | `created_ids` (a new element), `updated_ids` (limits, a tap changer… added to an existing one), `created_count` | the same, over the batch, plus `not_created_count` and `stopped_at` | `removed_ids`, `removed_count` |
+| details | `element_type`, `methods` (pypowsybl calls), `connection_points`, `notes` | `items`: one per item, in the order applied | `items`: one per id, in the order processed |
+| `errors` | `[{problem, hint}]` | `[{item, element_type, id, problem, hint}]` | `[{id, problem}]` |
+| `message`, `loadflow_invalidated` | ✓ | ✓ | ✓ |
+
+A batch item has `item` (its position in the request, from 1), `element_type`, `id`, `status` (`created`,
+`updated`, `failed` or `not_attempted`), `methods`, `message`, `connection_points`, `notes`, `problem` and `hint`. A
+removal item has `id`, `element_type`, `status` (`removed`, `refused`, `not_found` or `failed`), `methods`,
+`message`, `problem` and `cascade` (below). `loadflow_invalidated` is false exactly when nothing can have changed.
 
 ---
 
@@ -376,9 +412,12 @@ rejects the whole batch and the network is untouched.
 | 47    | HVDC lines (after their converter stations), tie lines (after their boundary lines) |
 | 60    | limits, reactive limits, tap changers                                 |
 
+When the pre-check rejects items, `errors` lists **all** of them at once, `items` is empty and nothing is created.
+
 The checks that need the network (an id already taken, a connection point that does not exist) run as each element
-is created. A failure there **stops the batch**: the elements created before it stay, and the report lists them,
-then the reason and the number of items not created. There is no rollback, which would mean copying the whole
+is created. A failure there **stops the batch**: the elements created before it stay, `items` lists them as `created`
+or `updated`, then the failed one with its `problem` and `hint`, then the rest as `not_attempted`; `stopped_at` is
+the failed item. There is no rollback, which would mean copying the whole
 network; `duplicate_session()` beforehand is the way to keep an untouched copy.
 
 ---
@@ -407,21 +446,31 @@ network and the matching pypowsybl removal is applied.
 | the network itself                                          | refused: `remove_network()` drops a network from the session |
 
 Ids may mix types and be given in any order: feeders are removed first, then voltage levels, then substations, so a
-cascade never deletes an id still to be processed. Each id gets one line in the report: `removed …`, `REFUSED …`,
-`NOT FOUND …` or `FAILED …`; an unknown id does not abort the others.
+cascade never deletes an id still to be processed. Each id gets one item in the reply, with a `status` of `removed`,
+`refused`, `not_found` or `failed`; an unknown id does not abort the others.
 
 ##### The cascade gate
 
 Removing a voltage level removes far more than its id names: everything it contains, every branch with an end in it,
 the HVDC lines whose converter station is in it **with the station at their far end**, and the tie lines whose
-boundary line is in it. Without `cascade=True` the tool refuses and says what would go, the equipment inside counted
-by type and what lies beyond listed by id:
+boundary line is in it. Without `cascade=True` the item is `refused`, and says what would go, the equipment inside
+counted by type and what lies beyond listed by id — as text in `problem`, and as data in `cascade` (also given, for
+the record, on a voltage level or substation actually removed):
 
-```text
-REFUSED voltage level 'S1VL2': removing it also removes 2 busbar section(s), 3 generator(s),
-2 hvdc converter station(s), 3 load(s), 1 shunt compensator(s), 33 switch(es); and beyond it:
-2 hvdc converter station(s) (LCC2, VSC2), 2 hvdc line(s) (HVDC1, HVDC2),
-1 two windings transformer(s) (TWT). Call again with cascade=True to confirm
+```json
+{
+  "id": "S1VL2",
+  "element_type": "voltage_level",
+  "status": "refused",
+  "methods": [],
+  "problem": "voltage level 'S1VL2' not removed: removing it also removes 2 busbar section(s), 3 generator(s), 2 hvdc converter station(s), 3 load(s), 1 shunt compensator(s), 33 switch(es); and beyond it: 2 hvdc converter station(s) (LCC2, VSC2), 2 hvdc line(s) (HVDC1, HVDC2), 1 two windings transformer(s) (TWT). Call again with cascade=True to confirm",
+  "cascade": {
+    "inside": {"busbar_section": 2, "generator": 3, "hvdc_converter_station": 2, "load": 3, "shunt_compensator": 1},
+    "switches": 33,
+    "beyond": {"hvdc_converter_station": ["LCC2", "VSC2"], "hvdc_line": ["HVDC1", "HVDC2"],
+               "two_windings_transformer": ["TWT"]}
+  }
+}
 ```
 
 The summary scans every element table for the voltage-level columns of each end, then follows HVDC lines and tie
@@ -479,6 +528,7 @@ These checks only see names. When upgrading pypowsybl, still review by hand:
   everything is validated by the server, and a model learns the attributes from the cheat sheet, the descriptor or a
   rejection.
 - **No rollback.** A batch stopped half way keeps what it created; removal is final.
+- **No dry run.** There is no `validate_only` mode: a call that passes every check is applied.
 - **Schema-only types** get no switching equipment, no required attributes, no accepted values, no id check, and only
   their main dataframe. `area_boundaries`, created at order 30, comes before any line of the same batch.
 - **Default limits group only.** Operational limits go in the default group; a named group is not the active one.

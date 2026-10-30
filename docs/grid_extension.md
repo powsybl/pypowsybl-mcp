@@ -61,7 +61,10 @@ Since the arguments are an open object rather than a typed signature, three thin
 cheat sheet of the most-used types inlined in the tool description, `describe_element_creation` for everything else, and
 **errors that carry the descriptor** — a rejected call comes back with the required attributes, units and accepted
 values of that element type, so it can be corrected without a further lookup.
-[element_creation_and_removal.md](element_creation_and_removal.md) explains how creation and removal work.
+The three mutation tools answer in JSON with the same keys whatever the outcome — `success`, the ids created,
+updated or removed, one entry per item, `errors` with a hint each, a one-line `message` and `loadflow_invalidated`.
+[element_creation_and_removal.md](element_creation_and_removal.md) explains how creation and removal work, and the
+replies in §10.
 
 ##### Removal
 

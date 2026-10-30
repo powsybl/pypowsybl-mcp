@@ -69,7 +69,7 @@ def test_create_substation(engine, bus_breaker):
         bus_breaker, "substation", {"id": "S_DC", "country": "FR", "tso": "RTE"}
     )
 
-    assert "created substation 'S_DC'" in report
+    assert "created substation 'S_DC'" in str(report)
     assert bus_breaker.get_substations().loc["S_DC", "country"] == "FR"
 
 
@@ -89,7 +89,7 @@ def test_create_voltage_level_reports_its_connection_points(engine, bus_breaker)
     )
 
     # The generated ids are what every following creation needs.
-    assert "connection points: VL_DC_1_1" in report
+    assert "connection points: VL_DC_1_1" in str(report)
     levels = bus_breaker.get_voltage_levels()
     assert levels.loc["VL_DC", "nominal_v"] == 135.0
     assert levels.loc["VL_DC", "low_voltage_limit"] == 128.0
@@ -147,7 +147,7 @@ def test_create_load_with_defaults(engine, bus_breaker):
         bus_breaker, "load", {"id": "DC", "bus_or_busbar_section_id": "B4", "p0": 300.0}
     )
 
-    assert "created load 'DC' (p0=300.0 MW) connected to 'B4' in VL4" in report
+    assert "created load 'DC' (p0=300.0 MW) connected to 'B4' in VL4" in str(report)
     loads = bus_breaker.get_loads()
     assert loads.loc["DC", "p0"] == 300.0
     assert loads.loc["DC", "q0"] == 0.0
@@ -240,7 +240,7 @@ def test_create_static_var_compensator(engine, bus_breaker):
 
 def test_create_ground_only_in_bus_breaker(engine, bus_breaker, node_breaker):
     report = engine.create(bus_breaker, "ground", {"id": "GND", "bus": "B4"})
-    assert "created ground 'GND'" in report
+    assert "created ground 'GND'" in str(report)
     assert "GND" in bus_breaker.get_grounds().index
 
     with pytest.raises(CreationError, match="no bay creation for a ground"):
@@ -261,7 +261,7 @@ def test_create_line(engine, bus_breaker):
         {"id": "L", "bus1": "B4", "bus2": "VL_DC_1_1", "r": 0.5, "x": 5.0},
     )
 
-    assert "between 'B4' in VL4 and 'VL_DC_1_1' in VL_DC" in report
+    assert "between 'B4' in VL4 and 'VL_DC_1_1' in VL_DC" in str(report)
     lines = bus_breaker.get_lines()
     assert lines.loc["L", "voltage_level1_id"] == "VL4"
     assert lines.loc["L", "x"] == 5.0
@@ -301,7 +301,7 @@ def test_create_hvdc_link(engine, node_breaker):
         },
     )
 
-    assert "created hvdc_line 'HVDC_NEW'" in report
+    assert "created hvdc_line 'HVDC_NEW'" in str(report)
     assert "HVDC_NEW" in node_breaker.get_hvdc_lines().index
 
 
@@ -317,7 +317,7 @@ def test_a_non_linear_shunt_from_its_sections(engine, node_breaker):
         },
     )
 
-    assert "created shunt_compensator 'SH_NL'" in report
+    assert "created shunt_compensator 'SH_NL'" in str(report)
     shunt = node_breaker.get_shunt_compensators(all_attributes=True).loc["SH_NL"]
     assert shunt["model_type"] == "NON_LINEAR"
     # the susceptance of a section is the total with it and those before in
@@ -374,7 +374,7 @@ def test_a_boundary_line_is_created_with_its_bay(engine, node_breaker):
         {"id": "BL", "bus": "S1VL2_BBS1", "r": 1.0, "x": 10.0, "p0": 20.0},
     )
 
-    assert "created boundary_line 'BL'" in report
+    assert "created boundary_line 'BL'" in str(report)
     assert len(node_breaker.get_switches()) > switches
     assert "BL" not in node_breaker.get_boundary_lines_generation().index
 
@@ -413,7 +413,7 @@ def test_a_partial_generation_part_is_refused(engine, node_breaker):
 
 
 def test_a_tie_line_comes_after_its_boundary_lines_in_a_batch(engine, node_breaker):
-    done, failed = engine.create_many(
+    batch = engine.create_many(
         node_breaker,
         [
             {
@@ -441,8 +441,8 @@ def test_a_tie_line_comes_after_its_boundary_lines_in_a_batch(engine, node_break
         ],
     )
 
-    assert not failed
-    assert "tie_line" in done[-1]
+    assert batch.success
+    assert batch.items[-1]["element_type"] == "tie_line"
     assert "TL" in node_breaker.get_tie_lines().index
 
 
@@ -462,7 +462,7 @@ def test_operational_limits_make_a_branch_overloadable(engine, site):
         },
     )
 
-    assert "set operational_limits on line 'LINE_DC'" in report
+    assert "set operational_limits on line 'LINE_DC'" in str(report)
     limits = site.get_operational_limits()
     rows = limits[limits.index.get_level_values("element_id") == "LINE_DC"]
     # Permanent and temporary, on both sides, in the group the analyses read.
@@ -874,8 +874,8 @@ def test_different_nominal_voltages_are_noted_not_refused(engine, bus_breaker):
         {"id": "LMIX", "bus1": "B4", "bus2": "VL400_1_1", "r": 1.0, "x": 10.0},
     )
 
-    assert "Note:" in report
-    assert "different nominal voltages" in report
+    assert "Note:" in str(report)
+    assert "different nominal voltages" in str(report)
     assert "LMIX" in bus_breaker.get_lines().index
 
 
@@ -908,14 +908,14 @@ def test_a_type_without_profile_is_created_from_its_schema(engine, bus_breaker):
         bus_breaker, "bus", {"id": "B_NEW", "voltage_level_id": "VL4"}
     )
 
-    assert "created bus with id='B_NEW'" in report
-    assert "has no profile" in report
+    assert "created bus with id='B_NEW'" in str(report)
+    assert "has no profile" in str(report)
     assert "B_NEW" in bus_breaker.get_bus_breaker_view_buses().index
 
 
 def test_schema_only_equipment_takes_part_in_the_load_flow(engine, bus_breaker):
     """A new bus, the breaker coupling it, and a load on it: still a valid grid."""
-    done, failed = engine.create_many(
+    batch = engine.create_many(
         bus_breaker,
         [
             # listed before the bus it needs: schema-only types come first
@@ -933,8 +933,8 @@ def test_schema_only_equipment_takes_part_in_the_load_flow(engine, bus_breaker):
         ],
     )
 
-    assert not failed
-    assert "load" in done[-1]
+    assert batch.success
+    assert batch.items[-1]["element_type"] == "load"
     assert not bus_breaker.get_switches().loc["SW_NEW", "open"]
     results = pp.loadflow.run_ac(bus_breaker)
     assert results[0].status == pp.loadflow.ComponentStatus.CONVERGED
@@ -953,7 +953,7 @@ def test_schema_only_types_skip_the_id_check(engine, node_breaker):
         {"voltage_level_id": "S1VL1", "node1": 100, "node2": 101},
     )
 
-    assert "voltage_level_id='S1VL1'" in report
+    assert "voltage_level_id='S1VL1'" in str(report)
     assert "S1VL1" in node_breaker.get_areas_voltage_levels()["voltage_level_id"].values
 
 
@@ -1038,7 +1038,7 @@ def test_a_computed_type_is_told_apart_from_an_unknown_one(engine, bus_breaker):
 
 def test_batch_is_ordered_by_dependency(engine, bus_breaker):
     """Items may be listed in any order: the engine sorts them."""
-    done, failed = engine.create_many(
+    batch = engine.create_many(
         bus_breaker,
         [
             {
@@ -1070,11 +1070,16 @@ def test_batch_is_ordered_by_dependency(engine, bus_breaker):
         ],
     )
 
-    assert not failed
-    assert len(done) == 5
-    assert "substation" in done[0]
-    assert "voltage_level" in done[1]
-    assert "operational_limits" in done[-1]
+    assert batch.success
+    assert [item["element_type"] for item in batch.items] == [
+        "substation",
+        "voltage_level",
+        "load",
+        "line",
+        "operational_limits",
+    ]
+    assert batch.created_ids == ["SUB_DC", "VL_DC", "DATACENTER", "LINE_DC"]
+    assert batch.updated_ids == ["LINE_DC"]
     assert "DATACENTER" in bus_breaker.get_loads().index
     assert len(bus_breaker.get_operational_limits().loc[["LINE_DC"]]) == 2
 
@@ -1132,7 +1137,7 @@ def test_batch_checks_table_rows_before_creating_anything(engine, site):
 
 
 def test_batch_stops_where_the_network_refuses_and_says_so(engine, bus_breaker):
-    done, failed = engine.create_many(
+    batch = engine.create_many(
         bus_breaker,
         [
             {"element_type": "substation", "id": "S_NEW"},
@@ -1140,8 +1145,10 @@ def test_batch_stops_where_the_network_refuses_and_says_so(engine, bus_breaker):
         ],
     )
 
-    assert len(done) == 1
-    assert "item 2 (load)" in failed[0]
+    assert batch.created_ids == ["S_NEW"]
+    assert batch.stopped_at == 2
+    assert batch.items[-1]["status"] == "failed"
+    assert batch.items[-1]["element_type"] == "load"
     # what came before is in the network, and the report says so
     assert "S_NEW" in bus_breaker.get_substations().index
 

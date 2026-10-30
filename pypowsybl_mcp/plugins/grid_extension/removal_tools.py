@@ -31,6 +31,8 @@ are refused unless the caller explicitly asks for a cascade, and the refusal
 says what would have been lost.
 """
 
+import json
+
 import pypowsybl as pp
 from cachetools import TTLCache
 from loguru import logger
@@ -140,88 +142,106 @@ class RemovalTools(PyPowsyblTool):
         }
         return types, beyond & set(types)
 
-    def _cascade_summary(self, network, voltage_level_ids: list[str]) -> str:
-        """Describe what removing some voltage levels would take down with them."""
+    def _cascade_details(self, network, voltage_level_ids: list[str]) -> dict:
+        """What removing some voltage levels takes down, by element type.
+
+        ``inside`` counts the equipment of the voltage levels, ``beyond`` lists
+        by id what lies outside them (branches, HVDC links and their far-end
+        stations, tie lines), and ``switches`` counts the switching equipment,
+        which is listed as a whole: it is the bays of everything else.
+        """
         types, beyond = self._cascade(network, voltage_level_ids)
-        # Switches are listed as a whole: they are the bays of everything else.
-        switches = sum(1 for kind in types.values() if kind == "SWITCH")
-        equipment = {
-            element_id: kind
-            for element_id, kind in types.items()
-            if kind not in ("SWITCH", "VOLTAGE_LEVEL")
-        }
-        if not equipment and not switches:
-            return "nothing else"
-
-        def label(kind: str) -> str:
-            name = kind.lower().replace("_", " ")
-            return f"{name}(es)" if name.endswith(("s", "ch", "x")) else f"{name}(s)"
-
         inside: dict[str, int] = {}
         reaching: dict[str, list[str]] = {}
-        for element_id, kind in sorted(equipment.items()):
-            if element_id in beyond:
-                reaching.setdefault(kind, []).append(element_id)
+        switches = 0
+        for element_id, kind in sorted(types.items()):
+            if kind == "SWITCH":
+                switches += 1
+            elif kind == "VOLTAGE_LEVEL":
+                continue
+            elif element_id in beyond:
+                reaching.setdefault(kind.lower(), []).append(element_id)
             else:
-                inside[kind] = inside.get(kind, 0) + 1
+                inside[kind.lower()] = inside.get(kind.lower(), 0) + 1
+        return {"inside": inside, "switches": switches, "beyond": reaching}
 
-        parts = [f"{count} {label(kind)}" for kind, count in sorted(inside.items())]
-        if switches:
-            parts.append(f"{switches} switch(es)")
-        summary = ", ".join(parts) if parts else "no equipment of its own"
-        if reaching:
-            listed = []
-            for kind, ids in sorted(reaching.items()):
-                shown = ", ".join(ids[:5])
-                more = f" and {len(ids) - 5} more" if len(ids) > 5 else ""
-                listed.append(f"{len(ids)} {label(kind)} ({shown}{more})")
-            summary += "; and beyond it: " + ", ".join(listed)
-        return summary
+    def _cascade_summary(self, network, voltage_level_ids: list[str]) -> str:
+        """Describe what removing some voltage levels would take down with them."""
+        return _describe_cascade(self._cascade_details(network, voltage_level_ids))
 
-    def _remove_one(self, network, element_id: str, element_type: str, cascade: bool):
-        """Remove a single element, returning the line to report for it."""
+    def _remove_one(
+        self, network, element_id: str, element_type: str, cascade: bool
+    ) -> dict:
+        """Remove a single element, returning its item of the reply."""
+        kind = element_type.lower()
+
+        def removed(methods: list[str], message: str, details: dict | None = None):
+            return _item(element_id, kind, "removed", methods, message, details)
+
         if element_type in FEEDER_TYPES:
             pp.network.remove_feeder_bays(network, connectable_ids=[element_id])
-            return f"removed {element_type.lower()} '{element_id}' with its bay(s)"
+            return removed(
+                ["pp.network.remove_feeder_bays"],
+                f"removed {kind} '{element_id}' with its bay(s)",
+            )
 
         if element_type == "HVDC_LINE":
             pp.network.remove_hvdc_lines(network, hvdc_line_ids=[element_id])
-            return f"removed hvdc line '{element_id}' with its converter stations"
+            return removed(
+                ["pp.network.remove_hvdc_lines"],
+                f"removed hvdc line '{element_id}' with its converter stations",
+            )
 
         if element_type == "VOLTAGE_LEVEL":
+            details = self._cascade_details(network, [element_id])
             if not cascade:
-                summary = self._cascade_summary(network, [element_id])
-                return (
-                    f"REFUSED voltage level '{element_id}': removing it also "
-                    f"removes {summary}. Call again with cascade=True to confirm"
+                problem = (
+                    f"voltage level '{element_id}' not removed: removing it also "
+                    f"removes {_describe_cascade(details)}. Call again with "
+                    "cascade=True to confirm"
                 )
+                return _item(element_id, kind, "refused", [], problem, details, problem)
             pp.network.remove_voltage_levels(network, voltage_level_ids=[element_id])
-            return f"removed voltage level '{element_id}' and everything it contained"
+            return removed(
+                ["pp.network.remove_voltage_levels"],
+                f"removed voltage level '{element_id}' and everything it contained",
+                details,
+            )
 
         if element_type == "SUBSTATION":
             voltage_levels = self._voltage_levels_of(network, element_id)
+            details = (
+                self._cascade_details(network, voltage_levels)
+                if voltage_levels
+                else None
+            )
             if not cascade and voltage_levels:
-                summary = self._cascade_summary(network, voltage_levels)
-                return (
-                    f"REFUSED substation '{element_id}': it still holds voltage "
+                problem = (
+                    f"substation '{element_id}' not removed: it still holds voltage "
                     f"level(s) {', '.join(voltage_levels)}, whose removal also "
-                    f"removes {summary}. Call again with cascade=True to confirm"
+                    f"removes {_describe_cascade(details)}. Call again with "
+                    "cascade=True to confirm"
                 )
+                return _item(element_id, kind, "refused", [], problem, details, problem)
+            methods = ["Network.remove_elements"]
             if voltage_levels:
                 # A substation cannot be removed while it holds voltage levels.
                 pp.network.remove_voltage_levels(
                     network, voltage_level_ids=voltage_levels
                 )
+                methods.insert(0, "pp.network.remove_voltage_levels")
             network.remove_elements(element_id)
             contained = (
                 f" and its voltage level(s) {', '.join(voltage_levels)}"
                 if voltage_levels
                 else ""
             )
-            return f"removed substation '{element_id}'{contained}"
+            return removed(
+                methods, f"removed substation '{element_id}'{contained}", details
+            )
 
         network.remove_elements(element_id)
-        return f"removed {element_type.lower()} '{element_id}'"
+        return removed(["Network.remove_elements"], f"removed {kind} '{element_id}'")
 
     async def remove_network_elements(
         self,
@@ -267,13 +287,23 @@ class RemovalTools(PyPowsyblTool):
                 current network. Default: None.
 
         Returns:
-            str: One line per requested id, saying what was removed, refused or
-                not found.
+            str: JSON, with the same keys whatever the outcome:
+                - success: whether every requested id was removed
+                - network_id, removed_ids, removed_count
+                - items: one per id, in the order they were processed, each with
+                  id, element_type, status (removed, refused, not_found,
+                  failed), methods (the pypowsybl calls), message, problem, and
+                  cascade: for a voltage level or a substation, what goes with
+                  it -- {inside: {type: count}, switches: n, beyond: {type: [ids]}}
+                - errors: [{id, problem}] for every id not removed
+                - message: one line summing it up
+                - loadflow_invalidated: whether cached load-flow results were
+                  dropped
 
         Example Usage:
             # Retire one generator
             remove_network_elements(["B3-G"])
-            → "removed generator 'B3-G' with its bay(s)"
+            → items[0].message: "removed generator 'B3-G' with its bay(s)"
 
             # Undo a whole datacenter connection, in any order
             remove_network_elements(["LINE_B4_DC", "DATACENTER", "VL_DC",
@@ -281,9 +311,11 @@ class RemovalTools(PyPowsyblTool):
 
             # Ask first what a voltage level removal would cost
             remove_network_elements(["VL_DC"])
-            → "REFUSED voltage level 'VL_DC': removing it also removes
-               1 bus(es), 1 load(s); and beyond it: 1 line(s) (LINE_B4_DC).
-               Call again with cascade=True to confirm"
+            → items[0].status: "refused", items[0].problem: "voltage level 'VL_DC'
+               not removed: removing it also removes 1 bus(es), 1 load(s); and
+               beyond it: 1 line(s) (LINE_B4_DC). Call again with cascade=True
+               to confirm", items[0].cascade: {"inside": {"bus": 1, "load": 1},
+               "switches": 0, "beyond": {"line": ["LINE_B4_DC"]}}
 
         Notes:
             - **Only remove equipment when the user explicitly asked for it.**
@@ -312,16 +344,15 @@ class RemovalTools(PyPowsyblTool):
         try:
             proxy, network_id, network = self.resolve_network(ctx, network_id)
         except NetworkNotFoundError as e:
-            logger.warning(str(e))
-            return str(e)
+            return _reply(_envelope(network_id, [], [_error(None, str(e))], str(e)))
 
         if isinstance(element_ids, str):
             element_ids = [element_ids]
         requested = [str(item).strip() for item in element_ids if str(item).strip()]
         if not requested:
-            error = "No element id provided: nothing to remove"
-            logger.warning(error)
-            return error
+            message = "No element id provided: nothing to remove"
+            logger.warning(message)
+            return _reply(_envelope(network_id, [], [_error(None, message)], message))
 
         logger.debug(
             f"Removing {len(requested)} element(s) from network {network_id} "
@@ -338,37 +369,128 @@ class RemovalTools(PyPowsyblTool):
         # Containers last, so a cascade never deletes an id still to be processed.
         ordered = sorted(requested, key=lambda i: REMOVAL_RANKS.get(types[i], 0))
 
-        report: list[str] = []
+        items: list[dict] = []
         for element_id in ordered:
             element_type = types[element_id]
             if element_type is None:
-                report.append(
-                    f"NOT FOUND '{element_id}': no element with this id in network "
-                    f"'{network_id}'"
+                problem = f"no element '{element_id}' in network '{network_id}'"
+                items.append(
+                    _item(element_id, None, "not_found", [], problem, None, problem)
                 )
                 continue
             if element_type == "NETWORK":
-                report.append(
-                    f"REFUSED '{element_id}': this is the network itself, use "
-                    "remove_network() to drop it from the session"
+                problem = (
+                    f"'{element_id}' is the network itself: use remove_network() to "
+                    "drop it from the session"
+                )
+                items.append(
+                    _item(element_id, "network", "refused", [], problem, None, problem)
                 )
                 continue
             try:
-                report.append(
+                items.append(
                     self._remove_one(network, element_id, element_type, cascade)
                 )
             except (pp.PyPowsyblError, ValueError, KeyError) as e:
                 logger.error(f"Failed to remove '{element_id}': {e}")
-                report.append(f"FAILED '{element_id}': {e!s}")
+                problem = f"pypowsybl refused to remove '{element_id}': {e!s}"
+                items.append(
+                    _item(
+                        element_id,
+                        element_type.lower(),
+                        "failed",
+                        [],
+                        problem,
+                        None,
+                        problem,
+                    )
+                )
 
-        info = f"Removal report for network '{network_id}':\n" + "\n".join(
-            f"- {line}" for line in report
-        )
+        removed = [item["id"] for item in items if item["status"] == "removed"]
         # A failed removal may have gone half way, so it counts as a change too;
         # refusals and unknown ids leave the network, and its results, intact.
-        if any(line.startswith(("removed", "FAILED")) for line in report):
+        changed = any(item["status"] in ("removed", "failed") for item in items)
+        if changed:
             proxy.invalidate_loadflow(network_id)
-        if any(line.startswith("removed") for line in report):
-            info += "\nRun run_loadflow() to compute the new network state"
-        logger.success(info)
-        return info
+        not_removed = [item for item in items if item["status"] != "removed"]
+        if not not_removed:
+            message = (
+                f"Removed {len(removed)} element(s) from network '{network_id}'. "
+                "Run run_loadflow() to compute the new network state"
+            )
+            logger.success(message)
+        else:
+            message = (
+                f"Removed {len(removed)} of {len(items)} element(s) from network "
+                f"'{network_id}'; not removed: "
+                + ", ".join(
+                    f"'{item['id']}' ({item['status']})" for item in not_removed
+                )
+            )
+            logger.warning(message)
+        errors = [_error(item["id"], item["problem"]) for item in not_removed]
+        return _reply(_envelope(network_id, items, errors, message, changed))
+
+
+def _item(
+    element_id, element_type, status, methods, message, cascade=None, problem=None
+):
+    """One element of the reply, the same keys whatever its status."""
+    return {
+        "id": element_id,
+        "element_type": element_type,
+        "status": status,
+        "methods": methods,
+        "message": message,
+        "cascade": cascade,
+        "problem": problem,
+    }
+
+
+def _error(element_id, problem: str) -> dict:
+    return {"id": element_id, "problem": problem}
+
+
+def _envelope(network_id, items, errors, message, loadflow_invalidated=False) -> dict:
+    removed = [item["id"] for item in items if item["status"] == "removed"]
+    return {
+        "success": bool(items) and not errors,
+        "network_id": network_id,
+        "removed_ids": removed,
+        "removed_count": len(removed),
+        "items": items,
+        "errors": errors,
+        "message": message,
+        "loadflow_invalidated": loadflow_invalidated,
+    }
+
+
+def _reply(payload: dict) -> str:
+    return json.dumps(payload, indent=2, default=str)
+
+
+def _label(kind: str, count: int) -> str:
+    name = kind.replace("_", " ")
+    return (
+        f"{count} {name}(es)"
+        if name.endswith(("s", "ch", "x"))
+        else f"{count} {name}(s)"
+    )
+
+
+def _describe_cascade(details: dict) -> str:
+    """The cascade details as one phrase, as shown in a refusal."""
+    parts = [_label(kind, count) for kind, count in sorted(details["inside"].items())]
+    if details["switches"]:
+        parts.append(f"{details['switches']} switch(es)")
+    if not parts and not details["beyond"]:
+        return "nothing else"
+    summary = ", ".join(parts) if parts else "no equipment of its own"
+    if details["beyond"]:
+        listed = []
+        for kind, ids in sorted(details["beyond"].items()):
+            shown = ", ".join(ids[:5])
+            more = f" and {len(ids) - 5} more" if len(ids) > 5 else ""
+            listed.append(f"{_label(kind, len(ids))} ({shown}{more})")
+        summary += "; and beyond it: " + ", ".join(listed)
+    return summary
