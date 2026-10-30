@@ -61,6 +61,8 @@ class Executor:
 
     #: set by subclasses, used by the consistency test and by the descriptor
     calls: tuple[str, ...] = ()
+    #: whether every row of the table attribute must give the same columns
+    uniform_rows: bool = False
 
     def schema(self, element_type: str) -> ElementSchema:  # pragma: no cover
         raise NotImplementedError
@@ -308,6 +310,10 @@ class Attachment(Executor):
     describe one target (the sides and durations of a limits group), so the
     caller supplies them under ``rows_attribute``.
     """
+
+    # The rows become one list per column, so a column some rows leave out
+    # cannot be passed at all.
+    uniform_rows = True
 
     method: str
     rows_attribute: str
