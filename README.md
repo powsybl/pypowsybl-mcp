@@ -33,8 +33,10 @@ turn.
   Nothing is truncated, and the rows are fetched over plain HTTP by whoever needs them instead of travelling through
   the client's context.
 - Keep per-session state with TTL-based caches so a client can work iteratively on the same study.
-- Report what the server is holding through a read-only admin HTTP API (`/admin/health`, `/admin/sessions`):
-  active sessions, their contents, their activity, and process memory.
+- Report what the server is holding through a read-only admin HTTP API (`/admin/health`, `/admin/sessions`,
+  `/admin/creation-coverage`):
+  active sessions, their contents, their activity, process memory, and how the creation profiles match the installed
+  pypowsybl.
 
 ## Documentation
 

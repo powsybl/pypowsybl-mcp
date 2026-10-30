@@ -37,7 +37,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-import pypowsybl as pp
 from pypowsybl.network import Network
 
 from pypowsybl_mcp.creation import derivations as derive
@@ -107,8 +106,9 @@ class CreationProfile:
     #: batch ordering: containers, then equipment, then what attaches to it
     order: int = 50
     guidance: str = ""
-    #: pypowsybl callables whose docstrings document these attributes
-    docs: tuple = ()
+    #: pypowsybl calls whose docstrings document these attributes, named like
+    #: executor calls ("Network.create_loads") and resolved only when used
+    docs: tuple[str, ...] = ()
     #: no overlay: built from the introspected schema alone (see UNPROFILED)
     schema_only: bool = False
 
@@ -160,7 +160,7 @@ _register(
             "its own changes no analysis: add a voltage level to it next. 'country' "
             "is an ISO 3166-1 alpha-2 code such as FR or BE."
         ),
-        docs=(Network.create_substations,),
+        docs=("Network.create_substations",),
     )
 )
 
@@ -198,7 +198,10 @@ _register(
             "files, NODE_BREAKER for detailed grid files. Without voltage limits, "
             "check_voltage_violations() can never report the new busbar."
         ),
-        docs=(Network.create_voltage_levels, pp.network.create_voltage_level_topology),
+        docs=(
+            "Network.create_voltage_levels",
+            "pp.network.create_voltage_level_topology",
+        ),
     )
 )
 
@@ -229,7 +232,7 @@ _register(
             "p0 is positive for consumption: a 300 MW datacenter is p0=300. A q0 of "
             "about 0.2*p0 corresponds to a 0.98 power factor."
         ),
-        docs=(pp.network.create_load_bay, Network.create_loads),
+        docs=("pp.network.create_load_bay", "Network.create_loads"),
     )
 )
 
@@ -282,7 +285,7 @@ _register(
             "give it reactive limits (element_type='minmax_reactive_limits') or the "
             "load flow will hold the setpoint with unlimited reactive power."
         ),
-        docs=(pp.network.create_generator_bay, Network.create_generators),
+        docs=("pp.network.create_generator_bay", "Network.create_generators"),
     )
 )
 
@@ -309,7 +312,7 @@ _register(
             "content and state of charge are not modelled: a load flow sees a fixed "
             "injection, not a storage schedule."
         ),
-        docs=(pp.network.create_battery_bay, Network.create_batteries),
+        docs=("pp.network.create_battery_bay", "Network.create_batteries"),
     )
 )
 
@@ -350,7 +353,7 @@ _register(
             "Q MVAr at U kV, b_per_section = Q / U^2 -- 60 MVAr at 63 kV is 0.0151 S. "
             "The reactive power injected follows the voltage: Q = b*U^2."
         ),
-        docs=(pp.network.create_shunt_compensator_bay,),
+        docs=("pp.network.create_shunt_compensator_bay",),
     )
 )
 
@@ -385,7 +388,7 @@ _register(
             "susceptance continuously, so it can hold a voltage setpoint. For "
             "+/-50 MVAr at 63 kV, b_min=-0.0126 and b_max=0.0126."
         ),
-        docs=(pp.network.create_static_var_compensator_bay,),
+        docs=("pp.network.create_static_var_compensator_bay",),
     )
 )
 
@@ -413,7 +416,7 @@ _register(
             "Create the two stations first, then the hvdc_line that joins them. A VSC "
             "station can regulate voltage on its AC side, like a generator."
         ),
-        docs=(pp.network.create_vsc_converter_station_bay,),
+        docs=("pp.network.create_vsc_converter_station_bay",),
     )
 )
 
@@ -436,7 +439,7 @@ _register(
             "Create the two stations first, then the hvdc_line that joins them. An "
             "LCC station absorbs reactive power set by its power factor."
         ),
-        docs=(pp.network.create_lcc_converter_station_bay,),
+        docs=("pp.network.create_lcc_converter_station_bay",),
     )
 )
 
@@ -458,7 +461,7 @@ _register(
             "of the model. pypowsybl has no bay creation for grounds, so only "
             "bus/breaker voltage levels are supported."
         ),
-        docs=(Network.create_grounds,),
+        docs=("Network.create_grounds",),
     )
 )
 
@@ -499,7 +502,7 @@ _register(
             "current limits until operational_limits are created for it, and "
             "without limits it can never be reported as overloaded."
         ),
-        docs=(pp.network.create_line_bays, Network.create_lines),
+        docs=("pp.network.create_line_bays", "Network.create_lines"),
     )
 )
 
@@ -549,8 +552,8 @@ _register(
             "created on it."
         ),
         docs=(
-            pp.network.create_2_windings_transformer_bays,
-            Network.create_2_windings_transformers,
+            "pp.network.create_2_windings_transformer_bays",
+            "Network.create_2_windings_transformers",
         ),
     )
 )
@@ -583,7 +586,7 @@ _register(
             "lcc_converter_station), then this link naming them. nominal_v is the DC "
             "voltage, target_p the power ordered through the link."
         ),
-        docs=(Network.create_hvdc_lines,),
+        docs=("Network.create_hvdc_lines",),
     )
 )
 
@@ -631,7 +634,7 @@ _register(
             "adding to them. Leave group_name unset: an explicitly named group is "
             "not the active one and the analyses ignore it."
         ),
-        docs=(Network.create_operational_limits,),
+        docs=("Network.create_operational_limits",),
     )
 )
 
@@ -652,7 +655,7 @@ _register(
             "reactive_capability_curve_point instead when the capability depends on "
             "the active power."
         ),
-        docs=(Network.create_minmax_reactive_limits,),
+        docs=("Network.create_minmax_reactive_limits",),
     )
 )
 
@@ -676,7 +679,7 @@ _register(
             "increasing active power. This is what a real machine has: less reactive "
             "capability at full output."
         ),
-        docs=(Network.create_curve_reactive_limits,),
+        docs=("Network.create_curve_reactive_limits",),
     )
 )
 
@@ -724,7 +727,7 @@ _register(
             "describe them yourself. target_v is in kV. Whether the regulation is "
             "simulated also depends on the load-flow parameters."
         ),
-        docs=(Network.create_ratio_tap_changers,),
+        docs=("Network.create_ratio_tap_changers",),
     )
 )
 
@@ -792,7 +795,7 @@ _register(
             "with regulating=False is the safe default: an active phase shifter "
             "changes flows everywhere."
         ),
-        docs=(Network.create_phase_tap_changers,),
+        docs=("Network.create_phase_tap_changers",),
     )
 )
 
@@ -818,7 +821,8 @@ SCHEMA_ONLY_GUIDANCE = (
 )
 
 
-def _schema_only_profile(element_type: str, method: str) -> CreationProfile:
+def schema_only_profile(element_type: str, method: str) -> CreationProfile:
+    """The profile of a type that has none, derived from its schema alone."""
     call = getattr(Network, method)
     doc = (call.__doc__ or "").strip().splitlines()
     executor = Raw(method, main_frame_only=True)
@@ -834,7 +838,7 @@ def _schema_only_profile(element_type: str, method: str) -> CreationProfile:
         executor=executor,
         order=SCHEMA_ONLY_ORDER,
         guidance=guidance,
-        docs=(call,),
+        docs=(f"Network.{method}",),
         schema_only=True,
     )
 
@@ -842,7 +846,7 @@ def _schema_only_profile(element_type: str, method: str) -> CreationProfile:
 #: element types pypowsybl can create that have no profile, each with a profile
 #: derived from its schema; follows the installed version by construction
 UNPROFILED: dict[str, CreationProfile] = {
-    name: _schema_only_profile(name, CREATION_METHODS[name])
+    name: schema_only_profile(name, CREATION_METHODS[name])
     for name in creatable_element_types()
     if name not in PROFILES and name in CREATION_METHODS
 }

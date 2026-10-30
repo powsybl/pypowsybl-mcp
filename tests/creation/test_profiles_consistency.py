@@ -15,6 +15,7 @@ hand-written half can never drift silently from the generated half.
 
 import pytest
 
+from pypowsybl_mcp.creation.drift import PROFILE_CHECKS
 from pypowsybl_mcp.creation.profiles import PROFILES, UNPROFILED, Connection
 from pypowsybl_mcp.creation.schema import CREATION_METHODS, creatable_element_types
 
@@ -26,78 +27,16 @@ def profile(request):
     return PROFILES[request.param]
 
 
-def known_names(profile) -> set[str]:
-    """Attributes a profile may legitimately refer to."""
-    names = set(profile.schema.names) | set(profile.virtual)
-    if profile.rows_attribute:
-        names.add(profile.rows_attribute)
-    return names
+@pytest.mark.parametrize("check", sorted(PROFILE_CHECKS))
+def test_profile_matches_the_installed_pypowsybl(profile, check):
+    """The name checks the server also runs at startup (creation/drift.py).
 
+    An upstream rename or removal shows up here, naming the profile and the
+    check, instead of at call time.
+    """
+    problems = PROFILE_CHECKS[check](profile, profile.schema)
 
-def test_every_profile_targets_a_creatable_element_type(profile):
-    assert profile.element_type in creatable_element_types()
-
-
-def test_every_executor_call_exists_in_pypowsybl(profile):
-    """An upstream rename shows up here, not at call time."""
-    assert profile.executor.missing_call() is None, (
-        f"{profile.element_type}: {profile.executor.missing_call()} no longer exists "
-        "in the installed pypowsybl"
-    )
-
-
-def test_required_attributes_exist_in_the_schema(profile):
-    unknown = set(profile.required) - known_names(profile)
-    assert not unknown, f"{profile.element_type} requires unknown attributes: {unknown}"
-
-
-def test_managed_attributes_exist_in_the_schema(profile):
-    unknown = set(profile.managed) - set(profile.schema.names)
-    assert not unknown, f"{profile.element_type} manages unknown attributes: {unknown}"
-
-
-def test_defaults_units_and_enums_refer_to_real_attributes(profile):
-    names = known_names(profile)
-    for label, keys in (
-        ("defaults", profile.defaults),
-        ("units", profile.units),
-        ("enums", profile.enums),
-    ):
-        unknown = set(keys) - names
-        assert not unknown, f"{profile.element_type} {label} name(s) unknown: {unknown}"
-
-
-def test_rules_refer_to_real_attributes(profile):
-    names = known_names(profile)
-    for item in profile.rules:
-        unknown = set(item.fields) - names
-        assert not unknown, (
-            f"{profile.element_type} rule {type(item).__name__} refers to "
-            f"unknown attribute(s): {unknown}"
-        )
-
-
-def test_derivations_produce_real_attributes(profile):
-    names = known_names(profile)
-    for derivation in profile.derivations:
-        assert derivation.produces in names, (
-            f"{profile.element_type} derivation {type(derivation).__name__} produces "
-            f"'{derivation.produces}', which is not an attribute of that element"
-        )
-
-
-def test_virtual_attributes_are_not_pypowsybl_fields(profile):
-    """A virtual attribute that upstream starts providing must stop being virtual."""
-    clashing = set(profile.virtual) & set(profile.schema.names)
-    assert not clashing, (
-        f"{profile.element_type} declares {clashing} as virtual, but pypowsybl now "
-        "provides them: drop them from 'virtual'"
-    )
-
-
-def test_row_attribute_is_not_a_pypowsybl_field(profile):
-    if profile.rows_attribute:
-        assert profile.rows_attribute not in profile.schema.names
+    assert not problems, f"{profile.element_type}: " + "; ".join(problems)
 
 
 def test_managed_attributes_are_never_required_or_defaulted(profile):
@@ -106,24 +45,10 @@ def test_managed_attributes_are_never_required_or_defaulted(profile):
     assert not managed & set(profile.defaults)
 
 
-def test_the_id_attribute_is_the_schema_index(profile):
-    assert profile.id_field == profile.schema.index_name
-    assert profile.schema.field(profile.id_field) is not None
-
-
 def test_enumerated_values_are_uppercase(profile):
     """The engine upper-cases what the caller sends before comparing."""
     for name, values in profile.enums.items():
         assert all(value == value.upper() for value in values), name
-
-
-def test_connection_style_matches_the_schema(profile):
-    """A bay-connected element must really take a bus_or_busbar_section_id."""
-    names = set(profile.schema.names)
-    if profile.connection is Connection.SINGLE:
-        assert "bus_or_busbar_section_id" in names
-    elif profile.connection is Connection.DOUBLE:
-        assert {"bus_or_busbar_section_id_1", "bus_or_busbar_section_id_2"} <= names
 
 
 def test_attachments_declare_their_target_types(profile):

@@ -71,4 +71,4 @@ include = ["pypowsybl_mcp*"]
 exclude = ["data*", "logs*", "tests*", "docs*"]
 
 [tool.setuptools.package-data]
-pypowsybl_mcp = ["config/*.toml", "skills/*.md"]
+pypowsybl_mcp = ["config/*.toml", "skills/*.md", "creation/*.json"]

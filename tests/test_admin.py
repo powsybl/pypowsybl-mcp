@@ -90,6 +90,38 @@ def test_sessions_is_disabled_without_a_configured_token(
     assert "MCP_AUTH_TOKEN" in response.json()["error"]
 
 
+def test_creation_coverage_requires_the_token(client):
+    assert client.get("/admin/creation-coverage").status_code == 401
+
+
+def test_creation_coverage_serves_the_startup_report(client, monkeypatch):
+    from pypowsybl_mcp.creation import drift
+
+    monkeypatch.setattr(drift, "LAST_REPORT", {"status": "changed"})
+
+    response = client.get(
+        "/admin/creation-coverage", headers={"Authorization": f"Bearer {TOKEN}"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "changed"}
+
+
+def test_creation_coverage_without_a_startup_check(client, monkeypatch):
+    """Tools not registered: a fresh report, which changes nothing."""
+    from pypowsybl_mcp.creation import drift
+
+    monkeypatch.setattr(drift, "LAST_REPORT", None)
+
+    payload = client.get(
+        "/admin/creation-coverage", headers={"X-Admin-Token": TOKEN}
+    ).json()
+
+    assert payload["status"] == "verified"
+    assert payload["pypowsybl_version"] == payload["verified_against"]
+    assert drift.LAST_REPORT is None
+
+
 @pytest.mark.parametrize(
     "headers",
     [{"Authorization": f"Bearer {TOKEN}"}, {"X-Admin-Token": TOKEN}],

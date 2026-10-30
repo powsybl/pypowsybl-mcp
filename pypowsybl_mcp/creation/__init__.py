@@ -38,6 +38,11 @@ out. The package is layered accordingly:
     connection points, apply defaults and derivations, run the rules, dispatch
     to the executor, report.
 
+``drift``
+    The overlay checked against the installed pypowsybl: name checks shared
+    with the tests, run again at startup against the coverage snapshot shipped
+    with the package; a profile that no longer matches is disabled.
+
 See ``docs/generic_element_creation_design.md`` for the reasoning, and
 ``tests/creation/test_profiles_consistency.py`` for the check that keeps the
 overlay honest against the installed pypowsybl.

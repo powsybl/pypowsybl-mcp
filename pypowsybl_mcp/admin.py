@@ -33,6 +33,7 @@ from mcp.server.mcpserver import MCPServer
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from pypowsybl_mcp.creation import drift
 from pypowsybl_mcp.utils.session_registry import SESSIONS, SessionRegistry
 
 SERVER_NAME = "pypowsybl-mcp"
@@ -213,10 +214,24 @@ def build_snapshot(
     return snapshot
 
 
+def _refusal(request: Request) -> JSONResponse | None:
+    """The response refusing `request`, or None when it carries the admin token."""
+    if not os.getenv("MCP_AUTH_TOKEN"):
+        logger.warning("Admin API refused: MCP_AUTH_TOKEN is not set")
+        return JSONResponse(
+            {"error": "admin API disabled: MCP_AUTH_TOKEN is not set"},
+            status_code=403,
+        )
+    if not _authorized(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return None
+
+
 def register_admin_routes(
     mcp: MCPServer, proxies: TTLCache, registry: SessionRegistry = SESSIONS
 ) -> None:
-    """Add `/admin/health` and `/admin/sessions` to the MCP server's HTTP app."""
+    """Add `/admin/health`, `/admin/sessions` and `/admin/creation-coverage` to
+    the MCP server's HTTP app."""
 
     @mcp.custom_route("/admin/health", methods=["GET"])
     async def health(request: Request) -> JSONResponse:
@@ -233,16 +248,22 @@ def register_admin_routes(
         `?networks=full` adds per-network element counts - expensive on large
         networks, so it is opt-in.
         """
-        if not os.getenv("MCP_AUTH_TOKEN"):
-            logger.warning("Admin API refused: MCP_AUTH_TOKEN is not set")
-            return JSONResponse(
-                {"error": "admin API disabled: MCP_AUTH_TOKEN is not set"},
-                status_code=403,
-            )
-        if not _authorized(request):
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if (refusal := _refusal(request)) is not None:
+            return refusal
 
         full = request.query_params.get("networks") == "full"
         return JSONResponse(build_snapshot(proxies, registry, full_networks=full))
 
-    logger.info("Admin API available on /admin/health and /admin/sessions")
+    @mcp.custom_route("/admin/creation-coverage", methods=["GET"])
+    async def creation_coverage(request: Request) -> JSONResponse:
+        """How the creation profiles match the installed pypowsybl: the report
+        of the check run when the creation tools were registered, or a fresh
+        one, changing nothing, when they were not."""
+        if (refusal := _refusal(request)) is not None:
+            return refusal
+        return JSONResponse(drift.LAST_REPORT or drift.startup_check(apply=False))
+
+    logger.info(
+        "Admin API available on /admin/health, /admin/sessions and "
+        "/admin/creation-coverage"
+    )

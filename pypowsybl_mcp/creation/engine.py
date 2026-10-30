@@ -44,6 +44,7 @@ from pypowsybl_mcp.creation.context import (
     CreationError,
 )
 from pypowsybl_mcp.creation.doc_mining import attribute_docs, unit_in
+from pypowsybl_mcp.creation.executors import resolve_call
 from pypowsybl_mcp.creation.profiles import (
     PROFILES,
     UNPROFILED,
@@ -156,7 +157,7 @@ class CreationEngine:
 
         profile = self.profile_for(element_type)
         schema = profile.schema
-        docs = attribute_docs(profile.docs)
+        docs = attribute_docs(tuple(resolve_call(call) for call in profile.docs))
         managed = set(profile.managed) | {profile.id_field}
 
         def field_entry(name: str, kind: str) -> dict:
