@@ -401,6 +401,8 @@ class CreationEngine:
         """
         prepared = []
         errors: list[dict] = []
+        #: id -> (item, element_type) of the first item creating an element with it
+        new_ids: dict[str, tuple[int, str]] = {}
         for position, item in enumerate(items, start=1):
             if not isinstance(item, dict):
                 errors.append(
@@ -429,7 +431,7 @@ class CreationEngine:
                 continue
             try:
                 profile = self.profile_for(element_type)
-                self._precheck(profile, payload)
+                checked_id = self._precheck(profile, payload)
             except CreationError as error:
                 errors.append(
                     _item_error(
@@ -437,6 +439,20 @@ class CreationEngine:
                     )
                 )
                 continue
+            if _creates_its_id(profile):
+                first = new_ids.setdefault(checked_id, (position, profile.element_type))
+                if first[0] != position:
+                    errors.append(
+                        _item_error(
+                            position,
+                            element_type,
+                            checked_id,
+                            f"id '{checked_id}' is already used by item {first[0]} "
+                            f"({first[1]}) of this batch: an id names one element "
+                            "of the network, whatever its type",
+                        )
+                    )
+                    continue
             prepared.append((profile, payload, position, element_id))
         if errors:
             raise BatchRejected(errors)
@@ -772,8 +788,10 @@ class CreationEngine:
             notes=tuple(context.notes),
         )
 
-    def _precheck(self, profile: CreationProfile, payload: dict) -> None:
+    def _precheck(self, profile: CreationProfile, payload: dict) -> str:
         """Schema-level checks that need no network, run before anything is created.
+
+        Returns the item's id, normalized as :meth:`create` reads it.
 
         Everything :meth:`create` checks without looking at the network runs
         here too -- unknown attributes, the id, the required attributes, types
@@ -796,6 +814,17 @@ class CreationEngine:
         )
         self._check_required(profile, context)
         self._check_values(profile, context)
+        return str(element_id).strip()
+
+
+def _creates_its_id(profile: CreationProfile) -> bool:
+    """Whether an item of this type creates a new element under its own id.
+
+    Not an attachment, whose id is the element it adds to (a line and its
+    limits share one), nor a schema-only type, whose id may name another
+    element (an area given several voltage levels): those may repeat.
+    """
+    return profile.connection is not Connection.TARGET and not profile.schema_only
 
 
 def _batch_item(

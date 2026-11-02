@@ -337,9 +337,11 @@ class CreationTools(PyPowsyblTool):
         Notes:
             - Every item is checked against its schema **before** anything is
               created -- attribute names, required attributes, types, accepted
-              values and table rows -- so such a mistake in the last item leaves
-              the network untouched, and every such mistake is reported at once
-            - Checks that need the network — an id already taken, a connection
+              values and table rows -- and so is the batch itself: two items
+              creating elements with the same id are refused. Such a mistake
+              in the last item leaves the network untouched, and every such
+              mistake is reported at once
+            - Checks that need the network — an id already in the network, a connection
               point that does not exist — can only run as each element is created,
               so they stop the batch there; the report says how far it got and
               what is already in the network
