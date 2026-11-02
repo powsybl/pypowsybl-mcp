@@ -371,7 +371,9 @@ to stop faking it.
 #### 10. Describing a type, errors and replies
 
 `describe_element_creation()` lists every creatable type with its summary; schema-only types carry
-`checked: schema only`. `describe_element_creation(element_type)` returns the descriptor:
+`checked: schema only`. Both answers are JSON with `success`; for a type that cannot be created, `success` is false
+and `errors` gives the reason, with the supported types as its hint. `describe_element_creation(element_type)`
+returns the descriptor:
 
 | Key                             | Content                                                                 |
 |---------------------------------|-------------------------------------------------------------------------|
@@ -497,8 +499,10 @@ The summary scans every element table for the voltage-level columns of each end,
 lines. A test compares it with what `remove_voltage_levels` actually removes, for every voltage level of five sample
 networks. Switches are counted inside the voltage level only: the bays at the far end of its branches go too.
 
-Removal is not undoable, and limits or tap changers have no removal of their own (removing their id would remove
-the line or transformer).
+Removal is not undoable, and limits, tap changers and reactive limits have no removal of their own: their id is that
+of the element they belong to, so removing it removes the line, transformer or generator. Creating them again
+replaces them. Users are told at both ends: each attachment's reply carries a note saying so, its descriptor's
+guidance ends with it, and the removal tool's description warns the model not to remove the element instead.
 
 ---
 

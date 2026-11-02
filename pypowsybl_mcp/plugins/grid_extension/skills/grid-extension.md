@@ -219,6 +219,13 @@ branch still exists and is still seen by a security analysis. Use
 beforehand) to get the original back -- `clone_variant()` is not enough, it
 isolates the state of the network, not its structure.
 
+**Limits, tap changers and reactive limits cannot be removed on their own.**
+They have no id of their own: `remove_network_elements` on the line,
+transformer or generator they belong to removes that whole element. To change
+them, create them again -- that replaces them. When the user asks to remove one,
+say it cannot be done, and offer to replace it, or to remove and recreate the
+element if that is what they want.
+
 ## Practical notes
 
 * Every creation and removal that changes the network clears the cached

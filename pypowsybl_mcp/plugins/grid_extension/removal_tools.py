@@ -322,6 +322,12 @@ class RemovalTools(PyPowsyblTool):
               Never delete an element to make a violation, an overload or a
               divergence disappear: use set_line_status() for an outage study
               and report constraints as results
+            - **Limits, tap changers and reactive limits cannot be removed on
+              their own.** Their id is the id of the line, transformer or
+              generator they belong to, so removing it removes that whole
+              element. To change them, create them again with
+              create_network_element(): that replaces them. If the user asks to
+              remove one, say it cannot be done and offer that instead
             - **Removal is not undoable**: the element is gone from the in-memory
               network. Work on a clone (clone_variant() only isolates the state,
               not the structure — duplicate_session() or reloading the file gives

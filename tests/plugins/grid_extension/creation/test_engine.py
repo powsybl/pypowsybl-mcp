@@ -965,7 +965,9 @@ def test_pypowsybl_decides_what_a_schema_only_type_lacks(engine, bus_breaker):
 def test_schema_only_attributes_are_still_checked(engine, bus_breaker):
     with pytest.raises(CreationError, match="Did you mean 'voltage_level_id'"):
         engine.create(bus_breaker, "bus", {"id": "B_NEW", "voltage_level": "VL4"})
-    with pytest.raises(CreationError, match="'node' of a busbar_section must be a"):
+    with pytest.raises(
+        CreationError, match="'node' of a busbar_section must be an integer"
+    ):
         engine.create(
             bus_breaker,
             "busbar_section",
