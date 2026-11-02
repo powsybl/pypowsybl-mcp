@@ -6,12 +6,13 @@
 
 """The overlay: what pypowsybl's creation metadata does not say.
 
-Introspection gives the field list of every creation call, but not which fields
-are required, what they are measured in, which enumerated values are legal, what
-depends on what, or even which call is legal for an element type at all -- the
-metadata will happily describe the feeder bay of a *substation*. This module
-supplies exactly that, one profile per element type, and nothing else: no
-pipeline, no validation code, no pypowsybl calls.
+Introspection gives the field list of every creation call, and the calls
+themselves (``schema.CREATE_CALLS``, ``schema.BAY_CALLS``), but not which fields
+are required, what they are measured in, which enumerated values are legal, or
+what depends on what. This module supplies exactly that, one profile per element
+type, and nothing else: no pipeline, no validation code, no pypowsybl calls --
+the call a profile uses follows from how its element connects (see
+:attr:`CreationProfile.executor`).
 
 A profile is around twenty lines. Adding an element type the server does not
 support yet is a new entry here, not a new tool.
@@ -35,6 +36,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import cached_property
 from typing import Any
 
 from pypowsybl.network import Network
@@ -42,19 +44,17 @@ from pypowsybl.network import Network
 from pypowsybl_mcp.plugins.grid_extension.creation import derivations as derive
 from pypowsybl_mcp.plugins.grid_extension.creation import rules as rule
 from pypowsybl_mcp.plugins.grid_extension.creation.executors import (
-    Attachment,
-    BranchBays,
+    DerivedCall,
     Executor,
-    FeederBay,
-    MultiFrameBay,
-    Raw,
-    RowGroup,
+    Unavailable,
     VoltageLevel,
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
-    CREATION_METHODS,
+    BAY_CALLS,
+    CREATE_CALLS,
     ElementSchema,
     creatable_element_types,
+    creation_schema,
 )
 
 # Attributes every bay-created injection takes from its connection point.
@@ -89,7 +89,6 @@ class CreationProfile:
 
     element_type: str
     summary: str
-    executor: Executor
     connection: Connection = Connection.NONE
     required: tuple[str, ...] = ()
     managed: tuple[str, ...] = ()
@@ -102,8 +101,11 @@ class CreationProfile:
     #: attribute holding a table of rows, when the call takes one
     rows_attribute: str | None = None
     #: schema group of those rows: the second dataframe of the call by default
-    #: (tap changer steps), the third for the sections of a non-linear shunt
+    #: (tap changer steps), the third for the sections of a non-linear shunt,
+    #: 0 when the rows are the call's main dataframe (limits, curve points)
     rows_group: int = 1
+    #: values a row of the table attribute gets for the columns it leaves out
+    row_defaults: dict[str, Any] = field(default_factory=dict)
     #: element types this creation may attach to, for Connection.TARGET
     target_types: frozenset[str] = frozenset()
     #: batch ordering: containers, then equipment, then what attaches to it
@@ -114,6 +116,37 @@ class CreationProfile:
     docs: tuple[str, ...] = ()
     #: no overlay: built from the introspected schema alone (see UNPROFILED)
     schema_only: bool = False
+    #: a call shape no derived executor covers (the voltage level); None for
+    #: every other type, whose call is observed rather than written down
+    special_executor: Executor | None = None
+
+    @cached_property
+    def executor(self) -> Executor:
+        """How this type is created, derived from how it connects.
+
+        An element connected to a bus or busbar section (``SINGLE``, ``DOUBLE``)
+        goes through its bay helper, which builds the switchgear; everything
+        else -- containers, attachments, schema-only types -- through its
+        ``Network.create_*`` method. Both come from the registries observed on
+        the installed pypowsybl, so no profile names a call.
+        """
+        if self.special_executor is not None:
+            return self.special_executor
+        if self.connection in (Connection.SINGLE, Connection.DOUBLE):
+            registry, family = BAY_CALLS, "bay helper"
+        else:
+            registry, family = CREATE_CALLS, "Network.create_* method"
+        call = registry.get(self.element_type)
+        if call is None:
+            return Unavailable(self.element_type, family)
+        return DerivedCall(
+            call,
+            rows_attribute=self.rows_attribute,
+            rows_group=self.rows_group,
+            row_defaults=self.row_defaults,
+            attaches=self.connection is Connection.TARGET,
+            main_frame_only=self.schema_only,
+        )
 
     @property
     def schema(self) -> ElementSchema:
@@ -153,7 +186,6 @@ _register(
     CreationProfile(
         element_type="substation",
         summary="A geographical site holding voltage levels; no equipment of its own.",
-        executor=Raw("create_substations"),
         order=10,
         # 'TSO' duplicates 'tso' in the metadata; exposing both invites confusion.
         managed=("TSO",),
@@ -174,7 +206,7 @@ _register(
             "The busbar system of a site at one nominal voltage, created with the "
             "connection points equipment attaches to."
         ),
-        executor=VoltageLevel(),
+        special_executor=VoltageLevel(),
         order=20,
         required=("substation_id", "nominal_v"),
         defaults={
@@ -216,7 +248,6 @@ _register(
     CreationProfile(
         element_type="load",
         summary="A consumption point: a datacenter, a factory, an extra demand.",
-        executor=FeederBay("create_load_bay"),
         connection=Connection.SINGLE,
         order=40,
         required=("p0",),
@@ -243,7 +274,6 @@ _register(
     CreationProfile(
         element_type="generator",
         summary="A production unit: a plant, a wind or solar farm.",
-        executor=FeederBay("create_generator_bay"),
         connection=Connection.SINGLE,
         order=40,
         required=("target_p", "max_p"),
@@ -296,7 +326,6 @@ _register(
     CreationProfile(
         element_type="battery",
         summary="A storage unit: produces when target_p is positive, absorbs when negative.",
-        executor=FeederBay("create_battery_bay"),
         connection=Connection.SINGLE,
         order=40,
         required=("target_p", "max_p"),
@@ -323,18 +352,11 @@ _register(
     CreationProfile(
         element_type="shunt_compensator",
         summary="A capacitor bank (positive susceptance) or a reactor (negative).",
-        executor=MultiFrameBay(
-            function="create_shunt_compensator_bay",
-            main_frame="shunt_df",
-            extra_frames=(("linear_model_df", 1), ("non_linear_model_df", 2)),
-            rows_attribute="sections",
-            rows_frame="non_linear_model_df",
-            row_defaults={"g": 0.0},
-        ),
         connection=Connection.SINGLE,
         order=40,
         rows_attribute="sections",
         rows_group=2,
+        row_defaults={"g": 0.0},
         # 'model_type' follows from how the sections are given; 'g' and 'b' are
         # the columns of the non-linear sections, given under 'sections'.
         managed=(*BAY_MANAGED, "model_type", "g", "b"),
@@ -389,7 +411,6 @@ _register(
     CreationProfile(
         element_type="static_var_compensator",
         summary="Continuous reactive control between b_min and b_max.",
-        executor=FeederBay("create_static_var_compensator_bay"),
         connection=Connection.SINGLE,
         order=40,
         required=("b_min", "b_max"),
@@ -424,7 +445,6 @@ _register(
     CreationProfile(
         element_type="vsc_converter_station",
         summary="The AC end of a voltage-source HVDC link.",
-        executor=FeederBay("create_vsc_converter_station_bay"),
         connection=Connection.SINGLE,
         order=40,
         required=("loss_factor",),
@@ -452,7 +472,6 @@ _register(
     CreationProfile(
         element_type="lcc_converter_station",
         summary="The AC end of a line-commutated HVDC link.",
-        executor=FeederBay("create_lcc_converter_station_bay"),
         connection=Connection.SINGLE,
         order=40,
         required=("power_factor", "loss_factor"),
@@ -475,7 +494,6 @@ _register(
     CreationProfile(
         element_type="ground",
         summary="An earthing connection on a bus.",
-        executor=Raw("create_grounds"),
         connection=Connection.BUS,
         order=40,
         managed=("connectable_bus_id", "node"),
@@ -508,11 +526,6 @@ _register(
         summary=(
             "A line to a point outside the modeled network (a border X-node), "
             "with the exchange at its far end."
-        ),
-        executor=MultiFrameBay(
-            function="create_boundary_line_bay",
-            main_frame="df",
-            extra_frames=(("generation_df", 1),),
         ),
         connection=Connection.SINGLE,
         order=40,
@@ -572,7 +585,6 @@ _register(
     CreationProfile(
         element_type="line",
         summary="An AC line between two connection points, with a bay at each end.",
-        executor=BranchBays("create_line_bays", "CREATE_LINE_FEEDER"),
         connection=Connection.DOUBLE,
         order=45,
         required=("r", "x"),
@@ -609,10 +621,6 @@ _register(
     CreationProfile(
         element_type="two_windings_transformer",
         summary="A transformer between two voltage levels of one substation.",
-        executor=BranchBays(
-            "create_2_windings_transformer_bays",
-            "CREATE_TWO_WINDINGS_TRANSFORMER_FEEDER",
-        ),
         connection=Connection.DOUBLE,
         order=45,
         required=("r", "x"),
@@ -661,7 +669,6 @@ _register(
     CreationProfile(
         element_type="hvdc_line",
         summary="A DC link between two converter stations that already exist.",
-        executor=Raw("create_hvdc_lines"),
         order=47,
         required=(
             "converter_station1_id",
@@ -693,7 +700,6 @@ _register(
     CreationProfile(
         element_type="tie_line",
         summary="A line joining two boundary lines, typically across a border.",
-        executor=Raw("create_tie_lines"),
         # after the boundary lines it joins, which are created at order 40
         order=47,
         required=("boundary_line1_id", "boundary_line2_id"),
@@ -714,11 +720,12 @@ _register(
     CreationProfile(
         element_type="operational_limits",
         summary="The current (or power) ratings of a branch, without which it can never be overloaded.",
-        executor=Attachment("create_operational_limits", rows_attribute="limits"),
         connection=Connection.TARGET,
         target_types=BRANCH_TYPES,
         order=60,
         rows_attribute="limits",
+        # the rows are the main dataframe of the call itself
+        rows_group=0,
         managed=("name", "fictitious"),
         virtual={
             "permanent_limit": "the permanent rating (PATL), in A for CURRENT limits",
@@ -758,7 +765,6 @@ _register(
     CreationProfile(
         element_type="minmax_reactive_limits",
         summary="A constant reactive capability range for a generator, battery or converter.",
-        executor=Attachment("create_minmax_reactive_limits", rows_attribute="rows"),
         connection=Connection.TARGET,
         target_types=REACTIVE_TYPES,
         order=60,
@@ -779,11 +785,12 @@ _register(
     CreationProfile(
         element_type="reactive_capability_curve_point",
         summary="A reactive capability curve Q(P), as a list of points.",
-        executor=Attachment("create_curve_reactive_limits", rows_attribute="points"),
         connection=Connection.TARGET,
         target_types=REACTIVE_TYPES,
         order=60,
         rows_attribute="points",
+        # the rows are the main dataframe of the call itself
+        rows_group=0,
         units={"p": "MW", "min_q": "MVAr", "max_q": "MVAr"},
         rules=(
             rule.RowsRequired(
@@ -803,15 +810,11 @@ _register(
     CreationProfile(
         element_type="ratio_tap_changer",
         summary="Voltage regulation on a two-windings transformer (on-load tap changer).",
-        executor=RowGroup(
-            "create_ratio_tap_changers",
-            rows_attribute="steps",
-            row_defaults={"rho": 1.0, "r": 0.0, "x": 0.0, "g": 0.0, "b": 0.0},
-        ),
         connection=Connection.TARGET,
         target_types=frozenset({"two_windings_transformer"}),
         order=60,
         rows_attribute="steps",
+        row_defaults={"rho": 1.0, "r": 0.0, "x": 0.0, "g": 0.0, "b": 0.0},
         managed=("side",),
         virtual={
             "step_count": "number of tap positions when the steps are generated",
@@ -851,22 +854,18 @@ _register(
     CreationProfile(
         element_type="phase_tap_changer",
         summary="Active-power control on a two-windings transformer (phase shifter).",
-        executor=RowGroup(
-            "create_phase_tap_changers",
-            rows_attribute="steps",
-            row_defaults={
-                "rho": 1.0,
-                "alpha": 0.0,
-                "r": 0.0,
-                "x": 0.0,
-                "g": 0.0,
-                "b": 0.0,
-            },
-        ),
         connection=Connection.TARGET,
         target_types=frozenset({"two_windings_transformer"}),
         order=60,
         rows_attribute="steps",
+        row_defaults={
+            "rho": 1.0,
+            "alpha": 0.0,
+            "r": 0.0,
+            "x": 0.0,
+            "g": 0.0,
+            "b": 0.0,
+        },
         managed=("side",),
         virtual={
             "step_count": "number of tap positions when the steps are generated",
@@ -937,24 +936,22 @@ SCHEMA_ONLY_GUIDANCE = (
 )
 
 
-def schema_only_profile(element_type: str, method: str) -> CreationProfile:
+def schema_only_profile(element_type: str) -> CreationProfile:
     """The profile of a type that has none, derived from its schema alone."""
-    call = getattr(Network, method)
-    doc = (call.__doc__ or "").strip().splitlines()
-    executor = Raw(method, main_frame_only=True)
+    call = CREATE_CALLS[element_type]
+    doc = (getattr(Network, call.function).__doc__ or "").strip().splitlines()
     guidance = SCHEMA_ONLY_GUIDANCE
-    if executor.schema(element_type).names != Raw(method).schema(element_type).names:
+    if creation_schema(element_type).group_count > 1:
         guidance += (
             " Only the attributes of the main table of the call are accepted; its "
             "additional tables are not supported here."
         )
     return CreationProfile(
         element_type=element_type,
-        summary=(doc[0].strip() if doc else f"Created with Network.{method}()."),
-        executor=executor,
+        summary=(doc[0].strip() if doc else f"Created with {call.name}()."),
         order=SCHEMA_ONLY_ORDER,
         guidance=guidance,
-        docs=(f"Network.{method}",),
+        docs=(call.name,),
         schema_only=True,
     )
 
@@ -962,9 +959,9 @@ def schema_only_profile(element_type: str, method: str) -> CreationProfile:
 #: element types pypowsybl can create that have no profile, each with a profile
 #: derived from its schema; follows the installed version by construction
 UNPROFILED: dict[str, CreationProfile] = {
-    name: schema_only_profile(name, CREATION_METHODS[name])
+    name: schema_only_profile(name)
     for name in creatable_element_types()
-    if name not in PROFILES and name in CREATION_METHODS
+    if name not in PROFILES and name in CREATE_CALLS
 }
 
 

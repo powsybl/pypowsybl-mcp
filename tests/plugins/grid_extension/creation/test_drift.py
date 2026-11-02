@@ -20,8 +20,8 @@ from pypowsybl.network import Network
 from pypowsybl_mcp.plugins.grid_extension.creation import drift, schema
 from pypowsybl_mcp.plugins.grid_extension.creation.engine import CreationEngine
 from pypowsybl_mcp.plugins.grid_extension.creation.executors import (
-    BranchBays,
-    FeederBay,
+    DerivedCall,
+    Unavailable,
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.profiles import PROFILES, UNPROFILED
 
@@ -51,7 +51,7 @@ def test_the_installed_version_is_verified(registries, tmp_path):
     assert report["status"] == "verified"
     assert report["verified_against"] == pp.__version__
     assert not report["version_changed"]
-    assert report["changes"] == {"element_types": {}, "attributes": {}}
+    assert report["changes"] == {"element_types": {}, "attributes": {}, "bays": {}}
     assert not report["disabled_profiles"]
     assert report["element_types"]["profiled"] == len(PROFILES)
     assert drift.LAST_REPORT is report
@@ -122,14 +122,36 @@ def test_without_apply_nothing_is_changed_or_kept(registries, tmp_path):
 @pytest.mark.parametrize(
     ("change", "expected"),
     [
-        ({"executor": FeederBay("create_load_bay_v2")}, "create_load_bay_v2 no longer"),
+        (
+            {
+                "special_executor": DerivedCall(
+                    schema.CreationCall(
+                        "pp.network", "create_load_bay_v2", ("df",), "CREATE_FEEDER_BAY"
+                    )
+                )
+            },
+            "create_load_bay_v2 no longer",
+        ),
+        (
+            {"special_executor": Unavailable("load", "bay helper")},
+            "has no bay helper for load",
+        ),
         ({"docs": ("Network.create_loads_v2",)}, "create_loads_v2, documenting"),
         (
-            {"executor": BranchBays("create_line_bays", "NO_SUCH_MODIFICATION")},
+            {
+                "special_executor": DerivedCall(
+                    schema.CreationCall(
+                        "pp.network",
+                        "create_line_bays",
+                        ("df",),
+                        "NO_SUCH_MODIFICATION",
+                    )
+                )
+            },
             "schema cannot be read",
         ),
     ],
-    ids=["executor-call", "documentation-call", "schema"],
+    ids=["renamed-call", "call-gone-from-registry", "documentation-call", "schema"],
 )
 def test_the_problems_name_what_is_missing(change, expected):
     profile = dataclasses.replace(PROFILES["load"], **change)
@@ -146,8 +168,26 @@ def test_a_missing_snapshot_is_reported(registries, tmp_path):
     assert report["verified_against"] is None
 
 
-def test_the_method_map_survives_a_missing_private_hook(monkeypatch):
-    """Without the hook nothing is schema-only, but the server still starts."""
-    monkeypatch.delattr(Network, "_create_elements")
+def test_the_registries_survive_a_missing_private_hook(monkeypatch):
+    """Without a hook its registry is empty, but the server still starts."""
+    from pypowsybl import _pypowsybl as _pp
 
-    assert schema._creation_methods() == {}
+    monkeypatch.delattr(Network, "_create_elements")
+    assert schema._create_calls() == {}
+
+    monkeypatch.delattr(_pp, "get_network_modification_metadata_with_element_type")
+    assert schema._bay_calls() == {}
+
+
+def test_a_bay_profile_without_its_bay_is_set_aside(registries, tmp_path, monkeypatch):
+    """A bay helper gone upstream: the type falls back to schema-only creation."""
+    monkeypatch.delitem(schema.BAY_CALLS, "load")
+    profiles, unprofiled = registries
+    profiles["load"] = dataclasses.replace(profiles["load"])  # derive anew
+
+    report = drift.startup_check(
+        profiles, unprofiled, snapshot_path=_snapshot_file(tmp_path, {})
+    )
+
+    assert "has no bay helper for load" in report["disabled_profiles"]["load"][0]
+    assert unprofiled["load"].schema_only

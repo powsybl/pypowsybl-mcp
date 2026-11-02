@@ -25,17 +25,23 @@ model), a tap changer as two (the changer and its steps).
 The metadata is descriptive, not authoritative: it says nothing about which
 fields are required, and it will happily describe combinations that make no
 sense (asking for the feeder-bay attributes of a *substation* returns a
-perfectly well-formed field list). Deciding which call is legal for which
-element type is the job of :mod:`pypowsybl_mcp.plugins.grid_extension.creation.profiles`.
+perfectly well-formed field list), so the field lists are always read for a
+call observed to exist: ``CREATE_CALLS`` and ``BAY_CALLS``, built below from the
+calls pypowsybl actually makes.
 """
 
 from __future__ import annotations
 
+import contextlib
+import inspect
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache
 
+import pypowsybl.network as pn
 from loguru import logger
 from pypowsybl import _pypowsybl as _pp
+from pypowsybl.network import Network, create_empty
 
 # SeriesMetadata.type is an int code; these are the four it can take.
 KIND_BY_CODE = {0: "string", 1: "number", 2: "integer", 3: "boolean"}
@@ -157,68 +163,157 @@ def plain_modification_schema(modification_name: str) -> ElementSchema:
     return _schema_from_groups([_pp.get_network_modification_metadata(modification)])
 
 
-def _creation_methods() -> dict[str, str]:
-    """Element type -> the ``Network.create_*`` method that creates it.
+@dataclass(frozen=True)
+class CreationCall:
+    """A pypowsybl call that creates elements, as observed on the installed version."""
 
-    Every such method funnels into ``Network._create_elements(element_type,
-    ...)``, so each one is called once on an empty network with that funnel
-    replaced by a spy, which records the ``ElementType`` and stops before the
-    C layer -- the trick ``utils/element_types.py`` uses for the getters. It
-    runs once, at import, before the server handles any request: the spy
-    patches the class for the whole process while it is in place.
+    #: ``Network`` for a method of the network, ``pp.network`` for a function
+    #: that takes the network as first argument (the bay helpers)
+    owner: str
+    function: str
+    #: its DataFrame parameters, in the order of the metadata groups they fill
+    frames: tuple[str, ...]
+    #: for a bay helper, the NetworkModificationType its metadata comes from
+    modification: str | None = None
+
+    @property
+    def name(self) -> str:
+        return f"{self.owner}.{self.function}"
+
+
+def _dataframe_parameters(function) -> tuple[str, ...]:
+    """The DataFrame parameters of a call, in signature order.
+
+    pypowsybl uses postponed annotations, so they read as strings; the order
+    matches the groups of the call's metadata (the shunt, then its linear and
+    non-linear sections; a tap changer, then its steps).
     """
-    import contextlib
-    import inspect
+    return tuple(
+        parameter.name
+        for parameter in inspect.signature(function).parameters.values()
+        if "DataFrame" in str(parameter.annotation)
+    )
 
-    from pypowsybl.network import Network, create_empty
 
-    captured: dict[str, _pp.ElementType] = {}
-    original = getattr(Network, "_create_elements", None)
+def _required_count(function) -> int:
+    return sum(
+        1
+        for parameter in inspect.signature(function).parameters.values()
+        if parameter.default is inspect.Parameter.empty
+        and parameter.kind
+        not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    )
+
+
+def _observe(
+    target, attribute: str, calls: dict[str, Callable], leading: tuple = ()
+) -> dict[str, tuple]:
+    """Call name -> the arguments it passed to ``target.attribute``.
+
+    Each call is made once, with placeholder arguments, while that attribute is
+    replaced by a spy that records its arguments and stops before the C layer
+    -- the trick ``utils/element_types.py`` uses for the getters. It runs at
+    import, before the server handles any request: the spy patches pypowsybl
+    for the whole process while it is in place.
+    """
+    original = getattr(target, attribute, None)
     if original is None:
-        # A private hook, so it may go in an upgrade. Without it no type can be
-        # created schema-only; the startup check reports them as gone.
+        # A private hook, so it may go in an upgrade. Without it the calls it
+        # would reveal are unknown; the startup check reports what went.
         logger.error(
-            "Network._create_elements not found in this pypowsybl: the types "
-            "without a profile cannot be created"
+            f"{getattr(target, '__name__', target)}.{attribute} not found in this "
+            "pypowsybl: the element types it would reveal cannot be created"
         )
         return {}
 
-    def spy(self, element_type, dfs, **kwargs):
-        captured["type"] = element_type
+    captured: dict[str, tuple] = {}
+
+    def spy(*args, **kwargs):
+        captured["arguments"] = args
         raise RuntimeError("stopped before the C layer")
 
-    network = create_empty()
-    methods: dict[str, str] = {}
-    Network._create_elements = spy
+    seen: dict[str, tuple] = {}
+    setattr(target, attribute, spy)
     try:
-        for name in sorted(dir(Network)):
-            # create_extensions attaches data to existing elements of any type.
-            if not name.startswith("create_") or name == "create_extensions":
-                continue
-            method = getattr(Network, name)
-            if ".. deprecated::" in (inspect.getdoc(method) or ""):
-                continue
-            required = [
-                parameter
-                for parameter in inspect.signature(method).parameters.values()
-                if parameter.name != "self"
-                and parameter.default is inspect.Parameter.empty
-                and parameter.kind
-                not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-            ]
-            captured.pop("type", None)
+        for name, call in calls.items():
+            captured.clear()
+            placeholders = [None] * (_required_count(call) - len(leading))
             # The call always raises: from the spy, or from pypowsybl before it.
             with contextlib.suppress(Exception):
-                getattr(network, name)(*[None] * len(required))
-            if "type" in captured:
-                methods[captured["type"].name.lower()] = name
+                call(*leading, *placeholders)
+            if "arguments" in captured:
+                seen[name] = captured["arguments"]
     finally:
-        Network._create_elements = original
-    return methods
+        setattr(target, attribute, original)
+    return seen
 
 
-#: element type -> ``Network.create_*`` method, observed on the installed version
-CREATION_METHODS: dict[str, str] = _creation_methods()
+def _deprecated(call) -> bool:
+    return ".. deprecated::" in (inspect.getdoc(call) or "")
+
+
+def _create_calls() -> dict[str, CreationCall]:
+    """Element type -> the ``Network.create_*`` method that creates it.
+
+    Every such method funnels into ``Network._create_elements(element_type,
+    ...)``, which the spy intercepts. ``create_extensions`` is left out: it
+    attaches data to existing elements of any type.
+    """
+    network = create_empty()
+    methods = {
+        name: getattr(network, name)
+        for name in sorted(dir(Network))
+        if name.startswith("create_")
+        and name != "create_extensions"
+        and not _deprecated(getattr(Network, name))
+    }
+    seen = _observe(Network, "_create_elements", methods)
+    return {
+        arguments[1].name.lower(): CreationCall(
+            "Network", name, _dataframe_parameters(getattr(Network, name))
+        )
+        for name, arguments in seen.items()
+    }
+
+
+def _bay_calls() -> dict[str, CreationCall]:
+    """Element type -> the bay helper that creates it with its switchgear.
+
+    The feeder bays (``create_load_bay``, ...) and the branch bays
+    (``create_line_bays``, ...) all start by reading their metadata with
+    ``get_network_modification_metadata_with_element_type(modification,
+    element_type)``, which the spy intercepts: it gives both the element type
+    and the modification whose metadata describes the call's attributes.
+    """
+    network = create_empty()
+    functions = {
+        name: getattr(pn, name)
+        for name in sorted(dir(pn))
+        if name.startswith("create_")
+        and name.endswith(("_bay", "_bays"))
+        and not _deprecated(getattr(pn, name))
+    }
+    seen = _observe(
+        _pp,
+        "get_network_modification_metadata_with_element_type",
+        functions,
+        leading=(network,),
+    )
+    return {
+        element_type.name.lower(): CreationCall(
+            "pp.network",
+            name,
+            _dataframe_parameters(functions[name]),
+            modification=modification.name,
+        )
+        for name, (modification, element_type) in seen.items()
+    }
+
+
+#: element type -> its ``Network.create_*`` call, observed on the installed version
+CREATE_CALLS: dict[str, CreationCall] = _create_calls()
+#: element type -> its bay helper (``pp.network.create_*_bay(s)``), observed likewise
+BAY_CALLS: dict[str, CreationCall] = _bay_calls()
 
 
 @cache

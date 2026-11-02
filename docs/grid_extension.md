@@ -48,8 +48,9 @@ Once loaded, it adds:
 
 One generic tool creates every element type. The attributes a type takes are read from the
 installed `pypowsybl` (its own creation metadata), and a small declarative profile per type adds what that metadata does
-not say: which attributes are required, their units and accepted values, the conditional rules, and which pypowsybl call
-is legal for that type. Injections and branches go through the *bay* helpers, so the switching equipment the hosting
+not say: which attributes are required, their units and accepted values, and the conditional rules. The pypowsybl call
+itself is observed too: an element connected to a bus goes through its bay helper, anything else through its
+`Network.create_*` method, both found by watching what pypowsybl calls. Injections and branches go through the *bay* helpers, so the switching equipment the hosting
 topology requires is built automatically and the caller only ever names a bus or busbar section.
 
 The creatable types that have no profile yet are not refused: they are created **from their schema only**, through the
