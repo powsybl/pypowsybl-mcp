@@ -234,9 +234,10 @@ element if that is what they want.
 * Ids must be free across the whole network, whatever the element type.
 * `create_network_elements` checks every item against its schema before creating
   anything -- attribute names, required attributes, types, accepted values and
-  table rows such as tap-changer steps -- so such a mistake leaves the network
-  untouched. A failure that only the
-  network can detect (an id already taken, a connection point that does not
+  table rows such as tap-changer steps, and ids used twice in the batch (an
+  element and its limits or tap changers share an id, which is fine) -- so such a
+  mistake leaves the network untouched. A failure that only the
+  network can detect (an id already in the network, a connection point that does not
   exist) stops the batch there; the reply says how far it got (`stopped_at`,
   and the `status` of each item).
 * Everything happens in memory. `export_network()` saves the extended grid.

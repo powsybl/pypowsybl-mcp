@@ -419,8 +419,11 @@ removal item has `id`, `element_type`, `status` (`removed`, `refused`, `not_foun
 `element_type`.
 
 **Before anything is created**, every item goes through the checks that do not need the network: item shape,
-element type, attribute names, id, required attributes, types, accepted values and table rows. A mistake there
-rejects the whole batch and the network is untouched.
+element type, attribute names, id, required attributes, types, accepted values and table rows. So does the batch as a
+whole: two items creating elements with the same id are refused, whatever their types, since an id names one element
+of the network. Ids that legitimately repeat are let through — an attachment shares the id of the element it is added
+to (a line and its limits), and a schema-only type may name another element (an area given several voltage levels).
+A mistake there rejects the whole batch and the network is untouched.
 
 **Then the items are sorted** by profile order, keeping the given order among equals, and created one by one:
 
@@ -436,7 +439,7 @@ rejects the whole batch and the network is untouched.
 
 When the pre-check rejects items, `errors` lists **all** of them at once, `items` is empty and nothing is created.
 
-The checks that need the network (an id already taken, a connection point that does not exist) run as each element
+The checks that need the network (an id already in the network, a connection point that does not exist) run as each element
 is created. A failure there **stops the batch**: the elements created before it stay, `items` lists them as `created`
 or `updated`, then the failed one with its `problem` and `hint`, then the rest as `not_attempted`; `stopped_at` is
 the failed item. There is no rollback, which would mean copying the whole

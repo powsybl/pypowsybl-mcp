@@ -9,7 +9,10 @@
 import pypowsybl as pp
 import pytest
 
-from pypowsybl_mcp.plugins.grid_extension.creation.context import CreationError
+from pypowsybl_mcp.plugins.grid_extension.creation.context import (
+    BatchRejected,
+    CreationError,
+)
 from pypowsybl_mcp.plugins.grid_extension.creation.engine import (
     CreationEngine,
     resolve_connection_point,
@@ -1132,6 +1135,71 @@ def test_batch_checks_table_rows_before_creating_anything(engine, site):
         )
 
     assert "S_NEW" not in site.get_substations().index
+
+
+def test_batch_rejects_ids_repeated_within_it(engine, bus_breaker):
+    """Caught before anything is created, across types, every repeat at once."""
+    with pytest.raises(BatchRejected) as rejection:
+        engine.create_many(
+            bus_breaker,
+            [
+                {"element_type": "substation", "id": "S_NEW"},
+                {"element_type": "load", "id": "X", "bus": "B4", "p0": 1.0},
+                {
+                    "element_type": "generator",
+                    "id": "X",
+                    "bus": "B4",
+                    "target_p": 1.0,
+                    "max_p": 2.0,
+                },
+                {"element_type": "load", "id": " X ", "bus": "B5", "p0": 1.0},
+            ],
+        )
+
+    errors = rejection.value.errors
+    assert [error["item"] for error in errors] == [3, 4]
+    assert (
+        "id 'X' is already used by item 2 (load) of this batch" in errors[0]["problem"]
+    )
+    assert errors[1]["id"] == "X"
+    assert "S_NEW" not in bus_breaker.get_substations().index
+
+
+def test_batch_accepts_ids_that_name_an_element_twice(engine, node_breaker):
+    """An attachment shares its element's id; an area may get several levels."""
+    batch = engine.create_many(
+        node_breaker,
+        [
+            {
+                "element_type": "operational_limits",
+                "element_id": "LINE_NEW",
+                "permanent_limit": 800.0,
+            },
+            {
+                "element_type": "line",
+                "id": "LINE_NEW",
+                "bus1": "S1VL2_BBS1",
+                "bus2": "S3VL1_BBS",
+                "r": 0.5,
+                "x": 5.0,
+            },
+            {"element_type": "area", "id": "A1", "area_type": "ControlArea"},
+            {
+                "element_type": "area_voltage_levels",
+                "id": "A1",
+                "voltage_level_id": "S1VL2",
+            },
+            {
+                "element_type": "area_voltage_levels",
+                "id": "A1",
+                "voltage_level_id": "S3VL1",
+            },
+        ],
+    )
+
+    assert batch.success
+    assert batch.created_ids == ["A1", "LINE_NEW"]
+    assert set(batch.updated_ids) == {"A1", "LINE_NEW"}
 
 
 def test_batch_stops_where_the_network_refuses_and_says_so(engine, bus_breaker):
