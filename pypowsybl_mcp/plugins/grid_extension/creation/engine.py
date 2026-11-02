@@ -377,6 +377,14 @@ class CreationEngine:
                 f"{profile.element_type} has no profile, so only its attribute "
                 "names and types were checked before pypowsybl accepted it"
             )
+        if profile.connection is Connection.TARGET:
+            # What a caller cannot guess: there is no undoing this short of
+            # removing the element it was added to.
+            context.notes.append(
+                f"{profile.element_type} cannot be removed on its own: create it "
+                f"again to replace it; removing '{element_id}' would remove the "
+                f"{context.target_type} itself"
+            )
         return self._result(profile, context, payload, existed)
 
     def create_many(self, network, items: list[dict]) -> BatchResult:
@@ -832,7 +840,8 @@ def _coerce(item, value, element_type: str):
             return bool(value)
     except (TypeError, ValueError) as error:
         raise CreationError(
-            f"'{item.name}' of a {element_type} must be a {item.kind}, got {value!r}"
+            f"'{item.name}' of a {element_type} must be "
+            f"{'an' if item.kind[0] in 'aeiou' else 'a'} {item.kind}, got {value!r}"
         ) from error
     return value
 

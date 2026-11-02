@@ -116,6 +116,7 @@ def test_the_cheat_sheet_is_inlined_in_the_tool_description():
 async def test_describe_lists_the_element_types(creation_tools, mock_ctx):
     listing = json.loads(await creation_tools.describe_element_creation(ctx=mock_ctx))
 
+    assert listing["success"]
     names = [item["element_type"] for item in listing["element_types"]]
     assert {"load", "generator", "line", "operational_limits"} <= set(names)
     assert "create_network_elements" in listing["usage"]
@@ -127,6 +128,7 @@ async def test_describe_one_element_type(creation_tools, mock_ctx):
         await creation_tools.describe_element_creation("load", ctx=mock_ctx)
     )
 
+    assert described["success"]
     assert described["element_type"] == "load"
     assert [item["name"] for item in described["required"]] == ["p0"]
     assert described["required"][0]["unit"] == "MW"
@@ -135,11 +137,40 @@ async def test_describe_one_element_type(creation_tools, mock_ctx):
 
 @pytest.mark.asyncio
 async def test_describe_an_unknown_type_suggests_and_lists(creation_tools, mock_ctx):
-    answer = await creation_tools.describe_element_creation("laod", ctx=mock_ctx)
+    answer = json.loads(
+        await creation_tools.describe_element_creation("laod", ctx=mock_ctx)
+    )
 
-    assert "Cannot describe that element type" in answer
-    assert "'load'" in answer
-    assert "supported_element_types" in answer
+    assert not answer["success"]
+    assert answer["element_type"] == "laod"
+    assert "Cannot describe that element type" in answer["message"]
+    (error,) = answer["errors"]
+    assert "'load'" in error["problem"]
+    assert "load" in error["hint"]["supported_element_types"]
+
+
+@pytest.mark.asyncio
+async def test_an_attachment_says_it_cannot_be_removed_on_its_own(
+    creation_tools, mock_ctx, network
+):
+    """Its id is the line's: removing it would remove the line."""
+    reply = json.loads(
+        await creation_tools.create_network_element(
+            "operational_limits",
+            {"element_id": "L1-2-1", "permanent_limit": 500.0},
+            ctx=mock_ctx,
+        )
+    )
+    described = json.loads(
+        await creation_tools.describe_element_creation(
+            "ratio_tap_changer", ctx=mock_ctx
+        )
+    )
+
+    (note,) = reply["notes"]
+    assert "cannot be removed on its own" in note
+    assert "removing 'L1-2-1' would remove the line itself" in note
+    assert "cannot be removed on its own" in described["guidance"]
 
 
 @pytest.mark.asyncio

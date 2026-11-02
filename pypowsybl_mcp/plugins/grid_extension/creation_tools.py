@@ -65,14 +65,6 @@ class CreationTools(PyPowsyblTool):
         super().__init__(pypowsybl_proxies)
         self.engine = engine or CreationEngine()
 
-    def _failure(self, prefix: str, error: CreationError) -> str:
-        """Report a rejection, with the descriptor that would have avoided it."""
-        message = f"{prefix}: {error!s}"
-        if error.hint:
-            message += "\n" + json.dumps(error.hint, indent=2, default=str)
-        logger.warning(message)
-        return message
-
     async def describe_element_creation(
         self,
         element_type: str | None = None,
@@ -97,7 +89,9 @@ class CreationTools(PyPowsyblTool):
                 create_network_element()).
 
         Returns:
-            str: JSON. For one element type:
+            str: JSON with ``success``. With no element type, ``element_types``
+                (each with its summary) and ``usage``. For one element type, its
+                descriptor:
                 - summary, guidance: what it is for and how to choose values
                 - required: attributes without which the element cannot be created
                 - optional: everything else, with units, accepted values, defaults
@@ -109,6 +103,9 @@ class CreationTools(PyPowsyblTool):
                   (the steps of a tap changer, the points of a capability curve)
                 - rules: the constraints checked before anything is created
                 - created_by: the pypowsybl call behind it
+                For a type that cannot be created: success false, errors
+                [{problem, hint}] (the hint lists the supported types) and a
+                one-line message.
 
         Example:
             describe_element_creation()            → the list of types
@@ -120,9 +117,19 @@ class CreationTools(PyPowsyblTool):
             - remove_network_elements(): The inverse operation
         """
         try:
-            return json.dumps(self.engine.describe(element_type), indent=2, default=str)
+            descriptor = self.engine.describe(element_type)
         except CreationError as error:
-            return self._failure("Cannot describe that element type", error)
+            message = f"Cannot describe that element type: {error!s}"
+            logger.warning(message)
+            return _reply(
+                {
+                    "success": False,
+                    "element_type": element_type,
+                    "errors": [_error(str(error), error.hint)],
+                    "message": message,
+                }
+            )
+        return _reply({"success": True, **descriptor})
 
     async def create_network_element(
         self,

@@ -34,7 +34,7 @@ Two kinds of entry deserve a word:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from functools import cached_property
 from typing import Any
@@ -174,7 +174,17 @@ REACTIVE_TYPES = frozenset(
 PROFILES: dict[str, CreationProfile] = {}
 
 
+#: what every attachment's guidance ends with: pypowsybl has no removal for it
+ATTACHMENT_GUIDANCE = (
+    " It cannot be removed on its own: create it again to replace it. "
+    "remove_network_elements() on the id of the element it is attached to would "
+    "remove that element itself."
+)
+
+
 def _register(profile: CreationProfile) -> None:
+    if profile.connection is Connection.TARGET:
+        profile = replace(profile, guidance=profile.guidance + ATTACHMENT_GUIDANCE)
     PROFILES[profile.element_type] = profile
 
 
