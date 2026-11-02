@@ -153,3 +153,7 @@ uv run pytest tests/plugins/grid_extension              # the plugin's tests
 uv run python scripts/creation_coverage.py --write      # after changing a profile or pypowsybl
 uv run python scripts/creation_enums.py --check         # after upgrading pypowsybl: enum values vs powsybl-core
 ```
+
+The enum check also runs in CI and in the Docker image build, and the offline part of it at server startup after a
+pypowsybl upgrade; see §14 of [element_creation_and_removal.md](element_creation_and_removal.md). The whole upgrade
+procedure is in [upgrading_pypowsybl.md](upgrading_pypowsybl.md).

@@ -190,30 +190,30 @@ def test_compare_leaves_out_what_was_reviewed():
 
 
 # ---------------------------------------------------------------------------
-# The script's offline parts
+# The upstream comparison, offline parts
 # ---------------------------------------------------------------------------
 
 SCRIPT = Path(__file__).resolve().parents[4] / "scripts" / "creation_enums.py"
 
 
-@pytest.fixture(scope="module")
-def script():
+def test_the_script_loads():
     spec = importlib.util.spec_from_file_location("creation_enums", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     sys.modules["creation_enums"] = module
     spec.loader.exec_module(module)
-    return module
+
+    assert callable(module.main)
 
 
-def test_the_script_reads_the_bundled_powsybl_core_version(script):
-    version = script.core_version()
+def test_the_bundled_powsybl_core_version_is_read():
+    version = enum_check.core_version()
 
     assert version.count(".") == 2
     assert all(part.isdigit() for part in version.split("."))
 
 
-def test_the_script_finds_where_an_enum_is_declared(script):
-    paths, name = script.source_paths(
+def test_where_an_enum_is_declared():
+    paths, name = enum_check.source_paths(
         "com.powsybl.iidm.network.StaticVarCompensator$RegulationMode"
     )
     assert paths == [
@@ -221,13 +221,34 @@ def test_the_script_finds_where_an_enum_is_declared(script):
     ]
     assert name == "RegulationMode"
 
-    paths, name = script.source_paths(
+    paths, name = enum_check.source_paths(
         "com.powsybl.iidm.network.extensions.ConnectablePosition$Direction"
     )
     assert paths[0].startswith("iidm/iidm-extensions/")
     assert name == "Direction"
 
     assert (
-        script.source_paths("com.powsybl.python.network.TemporaryLimitData$Side")
+        enum_check.source_paths("com.powsybl.python.network.TemporaryLimitData$Side")
         is None
     )
+
+
+def test_the_upstream_review_reads_a_local_checkout(tmp_path):
+    """Offline: a powsybl-core checkout where EnergySource changed."""
+    path = (
+        tmp_path
+        / "iidm/iidm-api/src/main/java/com/powsybl/iidm/network/EnergySource.java"
+    )
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "public enum EnergySource { HYDRO, NUCLEAR, THERMAL, SOLAR, OTHER, TIDAL }"
+    )
+
+    review = enum_check.upstream_review(tmp_path)
+
+    (energy,) = [e for e in review["fields"] if e["field"] == "generator.energy_source"]
+    assert energy["state"] == "review"
+    assert energy["differences"]["added"] == ["TIDAL"]
+    assert energy["differences"]["removed"] == ["WIND"]
+    # every other enum is missing from this checkout, and said so
+    assert any("not found in" in line for line in review["to_review"])

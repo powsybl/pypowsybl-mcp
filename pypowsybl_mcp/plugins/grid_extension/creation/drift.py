@@ -31,7 +31,9 @@ attribute still needs the review described in
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -39,6 +41,7 @@ from typing import Any
 import pypowsybl as pp
 from loguru import logger
 
+from pypowsybl_mcp.plugins.grid_extension.creation import enum_check
 from pypowsybl_mcp.plugins.grid_extension.creation.executors import resolve_call
 from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
     PROFILES,
@@ -301,12 +304,17 @@ def startup_check(
     """
     global LAST_REPORT
 
+    recorded = load_snapshot(snapshot_path)
+    verified_against = recorded.get("pypowsybl_version") if recorded else None
+    version_changed = recorded is not None and verified_against != pp.__version__
+
     broken = {
         name: problems
         for name, profile in sorted(profiles.items())
         if (problems := profile_problems(profile))
     }
     effective = {name: item for name, item in profiles.items() if name not in broken}
+    enum_values = _check_enum_values(effective, broken, version_changed, recorded)
     fallback = dict(unprofiled)
     for name, problems in broken.items():
         if name not in CREATE_CALLS:
@@ -316,11 +324,8 @@ def startup_check(
         except Exception as error:  # noqa: BLE001 - its schema may be gone too
             problems.append(f"no schema-only fallback either: {error}")
 
-    recorded = load_snapshot(snapshot_path)
     current = coverage_snapshot(effective, fallback)
     changes = _changes(recorded, current) if recorded is not None else {}
-    verified_against = recorded.get("pypowsybl_version") if recorded else None
-    version_changed = recorded is not None and verified_against != pp.__version__
 
     if broken:
         status = "profiles disabled"
@@ -343,20 +348,129 @@ def startup_check(
         },
         "changes": changes,
         "disabled_profiles": broken,
+        "enum_values": enum_values,
         "checked_at": datetime.now(tz=UTC).isoformat(),
     }
 
     if apply:
         for name in broken:
             profiles.pop(name, None)
+        # profiles whose accepted values were trimmed
+        for name, profile in effective.items():
+            if profiles.get(name) is not profile:
+                profiles[name] = profile
         unprofiled.update(fallback)
         LAST_REPORT = report
         _log(report)
     return report
 
 
+def start_upstream_enum_check(local: Path | None = None) -> threading.Thread | None:
+    """Compare the accepted values with powsybl-core's enums, in the background.
+
+    The online half of ``scripts/creation_enums.py``, on unless
+    ``MCP_CREATION_ONLINE_ENUM_CHECK`` is false: it reads the powsybl-core sources of the
+    bundled version from GitHub, so it runs in a daemon thread and never delays
+    or fails the startup. It only reports -- the profiles are not changed once
+    requests are served -- by filling ``enum_values.upstream`` of the startup
+    report (pending, then done or failed) and logging what to review.
+    """
+    report = LAST_REPORT
+    if report is None:
+        return None
+    # set before any request reads it: later, only its value is replaced
+    report["enum_values"]["upstream"] = {"status": "pending"}
+
+    def run():
+        try:
+            review = enum_check.upstream_review(local)
+        except Exception as error:  # noqa: BLE001 - offline, a proxy, a timeout...
+            logger.warning(f"Online check of the creation enum values failed: {error}")
+            report["enum_values"]["upstream"] = {
+                "status": "failed",
+                "error": str(error),
+            }
+            return
+        report["enum_values"]["upstream"] = {"status": "done", **review}
+        for line in review["to_review"]:
+            logger.warning(
+                f"Creation enum value to review against powsybl-core: {line}"
+            )
+        if not review["to_review"]:
+            logger.info(
+                "Creation enum values match powsybl-core "
+                f"{review['powsybl_core']}, the version pypowsybl bundles"
+            )
+
+    thread = threading.Thread(target=run, name="creation-enum-check", daemon=True)
+    thread.start()
+    return thread
+
+
+def _check_enum_values(
+    effective: dict[str, CreationProfile],
+    broken: dict[str, list[str]],
+    version_changed: bool,
+    recorded: dict | None,
+) -> dict[str, Any]:
+    """After a pypowsybl upgrade, drop the listed values pypowsybl refuses.
+
+    Runs only when the installed version differs from the snapshot's: on the
+    version the profiles were checked against, the tests already cover it. A
+    refused value is dropped from its profile, so a caller gets the server's
+    refusal rather than pypowsybl's *No enum constant*; a profile whose defaults
+    are refused, or every value of one field, is disabled instead (added to
+    `broken`, its type falling back to schema-only). Changes `effective` in
+    place.
+    """
+    if not version_changed:
+        return {
+            "checked": False,
+            "reason": (
+                "pypowsybl is the version the snapshot was checked against"
+                if recorded is not None
+                else "no snapshot to compare with"
+            ),
+        }
+
+    probe = enum_check.check_accepted(effective)
+    for name, error in probe["refused_defaults"].items():
+        broken[name] = [f"pypowsybl refuses its defaults: {error}"]
+        effective.pop(name, None)
+    for name, refused in probe["refused_values"].items():
+        profile = effective.get(name)
+        if profile is None:
+            continue
+        enums = {
+            field: tuple(
+                value for value in values if value not in refused.get(field, ())
+            )
+            for field, values in profile.enums.items()
+        }
+        emptied = sorted(field for field, values in enums.items() if not values)
+        if emptied:
+            broken[name] = [
+                f"pypowsybl refuses every accepted value of {', '.join(emptied)}"
+            ]
+            effective.pop(name)
+        else:
+            effective[name] = replace(profile, enums=enums)
+    return {"checked": True, **probe}
+
+
 def _log(report: dict[str, Any]) -> None:
     version = report["pypowsybl_version"]
+    for name, fields in report["enum_values"].get("refused_values", {}).items():
+        for field, values in fields.items():
+            logger.warning(
+                f"pypowsybl {version} no longer accepts {', '.join(values)} for "
+                f"{name}.{field}: dropped from the accepted values"
+            )
+    for name in report["enum_values"].get("no_example", []):
+        logger.warning(
+            f"The accepted values of {name} could not be checked: enum_check.py "
+            "has no example of it"
+        )
     for name, problems in report["disabled_profiles"].items():
         logger.error(
             f"Creation profile '{name}' disabled on pypowsybl {version}: "

@@ -107,14 +107,27 @@ its element type falls back to schema-only creation instead of failing in front 
     "attributes": {"load": {"added": ["p0"], "removed": []}}
   },
   "disabled_profiles": {"generator": ["required unknown to pypowsybl: rated_power"]},
+  "enum_values": {
+    "checked": true,
+    "refused_values": {"load": {"type": ["AUXILIARY"]}},
+    "refused_defaults": {},
+    "no_example": [],
+    "upstream": {"status": "done", "powsybl_core": "7.3.0", "to_review": ["generator.energy_source: added: TIDAL"]}
+  },
   "checked_at": "2026-10-30T14:12:21+00:00"
 }
 ```
 
+`enum_values` is the check of the profiles' accepted values. After an upgrade, every listed value is tried against the
+installed pypowsybl: a refused one is dropped (`refused_values`), and a profile whose defaults are refused is disabled.
+On the version the snapshot was checked against, it is skipped (`"checked": false`). `upstream` is the comparison with
+the powsybl-core enums, run in the background at startup unless `MCP_CREATION_ONLINE_ENUM_CHECK=false` (`pending`,
+then `done`, or `failed` when GitHub cannot be reached).
+
 `status` is `verified` (same version, nothing changed), `changed` (another version, or a coverage that moved),
-`profiles disabled` (at least one profile set aside) or `no snapshot` (the snapshot file is missing). The check only
-sees names: a changed list of accepted values or a newly required attribute still needs a review of the profiles, after
-which `scripts/creation_coverage.py --write` records the new version.
+`profiles disabled` (at least one profile set aside) or `no snapshot` (the snapshot file is missing). A newly required
+attribute still needs a review of the profiles, after which `scripts/creation_coverage.py --write` records the new
+version.
 
 ---
 

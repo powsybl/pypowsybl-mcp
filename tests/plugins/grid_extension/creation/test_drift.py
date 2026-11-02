@@ -18,6 +18,7 @@ import pytest
 from pypowsybl.network import Network
 
 from pypowsybl_mcp.plugins.grid_extension.creation import drift, schema
+from pypowsybl_mcp.plugins.grid_extension.creation.context import CreationError
 from pypowsybl_mcp.plugins.grid_extension.creation.engine import CreationEngine
 from pypowsybl_mcp.plugins.grid_extension.creation.executors import (
     DerivedCall,
@@ -104,6 +105,108 @@ def test_a_profile_out_of_date_falls_back_to_schema_only(registries, tmp_path):
     )
     assert "has no profile" in str(created)
     assert "L_NEW" in network.get_loads().index
+
+
+def _with_coal(profile, as_default=False):
+    """A generator profile listing a value pypowsybl does not know."""
+    enums = {
+        **profile.enums,
+        "energy_source": (*profile.enums["energy_source"], "COAL"),
+    }
+    defaults = {**profile.defaults, "energy_source": "COAL"} if as_default else None
+    return dataclasses.replace(
+        profile, enums=enums, defaults=defaults or profile.defaults
+    )
+
+
+def _upgraded(tmp_path):
+    recorded = drift.coverage_snapshot()
+    recorded["pypowsybl_version"] = "1.14.0"
+    return _snapshot_file(tmp_path, recorded)
+
+
+def test_an_upgrade_drops_a_value_pypowsybl_refuses(registries, tmp_path):
+    profiles, unprofiled = registries
+    profiles["generator"] = _with_coal(profiles["generator"])
+
+    report = drift.startup_check(
+        profiles, unprofiled, snapshot_path=_upgraded(tmp_path)
+    )
+
+    assert report["enum_values"]["checked"]
+    assert report["enum_values"]["refused_values"] == {
+        "generator": {"energy_source": ["COAL"]}
+    }
+    assert "COAL" not in profiles["generator"].enums["energy_source"]
+    assert "generator" not in report["disabled_profiles"]
+    # a caller now gets the server's refusal, not pypowsybl's
+    with pytest.raises(CreationError, match="not a valid energy_source"):
+        CreationEngine(profiles, unprofiled).create(
+            pp.network.create_ieee14(),
+            "generator",
+            {
+                "id": "G",
+                "bus": "B4",
+                "target_p": 1.0,
+                "max_p": 2.0,
+                "energy_source": "COAL",
+            },
+        )
+
+
+def test_an_upgrade_disables_a_profile_whose_defaults_are_refused(registries, tmp_path):
+    profiles, unprofiled = registries
+    profiles["generator"] = _with_coal(profiles["generator"], as_default=True)
+
+    report = drift.startup_check(
+        profiles, unprofiled, snapshot_path=_upgraded(tmp_path)
+    )
+
+    assert "refuses its defaults" in report["disabled_profiles"]["generator"][0]
+    assert "generator" not in profiles
+    assert unprofiled["generator"].schema_only
+
+
+def test_on_the_checked_version_the_values_are_not_probed(registries, tmp_path):
+    path = _snapshot_file(tmp_path, drift.coverage_snapshot())
+
+    report = drift.startup_check(*registries, snapshot_path=path)
+
+    assert not report["enum_values"]["checked"]
+
+
+def test_the_online_check_reports_in_the_background(registries, tmp_path):
+    drift.startup_check(*registries, snapshot_path=_snapshot_file(tmp_path, {}))
+    checkout = tmp_path / "powsybl-core"
+    source = checkout / "iidm/iidm-api/src/main/java/com/powsybl/iidm/network"
+    source.mkdir(parents=True)
+    (source / "EnergySource.java").write_text(
+        "public enum EnergySource { HYDRO, NUCLEAR, WIND, THERMAL, SOLAR, OTHER, TIDAL }"
+    )
+
+    drift.start_upstream_enum_check(checkout).join(timeout=60)
+
+    upstream = drift.LAST_REPORT["enum_values"]["upstream"]
+    assert upstream["status"] == "done"
+    assert "generator.energy_source: added: TIDAL" in upstream["to_review"]
+
+
+def test_a_failing_online_check_does_not_get_in_the_way(
+    registries, tmp_path, monkeypatch
+):
+    drift.startup_check(*registries, snapshot_path=_snapshot_file(tmp_path, {}))
+
+    def offline(local=None):
+        raise OSError("no route to host")
+
+    monkeypatch.setattr(drift.enum_check, "upstream_review", offline)
+
+    drift.start_upstream_enum_check().join(timeout=60)
+
+    assert drift.LAST_REPORT["enum_values"]["upstream"] == {
+        "status": "failed",
+        "error": "no route to host",
+    }
 
 
 def test_without_apply_nothing_is_changed_or_kept(registries, tmp_path):

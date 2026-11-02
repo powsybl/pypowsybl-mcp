@@ -550,6 +550,18 @@ strings. Two checks cover them, built on one valid example element of each type:
   checkout with `--source`), and reports values added or deprecated upstream, values removed, and workarounds no
   longer needed. `--check` fails while something is unreviewed.
 
+Both also run without anyone remembering to:
+
+| Where | What runs | When it fails, or what it changes |
+|-------|-----------|-----------------------------------|
+| Server startup, grid extension active | the offline probe, as part of `startup_check()`, **only when pypowsybl differs from the snapshot** | a refused value is dropped from its profile, so callers get the server's refusal instead of pypowsybl's; a profile whose defaults, or every value of one field, are refused is disabled (schema-only fallback); all of it logged and in `enum_values` of `/admin/creation-coverage` |
+| Server startup, unless `MCP_CREATION_ONLINE_ENUM_CHECK=false` | the online comparison, in a background thread | reports only, in `enum_values.upstream` (`pending`, then `done` or `failed`) and the logs; never delays startup, never changes the profiles; offline, a warning |
+| CI (`.github/workflows/pytest.yaml`) | `scripts/creation_enums.py --check`, after the tests | fails the build on an unreviewed value |
+| Docker image build | `scripts/creation_enums.py --check` | fails the build on an unreviewed value; `--build-arg CHECK_CREATION_ENUMS=false` (or `CHECK_CREATION_ENUMS=false` for docker compose) skips it where GitHub cannot be reached |
+
+`scripts/creation_coverage.py --write` stays a manual step: the snapshot records the coverage someone reviewed, and
+rewriting it at startup would make the startup check compare pypowsybl with itself.
+
 A value reviewed and deliberately not offered is recorded in `LEFT_OUT`, with its reason: on 1.15, the `VOLTAGE` and
 `VOLTAGE_ANGLE` limit types (pypowsybl refuses them on a branch) and the `UNDEFINED` feeder direction (a new bay is
 always placed). `WORKAROUNDS` records the values the pinned version lacks — no `OFF` mode for an SVC and no
@@ -557,16 +569,8 @@ always placed). `WORKAROUNDS` records the values the pinned version lacks — no
 gains them. The limit `side` is checked against a pypowsybl-internal enum, outside powsybl-core, so only the test
 covers it.
 
-When upgrading pypowsybl, still review by hand:
-
-1. what `scripts/creation_enums.py` reports: a value to offer, or to record in `LEFT_OUT`;
-2. newly required attributes, which nothing flags before a call fails;
-3. new bay helpers or network modifications — the snapshot records the bay helpers, so the startup report lists a new
-   one; a bay for `ground` or `three_windings_transformer` would let its profile switch to a bay connection, and
-   the call would then be picked up without naming it;
-4. the docstring format the mining relies on;
-5. the identifiable type names in `FEEDER_TYPES` (`removal_tools.py`);
-6. then run the tests, `scripts/creation_coverage.py --write`, and read the diff of `docs/grid_extension.md`.
+What still needs a person when upgrading pypowsybl — newly required attributes, new bay helpers, the values the enum
+script reports — and the order to do it in are on a page of their own: [upgrading_pypowsybl.md](upgrading_pypowsybl.md).
 
 ---
 
