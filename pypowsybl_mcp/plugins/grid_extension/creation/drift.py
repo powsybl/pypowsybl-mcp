@@ -20,8 +20,10 @@ version; the server may well run on another. Two things guard against that:
     version with the snapshot and reports what changed, and it runs the name
     checks of :data:`PROFILE_CHECKS` on every profile: a profile naming an
     attribute or a call pypowsybl no longer has is set aside, its type falling
-    back to schema-only, instead of failing in front of a user. The report is
-    logged and served on ``/admin/creation-coverage``.
+    back to schema-only, instead of failing in front of a user. A topology
+    operation (``topology.py``) naming what pypowsybl no longer has is set
+    aside likewise. The report is logged and served on
+    ``/admin/creation-coverage``.
 
 The checks only see *names*. A changed enumeration or a newly required
 attribute still needs the review described in
@@ -53,8 +55,15 @@ from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
 from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
     BAY_CALLS,
     CREATE_CALLS,
+    TOPOLOGY_CALLS,
     ElementSchema,
     creatable_element_types,
+    plain_modification_schema,
+)
+from pypowsybl_mcp.plugins.grid_extension.creation.topology import (
+    OPERATIONS,
+    TopologyOperation,
+    operation_problems,
 )
 
 SNAPSHOT_PATH = Path(__file__).with_name("coverage_snapshot.json")
@@ -233,6 +242,12 @@ def coverage_snapshot(
         # the element types pypowsybl can create with their switchgear: a new
         # one is a type whose profile could move to its bay
         "bays": sorted(BAY_CALLS),
+        # pypowsybl's topology modifications and their attributes: a new one is
+        # an operation the topology tool could offer
+        "topology_operations": {
+            name: sorted(plain_modification_schema(call.modification).names)
+            for name, call in sorted(TOPOLOGY_CALLS.items())
+        },
     }
 
 
@@ -280,7 +295,29 @@ def _changes(recorded: dict[str, Any], current: dict[str, Any]) -> dict[str, Any
         "element_types": moved,
         "attributes": attributes,
         "bays": bays if bays["added"] or bays["removed"] else {},
+        "topology_operations": _named_changes(
+            recorded.get("topology_operations", {}), current["topology_operations"]
+        ),
     }
+
+
+def _named_changes(
+    was: dict[str, list[str]], now: dict[str, list[str]]
+) -> dict[str, Any]:
+    """Names that came or went, and the attributes that changed on the others."""
+    changes = {
+        "added": sorted(set(now) - set(was)),
+        "removed": sorted(set(was) - set(now)),
+        "attributes": {
+            name: {
+                "added": sorted(set(now[name]) - set(was[name])),
+                "removed": sorted(set(was[name]) - set(now[name])),
+            }
+            for name in sorted(set(was) & set(now))
+            if set(was[name]) != set(now[name])
+        },
+    }
+    return changes if any(changes.values()) else {}
 
 
 # ---------------------------------------------------------------------------
@@ -293,12 +330,14 @@ def startup_check(
     unprofiled: dict[str, CreationProfile] = UNPROFILED,
     snapshot_path: Path = SNAPSHOT_PATH,
     apply: bool = True,
+    operations: dict[str, TopologyOperation] = OPERATIONS,
 ) -> dict[str, Any]:
     """Check the profiles against the installed pypowsybl, and report.
 
     With ``apply`` (the startup case), a profile that no longer matches is
     removed from `profiles` and its type added to `unprofiled` when pypowsybl
-    still has a ``create_*`` call for it, and the report is kept for
+    still has a ``create_*`` call for it, a topology operation that no longer
+    matches is removed from `operations`, and the report is kept for
     ``/admin/creation-coverage``. It has to run before requests are served:
     it changes the registries every engine reads.
     """
@@ -324,11 +363,19 @@ def startup_check(
         except Exception as error:  # noqa: BLE001 - its schema may be gone too
             problems.append(f"no schema-only fallback either: {error}")
 
+    disabled_operations = {
+        name: problems
+        for name, operation in sorted(operations.items())
+        if (problems := operation_problems(operation))
+    }
+
     current = coverage_snapshot(effective, fallback)
     changes = _changes(recorded, current) if recorded is not None else {}
 
     if broken:
         status = "profiles disabled"
+    elif disabled_operations:
+        status = "operations disabled"
     elif recorded is None:
         status = "no snapshot"
     elif version_changed or any(changes.values()):
@@ -348,6 +395,10 @@ def startup_check(
         },
         "changes": changes,
         "disabled_profiles": broken,
+        "topology_operations": {
+            "offered": sorted(set(operations) - set(disabled_operations)),
+            "disabled": disabled_operations,
+        },
         "enum_values": enum_values,
         "checked_at": datetime.now(tz=UTC).isoformat(),
     }
@@ -360,6 +411,8 @@ def startup_check(
             if profiles.get(name) is not profile:
                 profiles[name] = profile
         unprofiled.update(fallback)
+        for name in disabled_operations:
+            operations.pop(name, None)
         LAST_REPORT = report
         _log(report)
     return report
@@ -476,6 +529,11 @@ def _log(report: dict[str, Any]) -> None:
             f"Creation profile '{name}' disabled on pypowsybl {version}: "
             + "; ".join(problems)
         )
+    for name, problems in report["topology_operations"]["disabled"].items():
+        logger.error(
+            f"Topology operation '{name}' disabled on pypowsybl {version}: "
+            + "; ".join(problems)
+        )
     changes = report["changes"]
     if report["status"] == "verified":
         logger.info(f"Creation profiles verified against pypowsybl {version}")
@@ -494,7 +552,8 @@ def _log(report: dict[str, Any]) -> None:
             f"against {report['verified_against']}. Element types changed: "
             f"{', '.join(moved) or 'none'}; attributes changed on "
             f"{len(changes['attributes'])} type(s); bay helpers changed: "
-            f"{changes['bays'] or 'none'}. Details on "
+            f"{changes['bays'] or 'none'}; topology operations changed: "
+            f"{changes['topology_operations'] or 'none'}. Details on "
             "/admin/creation-coverage; review the profiles, then run "
             "scripts/creation_coverage.py --write"
         )

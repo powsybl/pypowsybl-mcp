@@ -15,6 +15,7 @@ Most of what an upgrade can break is caught without anyone remembering to look:
 |-------|---------------|-----------------|
 | The test suite (`uv run pytest`) | locally, CI | Anything the server does on real networks: creation and removal on bus/breaker and node/breaker grids (with load flows), sensitivity analyses on IEEE 14, the element-type map derived from pypowsybl's getters |
 | Name checks of the creation profiles (`tests/plugins/grid_extension/creation/test_profiles_consistency.py`) | locally, CI, **and server startup** | An attribute, a creation call, a bay helper or a documentation call a profile relies on, renamed or removed upstream. At startup such a profile is disabled, its type falling back to schema-only creation |
+| Name checks of the topology operations (`tests/plugins/grid_extension/creation/test_topology.py`) | locally, CI, **and server startup** | An attribute or a call a topology operation relies on, renamed or removed upstream; a new topology modification. At startup such an operation is no longer offered |
 | Coverage snapshot (`tests/plugins/grid_extension/creation/test_documented_coverage.py`) | locally, CI | **Fails on every version change, by design**, until the coverage is reviewed and recorded (step 5 below) |
 | Coverage comparison | **server startup** | The element types, attributes and bay helpers that changed since the recorded version, logged and served on `/admin/creation-coverage` |
 | Accepted values, offline (`tests/plugins/grid_extension/creation/test_enum_values.py`) | locally, CI, **and server startup** after a version change | A value a profile offers (an energy source, a regulation mode...) that pypowsybl no longer accepts. At startup it is dropped from the profile |
@@ -41,6 +42,11 @@ is a safety net for deployments, not a substitute for the review below.
    `connection` changed to use one; `three_windings_transformer`, created from its schema only, needs a profile.
 4. **Removal.** The identifiable type names in `FEEDER_TYPES` (`removal_tools.py`), and the cascade rules of
    `_cascade`, which mirror what `remove_voltage_levels` removes; a test compares them on five sample networks only.
+   **Topology operations.** A topology modification new upstream fails
+   `test_every_pypowsybl_topology_modification_is_offered` (`creation/test_topology.py`): give it a `TopologyOperation`
+   in `creation/topology.py`, or exclude it in `schema._topology_calls` with the reason. The checks of each operation
+   encode what pypowsybl did not check on 1.15 (a position over 100 %, a busbar at another voltage, the orphan
+   switches of a revert): reread them against the release notes, a fix upstream makes one redundant, not wrong.
 5. **Docstring mining.** It relies on pypowsybl's `- **name**: description` docstring format; if that changes, the
    descriptions vanish from `describe_element_creation` without an error. The duplicate-`target_v` workaround in
    `doc_mining.py` may no longer be needed.
@@ -91,8 +97,8 @@ would make the startup check compare pypowsybl with itself.
 Generated text follows by itself (the coverage tables of [grid_extension.md](grid_extension.md) and the snapshot,
 through step 5). These are written by hand and should be reread:
 
-- the counts of [element_creation_and_removal.md](element_creation_and_removal.md) §3, its 1.15 examples (§4, §14)
-  and its `LEFT_OUT` list (§14);
+- the counts of [element_creation_and_removal.md](element_creation_and_removal.md) §3, its 1.15 examples (§4, §15)
+  and its `LEFT_OUT` list (§15);
 - the workaround comments in `profiles.py` (no `OFF` mode for an SVC, no `FIXED_TAP` mode for a phase shifter);
 - the version limits in the `grid-extension` skill (`pypowsybl_mcp/plugins/grid_extension/skills/grid-extension.md`);
 - the measurements in the `doc_mining.py` docstring;

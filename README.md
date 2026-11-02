@@ -21,7 +21,8 @@ turn.
 - Extend a grid from the MCP client with one generic, introspection-driven tool: substations, voltage levels,
   loads, generators, batteries, shunts, SVCs, lines, transformers, HVDC links, limits and tap changers — the
   attributes of each type are read from the installed `pypowsybl`, so a whole connection study (a new datacenter,
-  say) is one call. Elements can be removed again, with their switching equipment. These tools come from the
+  say) is one call. Elements can be removed again, with their switching equipment, and lines cut at a new
+  substation or tapped into one, and merged back. These tools come from the
   [grid-extension plugin](docs/grid_extension.md), shipped with the server and active by default; studies that
   never build equipment (real-time ones) turn it off with `MCP_DISABLED_PLUGINS=grid_extension`.
 - Run AC/DC load flows, adjust session-specific load-flow parameters, and switch load-flow providers when available.

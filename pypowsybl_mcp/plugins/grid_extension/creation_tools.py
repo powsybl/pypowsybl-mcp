@@ -212,6 +212,8 @@ class CreationTools(PyPowsyblTool):
             - describe_element_creation(): What a type needs, before calling
             - create_network_elements(): A whole site in one call
             - remove_network_elements(): Undo or retire what was created
+            - modify_network_topology(): Insert the new substation on an existing
+              line, or tap a line into it
             - run_loadflow(): Compute the state of the extended network
         """
         try:

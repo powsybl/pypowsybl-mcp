@@ -470,3 +470,29 @@ class AtMostRows(Rule):
                 f"'{self.field}' ({context.attributes[self.field]}) must not exceed "
                 f"the number of rows of '{self.attribute}' ({len(rows)})"
             )
+
+
+@dataclass(frozen=True)
+class Between(Rule):
+    """A value strictly inside bounds, e.g. a position along a line in percent."""
+
+    field: str
+    low: float
+    high: float
+    because: str = ""
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return (self.field,)
+
+    def describe(self) -> str:
+        return f"'{self.field}' must be strictly between {self.low} and {self.high}"
+
+    def apply(self, context: CreationContext) -> None:
+        value = context.attributes.get(self.field)
+        if value is not None and not self.low < value < self.high:
+            because = f" ({self.because})" if self.because else ""
+            raise CreationError(
+                f"'{self.field}' must be strictly between {self.low} and "
+                f"{self.high}, got {value}{because}"
+            )

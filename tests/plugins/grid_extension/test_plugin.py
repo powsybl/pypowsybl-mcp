@@ -27,6 +27,7 @@ TOOLS = {
     "create_network_element",
     "create_network_elements",
     "remove_network_elements",
+    "modify_network_topology",
 }
 
 

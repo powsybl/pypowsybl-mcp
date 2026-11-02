@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cache
@@ -310,10 +311,48 @@ def _bay_calls() -> dict[str, CreationCall]:
     }
 
 
+def _topology_calls() -> dict[str, CreationCall]:
+    """Topology operation -> the helper that performs it.
+
+    The operations changing how existing elements are connected
+    (``create_coupling_device``, ``connect_voltage_level_on_line``, ...) all
+    start by reading their metadata with
+    ``get_network_modification_metadata(modification)``, which the spy
+    intercepts. An operation is named after its modification, lowercased --
+    pypowsybl's own vocabulary. ``VOLTAGE_LEVEL_TOPOLOGY_CREATION`` is left out:
+    it is part of creating a voltage level.
+    """
+    network = create_empty()
+    functions = {
+        name: getattr(pn, name)
+        for name in sorted(dir(pn))
+        if re.match(r"(create|connect|replace|revert)_", name)
+        and not name.endswith(("_bay", "_bays"))
+        and callable(getattr(pn, name))
+        and list(inspect.signature(getattr(pn, name)).parameters)[:1] == ["network"]
+        and not _deprecated(getattr(pn, name))
+    }
+    seen = _observe(
+        _pp, "get_network_modification_metadata", functions, leading=(network,)
+    )
+    return {
+        arguments[0].name.lower(): CreationCall(
+            "pp.network",
+            name,
+            _dataframe_parameters(functions[name]),
+            modification=arguments[0].name,
+        )
+        for name, arguments in seen.items()
+        if arguments[0].name != "VOLTAGE_LEVEL_TOPOLOGY_CREATION"
+    }
+
+
 #: element type -> its ``Network.create_*`` call, observed on the installed version
 CREATE_CALLS: dict[str, CreationCall] = _create_calls()
 #: element type -> its bay helper (``pp.network.create_*_bay(s)``), observed likewise
 BAY_CALLS: dict[str, CreationCall] = _bay_calls()
+#: topology operation -> its helper (``pp.network.connect_voltage_level_on_line``...)
+TOPOLOGY_CALLS: dict[str, CreationCall] = _topology_calls()
 
 
 @cache

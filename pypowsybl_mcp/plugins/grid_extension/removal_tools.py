@@ -341,6 +341,8 @@ class RemovalTools(PyPowsyblTool):
 
         Related Tools:
             - set_line_status(): Open a branch instead of deleting it (N-1 study)
+            - modify_network_topology(): Merge back a line cut at a substation or
+              tapped, rather than removing its halves
             - create_network_element() / create_network_elements(): The inverse
               operations
             - get_network_element_data(): Find the exact ids to remove

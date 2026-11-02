@@ -36,7 +36,11 @@ from pypowsybl_mcp.plugins.grid_extension.creation.drift import (
     write_snapshot,
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.profiles import PROFILES, UNPROFILED
-from pypowsybl_mcp.plugins.grid_extension.creation.schema import creatable_element_types
+from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
+    TOPOLOGY_CALLS,
+    creatable_element_types,
+)
+from pypowsybl_mcp.plugins.grid_extension.creation.topology import OPERATIONS
 
 DOCS = Path(__file__).resolve().parent.parent / "docs" / "grid_extension.md"
 BEGIN = "<!-- begin generated creation coverage -->"
@@ -109,8 +113,28 @@ def block() -> str:
             "then takes over from the fallback."
         ),
         "",
-        END,
+        (
+            f"**{len(OPERATIONS)} topology operations** are offered by "
+            "`modify_network_topology`, each checked before pypowsybl applies it:"
+        ),
+        "",
+        "| `operation` | pypowsybl call behind it | What it does |",
+        "|-------------|--------------------------|--------------|",
     ]
+    for name, operation in sorted(OPERATIONS.items()):
+        call = f"`{operation.call.name}`" if operation.call else "none"
+        lines.append(f"| `{name}` | {call} | {operation.summary} |")
+    unoffered = sorted(set(TOPOLOGY_CALLS) - set(OPERATIONS))
+    if unoffered:
+        lines += [
+            "",
+            (
+                "pypowsybl has topology modifications the tool does not offer: "
+                + ", ".join(f"`{name}`" for name in unoffered)
+                + "."
+            ),
+        ]
+    lines += ["", END]
     return "\n".join(lines)
 
 
