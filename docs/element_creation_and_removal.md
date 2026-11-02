@@ -51,6 +51,8 @@ When `network_id` is omitted, every tool works on the session's current network.
 | `pypowsybl_mcp/plugins/grid_extension/creation/context.py`         | `CreationError`, connection points, and the context shared by rules, derivations and executors. |
 | `pypowsybl_mcp/plugins/grid_extension/creation/drift.py`           | The profile checks against the installed pypowsybl, the coverage snapshot and the startup check. |
 | `pypowsybl_mcp/plugins/grid_extension/creation/coverage_snapshot.json` | What the tools covered on the pypowsybl version they were checked against. Generated.  |
+| `pypowsybl_mcp/plugins/grid_extension/creation/enum_check.py`      | The enumerated values checked against pypowsybl: one example element per type, the Java enum behind each field, the reviewed exceptions. |
+| `scripts/creation_enums.py`                 | Compares the enumerated values with the powsybl-core enums of the bundled version, at upgrade time. |
 | `scripts/creation_coverage.py`              | Generates the coverage tables of `docs/grid_extension.md` and the snapshot.                    |
 | `pypowsybl_mcp/plugins/grid_extension/skills/grid-extension.md` | The skill teaching a model the workflows (connecting a datacenter, a site at another voltage). |
 
@@ -536,10 +538,28 @@ and compares the installed version with the snapshot:
 The report is served on `GET /admin/creation-coverage`, protected by `MCP_AUTH_TOKEN` (see
 [monitoring.md](monitoring.md)).
 
-These checks only see names. When upgrading pypowsybl, still review by hand:
+**Enumerated values** (`enum_check.py`). The accepted values profiles list for text attributes — 13 fields, from
+`energy_source` to `regulation_mode` — are invisible to the name checks, since pypowsybl types those fields as plain
+strings. Two checks cover them, built on one valid example element of each type:
 
-1. the enumerations in `profiles.py` — a new value is refused, a removed one accepted until pypowsybl rejects it (1.15
-   has no `OFF` mode for an SVC and no `FIXED_TAP` mode for a phase shifter, so both use `regulating: false`);
+- `tests/plugins/grid_extension/creation/test_enum_values.py`, offline: pypowsybl must accept every listed value and
+  every default, so a value removed or renamed upstream fails the tests.
+- `scripts/creation_enums.py`, at upgrade time: it finds the Java enum behind each field from pypowsybl's own refusal
+  of a bogus value (*No enum constant com.powsybl.iidm.network.EnergySource.NOT_A_VALUE*), reads that enum's
+  constants from the powsybl-core sources of the version pypowsybl bundles (from GitHub at the release tag, or a local
+  checkout with `--source`), and reports values added or deprecated upstream, values removed, and workarounds no
+  longer needed. `--check` fails while something is unreviewed.
+
+A value reviewed and deliberately not offered is recorded in `LEFT_OUT`, with its reason: on 1.15, the `VOLTAGE` and
+`VOLTAGE_ANGLE` limit types (pypowsybl refuses them on a branch) and the `UNDEFINED` feeder direction (a new bay is
+always placed). `WORKAROUNDS` records the values the pinned version lacks — no `OFF` mode for an SVC and no
+`FIXED_TAP` mode for a phase shifter, so both profiles use `regulating: false` — and the script says when upstream
+gains them. The limit `side` is checked against a pypowsybl-internal enum, outside powsybl-core, so only the test
+covers it.
+
+When upgrading pypowsybl, still review by hand:
+
+1. what `scripts/creation_enums.py` reports: a value to offer, or to record in `LEFT_OUT`;
 2. newly required attributes, which nothing flags before a call fails;
 3. new bay helpers or network modifications — the snapshot records the bay helpers, so the startup report lists a new
    one; a bay for `ground` or `three_windings_transformer` would let its profile switch to a bay connection, and
@@ -560,7 +580,8 @@ These checks only see names. When upgrading pypowsybl, still review by hand:
 - **Schema-only types** get no switching equipment, no required attributes, no accepted values, no id check, and only
   their main dataframe. `area_boundaries`, created at order 30, comes before any line of the same batch.
 - **Default limits group only.** Operational limits go in the default group; a named group is not the active one.
-- **Name checks are not semantic checks** (§14): enumeration values and required attributes can drift silently.
+- **Name checks are not semantic checks** (§14): enumeration values are covered by their own checks, but a newly
+  required attribute still goes unnoticed until a call fails.
 - **Knowledge beyond the metadata** — that `x` must not be zero, that a transformer stays in one substation, that a
   branch without limits can never be overloaded — exists only where a profile carries it in a rule or its guidance.
 
@@ -588,6 +609,7 @@ These checks only see names. When upgrading pypowsybl, still review by hand:
 | `tests/plugins/grid_extension/creation/test_engine.py`              | the pipeline against real networks: every executor, rules, rows, batches, schema-only types, load flows on the result |
 | `tests/plugins/grid_extension/creation/test_profiles_consistency.py`| the name checks for every profile, design invariants, the schema-only registry |
 | `tests/plugins/grid_extension/creation/test_documented_coverage.py` | the generated tables and the shipped snapshot                              |
+| `tests/plugins/grid_extension/creation/test_enum_values.py`         | every listed value and default accepted by pypowsybl, the Java enum found for every field, the parser and the comparison of the enum script |
 | `tests/plugins/grid_extension/creation/test_drift.py`               | the startup check: verified, upgrade simulated, profiles disabled, missing snapshot |
 | `tests/plugins/grid_extension/test_creation_tools.py` | the MCP tools: descriptors, rejections, load-flow cache, end-to-end site creation |
 | `tests/plugins/grid_extension/test_removal_tools.py` | removal per type, the cascade gate, the cascade summary against real removals |
