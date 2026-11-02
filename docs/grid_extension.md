@@ -151,4 +151,5 @@ Giving a schema-only type a profile is an entry in `pypowsybl_mcp/plugins/grid_e
 uv sync --all-extras                                    # installs the server, editable, with its entry points
 uv run pytest tests/plugins/grid_extension              # the plugin's tests
 uv run python scripts/creation_coverage.py --write      # after changing a profile or pypowsybl
+uv run python scripts/creation_enums.py --check         # after upgrading pypowsybl: enum values vs powsybl-core
 ```
