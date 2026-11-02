@@ -7,7 +7,7 @@
 """Entry points of the grid extension plugin (see docs/plugins.md of the host).
 
 ``register_plugin_tools``
-    The creation and removal tools, after checking the creation profiles
+    The creation, removal and topology tools, after checking the creation profiles
     against the installed pypowsybl, and ``/admin/creation-coverage``, which
     reports that check. Unless ``MCP_CREATION_ONLINE_ENUM_CHECK`` is false, the
     accepted values are also compared with powsybl-core's enums, online, in the
@@ -32,6 +32,7 @@ from pypowsybl_mcp.admin import refuse_unauthorized
 from pypowsybl_mcp.plugins.grid_extension.creation import drift
 from pypowsybl_mcp.plugins.grid_extension.creation_tools import register_creation_tools
 from pypowsybl_mcp.plugins.grid_extension.removal_tools import register_removal_tools
+from pypowsybl_mcp.plugins.grid_extension.topology_tools import register_topology_tools
 
 SKILL_PATH = Path(__file__).parent / "skills" / "grid-extension.md"
 
@@ -52,6 +53,7 @@ def register_plugin_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache) -> None:
     # runs the startup check of the creation profiles
     register_creation_tools(mcp, pypowsybl_proxies)
     register_removal_tools(mcp, pypowsybl_proxies)
+    register_topology_tools(mcp, pypowsybl_proxies)
     if _enabled(ONLINE_ENUM_CHECK, default=True):
         drift.start_upstream_enum_check()
 

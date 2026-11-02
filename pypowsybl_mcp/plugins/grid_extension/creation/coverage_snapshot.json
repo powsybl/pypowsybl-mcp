@@ -423,5 +423,65 @@
     "static_var_compensator",
     "two_windings_transformer",
     "vsc_converter_station"
-  ]
+  ],
+  "topology_operations": {
+    "connect_voltage_level_on_line": [
+      "bbs_or_bus_id",
+      "line1_id",
+      "line1_name",
+      "line2_id",
+      "line2_name",
+      "line_id",
+      "position_percent"
+    ],
+    "create_coupling_device": [
+      "bus_or_busbar_section_id_1",
+      "bus_or_busbar_section_id_2",
+      "switch_prefix_id"
+    ],
+    "create_line_on_line": [
+      "bbs_or_bus_id",
+      "create_fictitious_substation",
+      "fictitious_substation_id",
+      "fictitious_substation_name",
+      "fictitious_voltage_level_id",
+      "fictitious_voltage_level_name",
+      "line1_id",
+      "line1_name",
+      "line2_id",
+      "line2_name",
+      "line_id",
+      "new_line_b1",
+      "new_line_b2",
+      "new_line_g1",
+      "new_line_g2",
+      "new_line_id",
+      "new_line_r",
+      "new_line_x",
+      "position_percent"
+    ],
+    "replace_tee_point_by_voltage_level_on_line": [
+      "bbs_or_bus_id",
+      "new_line1_id",
+      "new_line1_name",
+      "new_line2_id",
+      "new_line2_name",
+      "tee_point_line1",
+      "tee_point_line2",
+      "tee_point_line_to_remove"
+    ],
+    "revert_connect_voltage_level_on_line": [
+      "line1_id",
+      "line2_id",
+      "line_id",
+      "line_name"
+    ],
+    "revert_create_line_on_line": [
+      "line_to_be_deleted",
+      "line_to_be_merged1_id",
+      "line_to_be_merged2_id",
+      "merged_line_id",
+      "merged_line_name"
+    ]
+  }
 }

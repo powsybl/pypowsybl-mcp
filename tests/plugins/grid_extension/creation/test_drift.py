@@ -25,6 +25,7 @@ from pypowsybl_mcp.plugins.grid_extension.creation.executors import (
     Unavailable,
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.profiles import PROFILES, UNPROFILED
+from pypowsybl_mcp.plugins.grid_extension.creation.topology import OPERATIONS
 
 
 @pytest.fixture
@@ -52,7 +53,16 @@ def test_the_installed_version_is_verified(registries, tmp_path):
     assert report["status"] == "verified"
     assert report["verified_against"] == pp.__version__
     assert not report["version_changed"]
-    assert report["changes"] == {"element_types": {}, "attributes": {}, "bays": {}}
+    assert report["changes"] == {
+        "element_types": {},
+        "attributes": {},
+        "bays": {},
+        "topology_operations": {},
+    }
+    assert report["topology_operations"] == {
+        "offered": sorted(OPERATIONS),
+        "disabled": {},
+    }
     assert not report["disabled_profiles"]
     assert report["element_types"]["profiled"] == len(PROFILES)
     assert drift.LAST_REPORT is report
@@ -294,3 +304,44 @@ def test_a_bay_profile_without_its_bay_is_set_aside(registries, tmp_path, monkey
 
     assert "has no bay helper for load" in report["disabled_profiles"]["load"][0]
     assert unprofiled["load"].schema_only
+
+
+def test_an_operation_out_of_date_is_set_aside(registries, tmp_path):
+    operations = dict(OPERATIONS)
+    operations["create_coupling_device"] = dataclasses.replace(
+        operations["create_coupling_device"],
+        required=("bus_or_busbar_section_id_1", "renamed_upstream"),
+    )
+
+    report = drift.startup_check(
+        *registries,
+        snapshot_path=_snapshot_file(tmp_path, drift.coverage_snapshot()),
+        operations=operations,
+    )
+
+    assert report["status"] == "operations disabled"
+    (problem,) = report["topology_operations"]["disabled"]["create_coupling_device"]
+    assert "renamed_upstream" in problem
+    assert "create_coupling_device" not in operations
+    assert "create_coupling_device" in OPERATIONS  # only the copy is changed
+
+
+def test_a_topology_modification_new_upstream_is_reported(registries, tmp_path):
+    recorded = drift.coverage_snapshot()
+    del recorded["topology_operations"]["create_coupling_device"]
+    recorded["topology_operations"]["create_line_on_line"].remove("position_percent")
+
+    report = drift.startup_check(
+        *registries,
+        snapshot_path=_snapshot_file(tmp_path, recorded),
+        operations=dict(OPERATIONS),
+    )
+
+    assert report["status"] == "changed"
+    assert report["changes"]["topology_operations"] == {
+        "added": ["create_coupling_device"],
+        "removed": [],
+        "attributes": {
+            "create_line_on_line": {"added": ["position_percent"], "removed": []}
+        },
+    }

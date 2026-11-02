@@ -1,11 +1,11 @@
 ---
 name: grid-extension
-description: How to add equipment to a network with create_network_element / create_network_elements (substations, voltage levels, loads, generators, batteries, shunts, SVCs, lines, transformers, HVDC links, operational limits, reactive limits, tap changers), how to remove it again with remove_network_elements, and how to run a connection study - for instance connecting a new datacenter to the grid. Use when asked to connect, add, attach or build a new load, new generation, storage, compensation, a new site, a line or a transformer, to rate a branch or add a tap changer, to remove, delete or retire an element, or when a creation call answered that a bus or busbar section could not be used.
+description: How to add equipment to a network with create_network_element / create_network_elements (substations, voltage levels, loads, generators, batteries, shunts, SVCs, lines, transformers, HVDC links, operational limits, reactive limits, tap changers), how to remove it again with remove_network_elements, how to insert a substation on an existing line, tap a line or couple busbars with modify_network_topology, and how to run a connection study - for instance connecting a new datacenter to the grid. Use when asked to connect, add, attach or build a new load, new generation, storage, compensation, a new site, a line or a transformer, to rate a branch or add a tap changer, to remove, delete or retire an element, to cut a line into a new substation (loop-in / insertion), tap a line (tee connection), couple two busbars or undo those, or when a creation call answered that a bus or busbar section could not be used.
 ---
 
 # Skill: extending a grid and running a connection study
 
-Three tools cover every element type:
+Five tools cover every element type and the topology around them:
 
 | Tool | What it does |
 | ---- | ------------ |
@@ -13,6 +13,7 @@ Three tools cover every element type:
 | `create_network_element(element_type, attributes)` | Creates one element |
 | `create_network_elements(items)` | Creates several in one call, ordered so containers come before what they contain |
 | `remove_network_elements(element_ids)` | The inverse: removes elements of any type by id |
+| `modify_network_topology(operation, attributes)` | Reconnects existing lines: inserts a substation on a line, taps a line into another, couples busbars, and reverts those |
 
 The attributes of each type are read from the installed pypowsybl, so
 `describe_element_creation` is the truth of the running version. **Errors carry
@@ -176,6 +177,42 @@ step; pass `steps` explicitly to describe them yourself.
   produce. Two boundary lines sharing a `pairing_key` can then be joined into a
   `tie_line`, in the same batch.
 
+## Workflow: inserting a substation on an existing line
+
+When a new site is connected **on** an existing line rather than by a new line
+to an existing substation (a "loop-in"), build the
+substation and its voltage level, at the line's nominal voltage, with
+`create_network_elements`, then cut the line at its busbar:
+
+```
+modify_network_topology("connect_voltage_level_on_line",
+    {"bbs_or_bus_id": "VL_NEW_1_1", "line_id": "LINE_A_B",
+     "position_percent": 30})
+```
+
+* The line is replaced by `LINE_A_B_1` (from its side 1 to the new busbar) and
+  `LINE_A_B_2` (from the busbar to side 2), unless `line1_id` / `line2_id` name
+  them; its impedance is split at `position_percent` (from side 1, 50 by
+  default) and its limits are copied to both halves.
+* **A line cannot change voltage**: a busbar at another nominal voltage is
+  refused. Connect at another voltage with a transformer, as in the workflow
+  above.
+* A **tee connection** -- a new line tapped from a point along the existing
+  one, without a substation there -- is `create_line_on_line`, with the new
+  line's `new_line_id`, `new_line_r` and `new_line_x`. The tapped line has **no
+  limits**: rate it with `operational_limits`. A tee can later become a real
+  connection with `replace_tee_point_by_voltage_level_on_line`.
+* `create_coupling_device` couples two busbars of one voltage level, with a
+  breaker and its disconnectors.
+* `revert_connect_voltage_level_on_line` and `revert_create_line_on_line` merge
+  the halves back into one line; the switches left without equipment are
+  removed with them. If that empties a voltage level, pypowsybl removes it and
+  its substation, and the reply says so in `notes`.
+
+The same rule applies as for building: only when the user asked for this
+change. Opening a line is `set_line_status`, and switching busbars apart is
+`set_switch_status`; neither is a topology modification.
+
 ## Element types without a profile
 
 Some types -- `bus`, `busbar_section`, `switch`, `internal_connection`,
@@ -228,7 +265,7 @@ element if that is what they want.
 
 ## Practical notes
 
-* Every creation and removal that changes the network clears the cached
+* Every creation, removal and topology change that changes the network clears the cached
   load-flow results: re-run `run_loadflow()` before reading any flow or voltage.
   A rejected call leaves them in place.
 * Ids must be free across the whole network, whatever the element type.

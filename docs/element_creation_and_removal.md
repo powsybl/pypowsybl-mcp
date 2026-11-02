@@ -1,6 +1,6 @@
 ### Creating and removing network elements
 
-This page explains how the creation and removal tools work: what each tool does, where the knowledge about
+This page explains how the creation, removal and topology tools work: what each tool does, where the knowledge about
 every element type comes from, what happens during a call, and how the whole thing stays in step with the installed
 `pypowsybl`. It describes the code as it is.
 
@@ -20,6 +20,7 @@ in-memory network, and are only meant to be used when the user explicitly asks f
 | `create_network_element(element_type, attributes, network_id=None)` | Creates one element of any type.                                                         |
 | `create_network_elements(items, network_id=None)`          | Creates several elements in one call, sorted so that containers come before what they contain.   |
 | `remove_network_elements(element_ids, cascade=False, network_id=None)` | Removes elements of any type by id, with the removal that suits each type.            |
+| `modify_network_topology(operation, attributes, network_id=None)` | Couples busbars, inserts a substation on a line, taps a line, or reverts those (§14).      |
 
 There is one creation tool for every element type, rather than one tool per type. The attributes of a type are not in
 the tool signature: `attributes` is an open object, and three things tell the caller what to put in it:
@@ -41,13 +42,15 @@ When `network_id` is omitted, every tool works on the session's current network.
 | `pypowsybl_mcp/plugins/grid_extension/plugin.py` | The plugin entry points: registers the tools, the skill and `/admin/creation-coverage`. |
 | `pypowsybl_mcp/plugins/grid_extension/creation_tools.py` | The three creation tools and the cheat sheet. Thin: they resolve the network and call the engine. |
 | `pypowsybl_mcp/plugins/grid_extension/removal_tools.py` | The removal tool, its per-type dispatch and the cascade summary.                           |
-| `pypowsybl_mcp/plugins/grid_extension/creation/schema.py`          | What pypowsybl says about its creation calls: field names, types, dataframe groups, and the calls themselves (`CREATE_CALLS`, `BAY_CALLS`), observed. Nothing hand-written. |
+| `pypowsybl_mcp/plugins/grid_extension/topology_tools.py` | The topology tool, its reply and the operations sheet of its description.                  |
+| `pypowsybl_mcp/plugins/grid_extension/creation/schema.py`          | What pypowsybl says about its creation calls: field names, types, dataframe groups, and the calls themselves (`CREATE_CALLS`, `BAY_CALLS`, `TOPOLOGY_CALLS`), observed. Nothing hand-written. |
 | `pypowsybl_mcp/plugins/grid_extension/creation/doc_mining.py`      | Attribute descriptions and units parsed from pypowsybl docstrings. Informational only.     |
 | `pypowsybl_mcp/plugins/grid_extension/creation/profiles.py`        | The hand-written overlay: one profile per element type, plus the schema-only profiles derived for the others. |
 | `pypowsybl_mcp/plugins/grid_extension/creation/rules.py`           | Constraints a profile can declare (conditional requirements, orderings, bounds).           |
 | `pypowsybl_mcp/plugins/grid_extension/creation/derivations.py`     | Values the engine fills in on the caller's behalf (feeder positions, rated voltages, tap steps, limit rows). |
 | `pypowsybl_mcp/plugins/grid_extension/creation/executors.py`       | `DerivedCall`, which makes any observed call from its registry entry, and `VoltageLevel`, the one explicit exception. |
 | `pypowsybl_mcp/plugins/grid_extension/creation/engine.py`          | The single pipeline every creation goes through, and the descriptors.                      |
+| `pypowsybl_mcp/plugins/grid_extension/creation/topology.py`        | The topology operations: what pypowsybl does not say about each, their checks, the engine applying them and removing orphan switches. |
 | `pypowsybl_mcp/plugins/grid_extension/creation/context.py`         | `CreationError`, connection points, and the context shared by rules, derivations and executors. |
 | `pypowsybl_mcp/plugins/grid_extension/creation/drift.py`           | The profile checks against the installed pypowsybl, the coverage snapshot and the startup check. |
 | `pypowsybl_mcp/plugins/grid_extension/creation/coverage_snapshot.json` | What the tools covered on the pypowsybl version they were checked against. Generated.  |
@@ -166,7 +169,7 @@ CreationProfile(
 
 No profile names its pypowsybl call: it follows from `connection` (§7). The `docs` calls are named as strings,
 resolved when used, so a pypowsybl upgrade that removes one cannot stop the server from importing; it disables that
-profile instead (§14).
+profile instead (§15).
 
 ##### Docstring mining
 
@@ -301,7 +304,7 @@ shunt sections), or, when that group is 0, the main DataFrame itself (limit rows
 The voltage level is the one exception, kept as an explicit `VoltageLevel` executor (`special_executor`): it takes
 two different calls in a row, `Network.create_voltage_levels` and then `create_voltage_level_topology`. When a call a
 profile needs is missing from the installed pypowsybl, its executor is `Unavailable`: the name checks report it and
-the startup check sets the profile aside (§14).
+the startup check sets the profile aside (§15).
 
 Because calls are only ever taken from what pypowsybl was seen to call, a "substation feeder bay", which the
 metadata would happily describe, can never be attempted.
@@ -511,7 +514,62 @@ guidance ends with it, and the removal tool's description warns the model not to
 
 ---
 
-#### 14. Staying in step with pypowsybl
+#### 14. Topology operations
+
+`modify_network_topology(operation, attributes, network_id=None)` changes how existing elements are connected, rather
+than creating one: it applies one of pypowsybl's network modifications that cut, merge or reconnect lines.
+
+| `operation`                                  | What it does                                                                     |
+|----------------------------------------------|----------------------------------------------------------------------------------|
+| `create_coupling_device`                     | couples two busbars of one voltage level with a breaker and its disconnectors      |
+| `connect_voltage_level_on_line`              | cuts a line in two at a busbar: inserts a substation on the line                   |
+| `create_line_on_line`                        | taps a new line into an existing one, from a fictitious tee point to a busbar      |
+| `replace_tee_point_by_voltage_level_on_line` | turns a tee into a real connection at the busbar the tapped branch led to          |
+| `revert_connect_voltage_level_on_line`       | merges two lines meeting at a voltage level back into one                          |
+| `revert_create_line_on_line`                 | undoes a tee: merges the two sections and removes the tapped line                  |
+
+The operations are found the way creation calls are (§4): `schema.TOPOLOGY_CALLS` lists the `pp.network` functions
+that build one of these modifications, and their attributes are read from pypowsybl's modification metadata. What
+pypowsybl does not say is written in `creation/topology.py`, one `TopologyOperation` each: the required attributes,
+defaults (`position_percent` 50 %, a tapped line's `g` and `b` zero), units, and checks. The tool description lists
+every operation with its attributes, generated from the same objects.
+
+Before pypowsybl is called, the engine checks what pypowsybl would accept and get wrong, or refuse with an unreadable
+error:
+
+- a `position_percent` strictly between 0 and 100 — pypowsybl accepts 150 and gives the second half a negative
+  impedance;
+- a busbar at the line's nominal voltage — pypowsybl connects a 12 kV bus onto a 135 kV line, and the load flow then
+  fails; the refusal says a transformer is needed;
+- lines and connection points that exist, with the diagnostics of §6 (an unknown line is otherwise a bare
+  `NullPointerException`), and ids of new lines that are free;
+- two different busbars of one voltage level for a coupling device, lines that meet at a voltage level for a merge,
+  and, for a tee replacement, a busbar in the voltage level the removed branch leads to;
+- the merged line id a revert needs, which pypowsybl does not require and then crashes without.
+
+Every refusal carries the operation's descriptor as its hint, like a creation's (§10).
+
+After the call, the reply is computed by comparing the network's identifiables before and after: the elements created
+and removed, the switches built and removed. Two things are added to what pypowsybl does:
+
+- **Orphan switches.** pypowsybl's reverts leave the bays that connected the merged lines in place, with nothing behind
+  them. In node/breaker voltage levels, the engine removes the switches that the operation left ending at an empty
+  node — the breaker, then the disconnector behind it — so a cut and its revert give back the same switch count.
+- **Notes.** A new line without operational limits is noted, as for a creation: a line cut in two keeps its limits on
+  both halves, a tapped line has none. When a revert empties a voltage level, pypowsybl removes it and its substation;
+  a real (non-fictitious) one removed this way is noted too, since the caller may have built it for the cut.
+
+The reply has the keys of the creation replies: `success`, `network_id`, `operation`, `methods`, `created_ids`,
+`removed_ids`, `switches` (`created`, `removed`, `orphans_removed`), `notes`, `errors` (each with its hint), `message`
+and `loadflow_invalidated`. Cached load-flow results are cleared after a change, or after a pypowsybl error, which may
+have left the operation half applied (§12).
+
+The startup check (§15) covers the operations too: one naming an attribute or a call pypowsybl no longer has is set
+aside, and a topology modification new upstream is reported, as is a change in the attributes of one.
+
+---
+
+#### 15. Staying in step with pypowsybl
 
 The schema follows the installed version by construction; the profiles do not. Three mechanisms keep them honest.
 
@@ -530,7 +588,7 @@ whenever either no longer matches, including after every version bump.
 and compares the installed version with the snapshot:
 
 - a profile that fails a check is **disabled**: removed from the profiles, its type falling back to schema-only
-  creation, with an `ERROR` log naming the problem;
+  creation, with an `ERROR` log naming the problem; a topology operation likewise is no longer offered;
 - a version change, or a coverage that moved, is logged as a `WARNING` with the types that changed group and the
   number whose attributes changed;
 - otherwise, one `INFO` line: "Creation profiles verified against pypowsybl 1.15.0".
@@ -574,24 +632,25 @@ script reports — and the order to do it in are on a page of their own: [upgrad
 
 ---
 
-#### 15. Limitations
+#### 16. Limitations
 
 - **No client-side validation.** `attributes` is an open object, so MCP clients cannot check it against a schema;
   everything is validated by the server, and a model learns the attributes from the cheat sheet, the descriptor or a
   rejection.
-- **No rollback.** A batch stopped half way keeps what it created; removal is final.
+- **No rollback.** A batch stopped half way keeps what it created; removal is final. Topology operations are undone
+  by their reverts only, and `replace_tee_point_by_voltage_level_on_line` has none.
 - **No dry run.** There is no `validate_only` mode: a call that passes every check is applied.
 - **Schema-only types** get no switching equipment, no required attributes, no accepted values, no id check, and only
   their main dataframe. `area_boundaries`, created at order 30, comes before any line of the same batch.
 - **Default limits group only.** Operational limits go in the default group; a named group is not the active one.
-- **Name checks are not semantic checks** (§14): enumeration values are covered by their own checks, but a newly
+- **Name checks are not semantic checks** (§15): enumeration values are covered by their own checks, but a newly
   required attribute still goes unnoticed until a call fails.
 - **Knowledge beyond the metadata** — that `x` must not be zero, that a transformer stays in one substation, that a
   branch without limits can never be overloaded — exists only where a profile carries it in a rule or its guidance.
 
 ---
 
-#### 16. Adding or improving a profile
+#### 17. Adding or improving a profile
 
 1. Add a `CreationProfile` with `_register(...)` in `profiles.py`: pick the connection kind (which picks the call),
    list the required attributes, the managed ones, defaults, units, enumerations, rules and derivations, and write
@@ -605,7 +664,7 @@ script reports — and the order to do it in are on a page of their own: [upgrad
 
 ---
 
-#### 17. Tests
+#### 18. Tests
 
 | File                                         | Covers                                                                     |
 |----------------------------------------------|----------------------------------------------------------------------------|
@@ -614,7 +673,9 @@ script reports — and the order to do it in are on a page of their own: [upgrad
 | `tests/plugins/grid_extension/creation/test_profiles_consistency.py`| the name checks for every profile, design invariants, the schema-only registry |
 | `tests/plugins/grid_extension/creation/test_documented_coverage.py` | the generated tables and the shipped snapshot                              |
 | `tests/plugins/grid_extension/creation/test_enum_values.py`         | every listed value and default accepted by pypowsybl, the Java enum found for every field, the parser and the comparison of the enum script |
-| `tests/plugins/grid_extension/creation/test_drift.py`               | the startup check: verified, upgrade simulated, profiles disabled, missing snapshot |
+| `tests/plugins/grid_extension/creation/test_drift.py`               | the startup check: verified, upgrade simulated, profiles and operations disabled, missing snapshot |
 | `tests/plugins/grid_extension/test_creation_tools.py` | the MCP tools: descriptors, rejections, load-flow cache, end-to-end site creation |
 | `tests/plugins/grid_extension/test_removal_tools.py` | removal per type, the cascade gate, the cascade summary against real removals |
+| `tests/plugins/grid_extension/creation/test_topology.py` | every operation on node/breaker and bus/breaker networks with load flows, the refusals, orphan switches, notes |
+| `tests/plugins/grid_extension/test_topology_tools.py` | the topology tool: its replies, its description, load-flow cache |
 | `tests/plugins/grid_extension/test_plugin.py` | the entry points, the disable switch, the skill, `/admin/creation-coverage` |
