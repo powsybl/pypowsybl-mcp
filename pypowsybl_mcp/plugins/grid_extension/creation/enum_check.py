@@ -26,6 +26,10 @@ type that has such a field:
     powsybl-core sources of the version pypowsybl bundles and :func:`compare`
     them with the profile -- the one way to notice a value pypowsybl *added*.
 
+:func:`check_accepted` runs the first check on a set of profiles, and is what
+the startup check does after a pypowsybl upgrade; :func:`upstream_review` runs
+the second, for the script and for the online check at startup.
+
 What the comparison should not flag is recorded here: values the server adds
 itself (``SERVER_ONLY``), values it knowingly leaves out (``LEFT_OUT``), and
 values the profiles work around because the pinned version lacks them
@@ -35,10 +39,14 @@ values the profiles work around because the pinned version lacks them
 from __future__ import annotations
 
 import re
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 
 import pypowsybl as pp
+from pypowsybl import _pypowsybl as _pp
 
 from pypowsybl_mcp.plugins.grid_extension.creation.engine import CreationEngine
 from pypowsybl_mcp.plugins.grid_extension.creation.profiles import PROFILES
@@ -195,12 +203,13 @@ def _attempt(
 
     Returns pypowsybl's (or the engine's) refusal, or None when it is created.
     """
+    profiles = PROFILES if profiles is None else profiles
     engine = CreationEngine(profiles=profiles)
     network = NETWORK()
     try:
         # an attachment's example names its target, which wins over this id
         attributes = {
-            PROFILES[element_type].id_field: EXAMPLE_ID,
+            profiles[element_type].id_field: EXAMPLE_ID,
             **EXAMPLES[element_type](engine, network),
         }
         if field is not None:
@@ -212,15 +221,53 @@ def _attempt(
     return None
 
 
-def rejected_value(element_type: str, field: str, value: str | None) -> str | None:
+def rejected_value(
+    element_type: str, field: str, value: str | None, profiles=None
+) -> str | None:
     """Why ``value`` is refused for ``field``, or None when pypowsybl accepts it.
 
     With ``value`` None, the example is created with the field left to its
     default.
     """
     if value is None:
-        return _attempt(element_type)
-    return _attempt(element_type, field, value)
+        return _attempt(element_type, profiles=profiles)
+    return _attempt(element_type, field, value, profiles=profiles)
+
+
+def check_accepted(profiles) -> dict:
+    """Which listed values, and which defaults, pypowsybl refuses.
+
+    Returns ``refused_values`` ({element type: {field: [values]}}),
+    ``refused_defaults`` ({element type: error}: its example cannot even be
+    created as is) and ``no_example`` (types with listed values but no example to
+    check them with). About 80 small creations, a fraction of a second.
+    """
+    refused_values: dict[str, dict[str, list[str]]] = {}
+    refused_defaults: dict[str, str] = {}
+    no_example: list[str] = []
+    for element_type, profile in sorted(profiles.items()):
+        if not profile.enums:
+            continue
+        if element_type not in EXAMPLES:
+            no_example.append(element_type)
+            continue
+        error = rejected_value(element_type, "", None, profiles=profiles)
+        if error is not None:
+            refused_defaults[element_type] = error
+            continue
+        for field, values in profile.enums.items():
+            refused = [
+                value
+                for value in values
+                if rejected_value(element_type, field, value, profiles=profiles)
+            ]
+            if refused:
+                refused_values.setdefault(element_type, {})[field] = refused
+    return {
+        "refused_values": refused_values,
+        "refused_defaults": refused_defaults,
+        "no_example": no_example,
+    }
 
 
 def java_enum(element_type: str, field: str) -> str | None:
@@ -306,4 +353,117 @@ def compare(
             name for name in offered_upstream if upstream.get(name) is True
         ),
         "workaround_obsolete": sorted(workarounds & set(upstream)),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Upstream: the powsybl-core enums of the bundled version
+# ---------------------------------------------------------------------------
+
+RAW = "https://raw.githubusercontent.com/powsybl/powsybl-core/v{version}/{path}"
+#: where powsybl-core keeps the sources of the packages the enums come from,
+#: tried in order; the longest matching package wins
+MODULES = {
+    "com.powsybl.iidm.network.extensions": [
+        "iidm/iidm-extensions/src/main/java",
+        "iidm/iidm-api/src/main/java",
+    ],
+    "com.powsybl.iidm.network": ["iidm/iidm-api/src/main/java"],
+}
+
+
+def core_version() -> str:
+    """The powsybl-core version the installed pypowsybl bundles."""
+    for line in _pp.get_version_table().splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if cells and cells[0] == "powsybl-core":
+            return cells[1]
+    raise LookupError("powsybl-core not found in pypowsybl's version table")
+
+
+def source_paths(java_class: str) -> tuple[list[str], str] | None:
+    """(candidate paths of the file declaring it, enum name), or None outside
+    powsybl-core.
+
+    A nested enum, ``StaticVarCompensator$RegulationMode``, is declared in its
+    outer class's file.
+    """
+    outer, _, nested = java_class.partition("$")
+    for package in sorted(MODULES, key=len, reverse=True):
+        if outer.startswith(package + "."):
+            file = f"{outer.replace('.', '/')}.java"
+            name = nested or outer.rsplit(".", 1)[-1]
+            return [f"{root}/{file}" for root in MODULES[package]], name
+    return None
+
+
+def read_source(path: str, version: str, local: Path | None = None) -> str | None:
+    """A powsybl-core source file at a release, from GitHub or a local checkout."""
+    if local is not None:
+        file = local / path
+        return file.read_text() if file.is_file() else None
+    try:
+        with urllib.request.urlopen(
+            RAW.format(version=version, path=path), timeout=30
+        ) as reply:
+            return reply.read().decode()
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return None
+        raise
+
+
+def upstream_review(local: Path | None = None) -> dict:
+    """Every enumerated field compared with its powsybl-core enum.
+
+    Returns ``powsybl_core`` (the bundled version), ``fields`` (one entry per
+    field: its ``java_enum``, a ``state`` of ok, review, unchecked or
+    not_found, and the ``differences``), ``to_review`` (one line per thing to
+    look at) and ``unchecked`` (fields whose enum is outside powsybl-core).
+    """
+    version = core_version()
+    sources: dict[str, dict[str, bool] | None] = {}
+    fields, to_review, unchecked = [], [], []
+    for element_type, field in enum_fields():
+        label = f"{element_type}.{field}"
+        entry = {"field": label, "java_enum": java_enum(element_type, field)}
+        fields.append(entry)
+        if entry["java_enum"] is None:
+            entry["state"] = "review"
+            to_review.append(f"{label}: pypowsybl names no enum for it")
+            continue
+        location = source_paths(entry["java_enum"])
+        if location is None:
+            entry["state"] = "unchecked"
+            unchecked.append(f"{label}: {entry['java_enum']} is not in powsybl-core")
+            continue
+        paths, name = location
+        if entry["java_enum"] not in sources:
+            sources[entry["java_enum"]] = None
+            for path in paths:
+                source = read_source(path, version, local)
+                if source is not None:
+                    sources[entry["java_enum"]] = enum_constants(source, name)
+                    break
+        upstream = sources[entry["java_enum"]]
+        if upstream is None:
+            entry["state"] = "not_found"
+            to_review.append(
+                f"{label}: {entry['java_enum']} not found in {', '.join(paths)}"
+            )
+            continue
+        entry["differences"] = compare(
+            element_type, field, PROFILES[element_type].enums[field], upstream
+        )
+        entry["state"] = "review" if any(entry["differences"].values()) else "ok"
+        for kind, values in entry["differences"].items():
+            if values:
+                to_review.append(
+                    f"{label}: {kind.replace('_', ' ')}: {', '.join(values)}"
+                )
+    return {
+        "powsybl_core": version,
+        "fields": fields,
+        "to_review": to_review,
+        "unchecked": unchecked,
     }

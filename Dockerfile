@@ -54,6 +54,15 @@ RUN uv pip install --system --no-cache-dir .
 # Copy the rest of the application code
 COPY . .
 
+# Check that the creation profiles' accepted values match the powsybl-core enums
+# the installed pypowsybl bundles (see scripts/creation_enums.py). It reads the
+# powsybl-core sources from GitHub: build with --build-arg
+# CHECK_CREATION_ENUMS=false where GitHub cannot be reached.
+ARG CHECK_CREATION_ENUMS=true
+RUN if [ "$CHECK_CREATION_ENUMS" = "true" ]; then \
+        PYTHONPATH=/app python scripts/creation_enums.py --check; \
+    fi
+
 # Ensure the appuser has permissions for the /app directory and create data/logs dirs
 RUN mkdir -p /app/data /app/logs \
     && chown -R appuser:appuser /app

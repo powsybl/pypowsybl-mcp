@@ -19,6 +19,7 @@ marked **required**.
 | `MCP_AUTH_TOKEN`     | *(unset)*   | Secret token protecting the admin tools (`set_session_id`, `duplicate_session`) and the admin HTTP API (`/admin/sessions`, and `/admin/creation-coverage` of the grid-extension plugin; see [Monitoring](monitoring.md)). If unset, both are disabled. |
 | `LOG_DIR`            | `logs`      | Directory where log files are written.                                                                                            |
 | `MCP_DISABLED_PLUGINS` | *(unset)* | Comma-separated entry-point names of installed plugins not to load, e.g. `grid_extension` to turn off the element creation and removal tools (see [Plugins](plugins.md)). |
+| `MCP_CREATION_ONLINE_ENUM_CHECK` | `true` | With the grid extension active, also compare the creation profiles' accepted values with the powsybl-core enums of the bundled version at startup, in the background. Reads the sources from GitHub; only reports, on `/admin/creation-coverage` (see [upgrading_pypowsybl.md](upgrading_pypowsybl.md)). Set to `false` for an offline deployment, which otherwise just logs a warning. |
 
 ##### LLM / OpenAI
 
@@ -36,6 +37,7 @@ marked **required**.
 | `HOST_UID`              | `1000`    | UID of the host user; used to set correct ownership on mounted volumes.     |
 | `HOST_GID`              | `1000`    | GID of the host user; same purpose.                                         |
 | `NO_PROXY` / `no_proxy` | *(unset)* | Passed through to the container to avoid proxy issues on internal networks. |
+| `CHECK_CREATION_ENUMS`  | `true`    | Build argument: check the creation profiles' accepted values against powsybl-core while building the image, failing it on an unreviewed value. Needs GitHub; `false` for an offline build. |
 
 ---
 

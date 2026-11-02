@@ -50,6 +50,7 @@ turn.
 - [Grid extension plugin](docs/grid_extension.md): the element creation and removal tools, and
   [how they work](docs/element_creation_and_removal.md).
 - [Plugins](docs/plugins.md): extend the server with your own tools, resources, and prompts.
+- [Upgrading pypowsybl](docs/upgrading_pypowsybl.md): what checks itself, what to review, and in which order.
 
 ## Prerequisites
 

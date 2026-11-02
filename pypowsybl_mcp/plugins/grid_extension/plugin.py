@@ -9,13 +9,16 @@
 ``register_plugin_tools``
     The creation and removal tools, after checking the creation profiles
     against the installed pypowsybl, and ``/admin/creation-coverage``, which
-    reports that check.
+    reports that check. Unless ``MCP_CREATION_ONLINE_ENUM_CHECK`` is false, the
+    accepted values are also compared with powsybl-core's enums, online, in the
+    background.
 
 ``register_plugin_resources``
     The ``grid-extension`` skill, as a resource and a prompt, under the same URI
     scheme as the host's own skills.
 """
 
+import os
 from pathlib import Path
 
 from cachetools import TTLCache
@@ -33,9 +36,24 @@ from pypowsybl_mcp.plugins.grid_extension.removal_tools import register_removal_
 SKILL_PATH = Path(__file__).parent / "skills" / "grid-extension.md"
 
 
+#: compares the accepted values with powsybl-core's enums online; on unless
+#: set to false (an offline deployment only gets a warning when it fails)
+ONLINE_ENUM_CHECK = "MCP_CREATION_ONLINE_ENUM_CHECK"
+
+
+def _enabled(name: str, default: bool) -> bool:
+    value = (os.getenv(name) or "").strip().lower()
+    if not value:
+        return default
+    return value in ("1", "true", "yes", "on")
+
+
 def register_plugin_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache) -> None:
+    # runs the startup check of the creation profiles
     register_creation_tools(mcp, pypowsybl_proxies)
     register_removal_tools(mcp, pypowsybl_proxies)
+    if _enabled(ONLINE_ENUM_CHECK, default=True):
+        drift.start_upstream_enum_check()
 
     @mcp.custom_route("/admin/creation-coverage", methods=["GET"])
     async def creation_coverage(request: Request) -> JSONResponse:

@@ -86,6 +86,24 @@ async def test_the_skill_is_a_resource_and_a_prompt(proxies):
     assert "grid-extension" in {item.name for item in await mcp.list_prompts()}
 
 
+@pytest.mark.parametrize(
+    ("setting", "started"),
+    [(None, True), ("", True), ("true", True), ("false", False), ("0", False)],
+)
+def test_the_online_enum_check_is_on_by_default(proxies, monkeypatch, setting, started):
+    calls = []
+    monkeypatch.setattr(drift, "LAST_REPORT", None)
+    monkeypatch.setattr(drift, "start_upstream_enum_check", lambda: calls.append(1))
+    if setting is None:
+        monkeypatch.delenv("MCP_CREATION_ONLINE_ENUM_CHECK", raising=False)
+    else:
+        monkeypatch.setenv("MCP_CREATION_ONLINE_ENUM_CHECK", setting)
+
+    plugin.register_plugin_tools(MCPServer("TestServer"), proxies)
+
+    assert bool(calls) is started
+
+
 def test_creation_coverage_requires_the_token(client):
     assert client.get("/admin/creation-coverage").status_code == 401
 

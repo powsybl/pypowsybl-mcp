@@ -13,6 +13,9 @@ services:
         # Use HOST_UID and HOST_GID as requested for volume permission handling
         - USER_UID=${HOST_UID:-1000}
         - USER_GID=${HOST_GID:-1000}
+        # Check the creation profiles' enum values against powsybl-core while
+        # building (needs GitHub); false for an offline build
+        - CHECK_CREATION_ENUMS=${CHECK_CREATION_ENUMS:-true}
         # Proxy settings for build-time access (e.g. if you are behind a corporate proxy)
         - HTTP_PROXY=${HTTP_PROXY:-}
         - HTTPS_PROXY=${HTTPS_PROXY:-}
