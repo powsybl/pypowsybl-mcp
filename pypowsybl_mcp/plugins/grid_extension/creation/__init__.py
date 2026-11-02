@@ -26,7 +26,8 @@ out. The package is layered accordingly:
     and the values the engine computes on the caller's behalf.
 
 ``profiles``
-    The overlay proper: for each element type, which pypowsybl call to use,
+    The overlay proper: for each element type, how it connects (which picks
+    its observed call: its bay helper, or its ``Network.create_*`` method),
     which fields are required, which are managed by the engine, the legal enum
     values, the rules and a paragraph of guidance. ~20 lines per element type,
     and the only part that has to be maintained by hand. A creatable type with

@@ -48,7 +48,8 @@ from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
     schema_only_profile,
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
-    CREATION_METHODS,
+    BAY_CALLS,
+    CREATE_CALLS,
     ElementSchema,
     creatable_element_types,
 )
@@ -226,6 +227,9 @@ def coverage_snapshot(
         "unsupported": sorted(
             set(creatable_element_types()) - set(profiles) - set(unprofiled)
         ),
+        # the element types pypowsybl can create with their switchgear: a new
+        # one is a type whose profile could move to its bay
+        "bays": sorted(BAY_CALLS),
     }
 
 
@@ -265,7 +269,15 @@ def _changes(recorded: dict[str, Any], current: dict[str, Any]) -> dict[str, Any
         removed = sorted(set(was[name]) - set(now[name]))
         if added or removed:
             attributes[name] = {"added": added, "removed": removed}
-    return {"element_types": moved, "attributes": attributes}
+    bays = {
+        "added": sorted(set(current["bays"]) - set(recorded.get("bays", []))),
+        "removed": sorted(set(recorded.get("bays", [])) - set(current["bays"])),
+    }
+    return {
+        "element_types": moved,
+        "attributes": attributes,
+        "bays": bays if bays["added"] or bays["removed"] else {},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -297,11 +309,10 @@ def startup_check(
     effective = {name: item for name, item in profiles.items() if name not in broken}
     fallback = dict(unprofiled)
     for name, problems in broken.items():
-        method = CREATION_METHODS.get(name)
-        if method is None:
+        if name not in CREATE_CALLS:
             continue
         try:
-            fallback[name] = schema_only_profile(name, method)
+            fallback[name] = schema_only_profile(name)
         except Exception as error:  # noqa: BLE001 - its schema may be gone too
             problems.append(f"no schema-only fallback either: {error}")
 
@@ -315,7 +326,7 @@ def startup_check(
         status = "profiles disabled"
     elif recorded is None:
         status = "no snapshot"
-    elif version_changed or changes["element_types"] or changes["attributes"]:
+    elif version_changed or any(changes.values()):
         status = "changed"
     else:
         status = "verified"
@@ -359,7 +370,7 @@ def _log(report: dict[str, Any]) -> None:
             "Creation profiles could not be compared with a coverage snapshot; "
             "run scripts/creation_coverage.py --write"
         )
-    elif report["version_changed"] or changes["element_types"] or changes["attributes"]:
+    elif report["version_changed"] or any(changes.values()):
         moved = [
             f"{name} ({move['was'] or 'absent'} -> {move['now'] or 'absent'})"
             for name, move in changes["element_types"].items()
@@ -368,7 +379,8 @@ def _log(report: dict[str, Any]) -> None:
             f"pypowsybl {version} is installed, the creation profiles were checked "
             f"against {report['verified_against']}. Element types changed: "
             f"{', '.join(moved) or 'none'}; attributes changed on "
-            f"{len(changes['attributes'])} type(s). Details on "
+            f"{len(changes['attributes'])} type(s); bay helpers changed: "
+            f"{changes['bays'] or 'none'}. Details on "
             "/admin/creation-coverage; review the profiles, then run "
             "scripts/creation_coverage.py --write"
         )

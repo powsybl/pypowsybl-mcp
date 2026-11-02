@@ -41,12 +41,12 @@ When `network_id` is omitted, every tool works on the session's current network.
 | `pypowsybl_mcp/plugins/grid_extension/plugin.py` | The plugin entry points: registers the tools, the skill and `/admin/creation-coverage`. |
 | `pypowsybl_mcp/plugins/grid_extension/creation_tools.py` | The three creation tools and the cheat sheet. Thin: they resolve the network and call the engine. |
 | `pypowsybl_mcp/plugins/grid_extension/removal_tools.py` | The removal tool, its per-type dispatch and the cascade summary.                           |
-| `pypowsybl_mcp/plugins/grid_extension/creation/schema.py`          | What pypowsybl says about its creation calls: field names, types, dataframe groups, and the `create_*` method of each type. Nothing hand-written. |
+| `pypowsybl_mcp/plugins/grid_extension/creation/schema.py`          | What pypowsybl says about its creation calls: field names, types, dataframe groups, and the calls themselves (`CREATE_CALLS`, `BAY_CALLS`), observed. Nothing hand-written. |
 | `pypowsybl_mcp/plugins/grid_extension/creation/doc_mining.py`      | Attribute descriptions and units parsed from pypowsybl docstrings. Informational only.     |
 | `pypowsybl_mcp/plugins/grid_extension/creation/profiles.py`        | The hand-written overlay: one profile per element type, plus the schema-only profiles derived for the others. |
 | `pypowsybl_mcp/plugins/grid_extension/creation/rules.py`           | Constraints a profile can declare (conditional requirements, orderings, bounds).           |
 | `pypowsybl_mcp/plugins/grid_extension/creation/derivations.py`     | Values the engine fills in on the caller's behalf (feeder positions, rated voltages, tap steps, limit rows). |
-| `pypowsybl_mcp/plugins/grid_extension/creation/executors.py`       | How each kind of element is handed to pypowsybl (bay helpers, plain calls, several dataframes). |
+| `pypowsybl_mcp/plugins/grid_extension/creation/executors.py`       | `DerivedCall`, which makes any observed call from its registry entry, and `VoltageLevel`, the one explicit exception. |
 | `pypowsybl_mcp/plugins/grid_extension/creation/engine.py`          | The single pipeline every creation goes through, and the descriptors.                      |
 | `pypowsybl_mcp/plugins/grid_extension/creation/context.py`         | `CreationError`, connection points, and the context shared by rules, derivations and executors. |
 | `pypowsybl_mcp/plugins/grid_extension/creation/drift.py`           | The profile checks against the installed pypowsybl, the coverage snapshot and the startup check. |
@@ -96,10 +96,21 @@ Both return groups of fields, one per dataframe the call takes: a shunt compensa
 shunt, the linear model, the non-linear model), a tap changer as two (the changer and its steps). Each field has a
 name, a type (string, number, integer, boolean) and an index flag that names the key column (`id` for most types).
 
-`schema.py` also builds `CREATION_METHODS`, the `Network.create_*` method behind each element type. Every such method
-funnels into `Network._create_elements(element_type, …)`; at import, each one is called once on an empty network with
-that funnel replaced by a spy that records the element type and stops before the C layer. It runs once, before the
-server handles any request.
+`schema.py` also observes the **calls** themselves, in two registries built at import, before the server handles any
+request:
+
+- `CREATE_CALLS`: the `Network.create_*` method behind each element type. Every such method funnels into
+  `Network._create_elements(element_type, …)`; each one is called once on an empty network with that funnel replaced
+  by a spy that records the element type and stops before the C layer.
+- `BAY_CALLS`: the bay helper behind each element type that has one (`create_load_bay`, `create_line_bays`, …).
+  Feeder and branch bays alike start by reading their metadata with
+  `get_network_modification_metadata_with_element_type(modification, element_type)`, so a spy there gives both the
+  element type and the metadata family (`CREATE_FEEDER_BAY`, `CREATE_LINE_FEEDER`, …) the call is described by.
+
+Each entry is a `CreationCall`: the call, and the names of its DataFrame parameters (`shunt_df`, `linear_model_df`,
+`non_linear_model_df`…) in the order of the metadata groups they fill, read from its signature. Deprecated calls and
+`create_extensions` are left out. A missing hook is logged, not fatal: that registry is empty, and the startup check
+reports the types it would have revealed.
 
 What the metadata does **not** say is why a hand-written overlay exists:
 
@@ -114,8 +125,7 @@ A profile (`CreationProfile` in `profiles.py`) supplies exactly that:
 
 | Field            | Meaning                                                                                                  |
 |------------------|----------------------------------------------------------------------------------------------------------|
-| `executor`       | How to call pypowsybl for this type (§7).                                                                |
-| `connection`     | How the element joins the network (§6).                                                                  |
+| `connection`     | How the element joins the network (§6), which also picks its observed call (§7).                         |
 | `required`       | Attributes without which the element is refused, beyond its id and connection point.                     |
 | `managed`        | Attributes the caller must not pass: computed by the engine, filled by the bay helper, or metadata artifacts. |
 | `defaults`       | Values applied when an attribute is missing.                                                             |
@@ -123,11 +133,12 @@ A profile (`CreationProfile` in `profiles.py`) supplies exactly that:
 | `rules`          | Constraints checked before pypowsybl is called (§8).                                                     |
 | `derivations`    | Values the engine computes when the caller leaves them out (§8).                                         |
 | `virtual`        | Convenience attributes that are not pypowsybl fields, turned into real ones by a derivation (§9).         |
-| `rows_attribute` | The attribute holding a table of rows, for calls that take one (§9).                                     |
+| `rows_attribute`, `rows_group`, `row_defaults` | The attribute holding a table of rows, the dataframe they fill, and the values a row gets for the columns it leaves out (§9). |
 | `target_types`   | For attachments: the element types they may attach to.                                                  |
 | `order`          | Position in a batch (§11).                                                                               |
 | `summary`, `guidance` | One line, and a paragraph on what the element is for and how to choose values.                      |
 | `docs`           | The pypowsybl calls whose docstrings document the attributes, named as strings and resolved when used.   |
+| `special_executor` | A call shape no derived executor covers; only the voltage level has one (§7).                          |
 
 For example, the load profile:
 
@@ -135,7 +146,6 @@ For example, the load profile:
 CreationProfile(
     element_type="load",
     summary="A consumption point: a datacenter, a factory, an extra demand.",
-    executor=FeederBay("create_load_bay"),
     connection=Connection.SINGLE,
     order=40,
     required=("p0",),
@@ -152,8 +162,9 @@ CreationProfile(
 )
 ```
 
-Calls are named as strings everywhere (executors and `docs`), so a pypowsybl upgrade that removes one cannot stop the
-server from importing; it disables that profile instead (§14).
+No profile names its pypowsybl call: it follows from `connection` (§7). The `docs` calls are named as strings,
+resolved when used, so a pypowsybl upgrade that removes one cannot stop the server from importing; it disables that
+profile instead (§14).
 
 ##### Docstring mining
 
@@ -166,8 +177,8 @@ profile gives none. Mining never changes behavior: required attributes, enumerat
 ##### Schema-only profiles
 
 Every creatable type without a hand-written profile but with a `create_*` method gets one derived from its schema
-alone (`UNPROFILED`, built by `schema_only_profile`). It uses the `Raw` executor on the main dataframe only (any
-further dataframe of the call is not accepted), a generic guidance paragraph, the first line of
+alone (`UNPROFILED`, built by `schema_only_profile`). It uses its observed `Network.create_*` call on the main
+dataframe only (any further dataframe of the call is not accepted), a generic guidance paragraph, the first line of
 the pypowsybl docstring as summary, and batch order 30. The engine skips its network checks: the id of such a type may
 name another element (an internal connection is keyed on its voltage level, an `area_voltage_levels` row on an
 existing area), so pypowsybl is left to check ids and references. A hand-written profile always wins over the
@@ -271,18 +282,27 @@ topology call fails, the voltage level is removed again, so a corrected call is 
 
 #### 7. Executors
 
-| Executor        | pypowsybl call                                                    | Types                                                  |
-|-----------------|-------------------------------------------------------------------|--------------------------------------------------------|
-| `FeederBay`     | `pp.network.create_<x>_bay(network, **attributes)`                | load, generator, battery, SVC, VSC and LCC converter stations |
-| `MultiFrameBay` | one bay call with several dataframes, each passed only when filled | shunt compensator (shunt + linear or non-linear sections), boundary line (line + optional generation part) |
-| `BranchBays`    | `create_line_bays`, `create_2_windings_transformer_bays`          | line, two-windings transformer                         |
-| `VoltageLevel`  | `Network.create_voltage_levels` + `create_voltage_level_topology` | voltage level                                          |
-| `Raw`           | `Network.create_<x>s(**attributes)`, no switching equipment       | substation, ground, HVDC line, tie line, every schema-only type |
-| `RowGroup`      | a header dataframe and a table of rows                            | ratio and phase tap changers                           |
-| `Attachment`    | rows attached to an existing element                              | operational limits, min/max reactive limits, capability curve |
+No profile names a call. `CreationProfile.executor` picks it from the profile's connection kind and the registries
+of §4:
 
-The executor, not the metadata, decides which call is legal for a type: that is how a "substation feeder bay", which
-the metadata would happily describe, can never be attempted.
+| Connection kind | Call | Types |
+|-----------------|------|-------|
+| `SINGLE`, `DOUBLE` (connected to a bus or busbar section) | the type's bay helper, from `BAY_CALLS` | load, generator, battery, shunt, SVC, VSC and LCC converter stations, boundary line, line, two-windings transformer |
+| `NONE`, `BUS`, `TARGET` | the type's `Network.create_*` method, from `CREATE_CALLS` | substation, ground, HVDC line, tie line, limits, reactive limits, tap changers, every schema-only type |
+
+One generic executor, `DerivedCall`, makes any of these calls from its registry entry. It spreads the attributes over
+the call's DataFrames by metadata group: group 0 is the main DataFrame, keyed on the element's id, and each further
+group is a DataFrame of its own, passed only when something fills it (the linear model of a shunt, the generation part
+of a boundary line). A table attribute fills the DataFrame of its `rows_group` instead (tap-changer steps, non-linear
+shunt sections), or, when that group is 0, the main DataFrame itself (limit rows, curve points).
+
+The voltage level is the one exception, kept as an explicit `VoltageLevel` executor (`special_executor`): it takes
+two different calls in a row, `Network.create_voltage_levels` and then `create_voltage_level_topology`. When a call a
+profile needs is missing from the installed pypowsybl, its executor is `Unavailable`: the name checks report it and
+the startup check sets the profile aside (§14).
+
+Because calls are only ever taken from what pypowsybl was seen to call, a "substation feeder bay", which the
+metadata would happily describe, can never be attempted.
 
 ---
 
@@ -487,7 +507,7 @@ the line or transformer).
 The schema follows the installed version by construction; the profiles do not. Three mechanisms keep them honest.
 
 **Name checks** (`PROFILE_CHECKS` in `drift.py`). Twelve checks verify that every name a profile uses still exists
-in the installed pypowsybl: the element type is creatable, the executor and documentation calls exist, the
+in the installed pypowsybl: the element type is creatable, its observed call and the documentation calls exist, the
 required, managed, defaulted, enumerated and rule attributes are fields of the schema, every derivation produces a
 real field, no virtual or table attribute has become a pypowsybl field, the id is still the index, the connection
 attributes are present. `tests/plugins/grid_extension/creation/test_profiles_consistency.py` runs them for every profile.
@@ -514,8 +534,9 @@ These checks only see names. When upgrading pypowsybl, still review by hand:
 1. the enumerations in `profiles.py` — a new value is refused, a removed one accepted until pypowsybl rejects it (1.15
    has no `OFF` mode for an SVC and no `FIXED_TAP` mode for a phase shifter, so both use `regulating: false`);
 2. newly required attributes, which nothing flags before a call fails;
-3. new bay helpers or network modifications — a bay for `ground` or `three_windings_transformer` would let them move
-   to a bay executor;
+3. new bay helpers or network modifications — the snapshot records the bay helpers, so the startup report lists a new
+   one; a bay for `ground` or `three_windings_transformer` would let its profile switch to a bay connection, and
+   the call would then be picked up without naming it;
 4. the docstring format the mining relies on;
 5. the identifiable type names in `FEEDER_TYPES` (`removal_tools.py`);
 6. then run the tests, `scripts/creation_coverage.py --write`, and read the diff of `docs/grid_extension.md`.
@@ -540,9 +561,9 @@ These checks only see names. When upgrading pypowsybl, still review by hand:
 
 #### 16. Adding or improving a profile
 
-1. Add a `CreationProfile` with `_register(...)` in `profiles.py`: pick the executor and connection kind, list the
-   required attributes, the managed ones, defaults, units, enumerations, rules and derivations, and write the summary
-   and guidance. Name calls as strings.
+1. Add a `CreationProfile` with `_register(...)` in `profiles.py`: pick the connection kind (which picks the call),
+   list the required attributes, the managed ones, defaults, units, enumerations, rules and derivations, and write
+   the summary and guidance. Name the `docs` calls as strings.
 2. Run `uv run pytest tests/plugins/grid_extension`: the consistency tests flag any name the profile gets wrong.
 3. Add engine tests on a real network (`tests/plugins/grid_extension/creation/test_engine.py`), ideally one that runs a load flow on the
    result.

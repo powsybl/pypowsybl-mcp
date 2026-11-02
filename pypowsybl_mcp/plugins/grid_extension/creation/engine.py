@@ -311,11 +311,8 @@ class CreationEngine:
                     field_entry(item.name, item.kind)
                     for item in schema.group(profile.rows_group)
                     if item.name != schema.index_name
-                ]
-                or [
-                    field_entry(item.name, item.kind)
-                    for item in schema.fields
-                    if item.name != schema.index_name and item.name not in managed
+                    # rows of the main dataframe hide its managed fields too
+                    and not (profile.rows_group == 0 and item.name in managed)
                 ],
             }
         if profile.connection in CONNECTION_ATTRIBUTE:

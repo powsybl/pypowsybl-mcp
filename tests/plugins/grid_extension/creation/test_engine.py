@@ -985,11 +985,7 @@ def test_only_the_main_table_of_a_schema_only_type_is_accepted(bus_breaker):
 
     engine = CreationEngine(
         profiles={},
-        unprofiled={
-            "boundary_line": schema_only_profile(
-                "boundary_line", "create_boundary_lines"
-            )
-        },
+        unprofiled={"boundary_line": schema_only_profile("boundary_line")},
     )
     attributes = {
         "id": "BL",

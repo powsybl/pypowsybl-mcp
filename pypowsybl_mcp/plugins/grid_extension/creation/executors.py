@@ -6,19 +6,24 @@
 
 """How each element type is actually created in pypowsybl.
 
-The metadata says *what* a creation takes, never *how* to call it: a load goes
-through ``pypowsybl.network.create_load_bay(network, **attrs)``, a shunt through
-the same family but with two DataFrames, a substation through
-``Network.create_substations(**attrs)`` with no bay at all, and a voltage level
-through two calls in a row. Executors carry that knowledge, one class per
-calling convention, and each one also exposes the schema of the call it makes --
-so the field list still comes from pypowsybl even though the call does not.
+The calls themselves are observed, not written down: ``schema.CREATE_CALLS``
+and ``schema.BAY_CALLS`` give, for every element type, the ``Network.create_*``
+method or the bay helper that creates it and the names of its DataFrame
+parameters. :class:`DerivedCall` turns any of them into an executor: it splits
+the attributes over those DataFrames by metadata group, fills a table
+attribute's rows into the DataFrame they belong to, and makes the call. Which
+of the two calls a type uses follows from how it connects (see
+``profiles.CreationProfile.executor``).
 
 Injections and branches go through the *bay* helpers rather than the raw
 dataframe API on purpose: a bay builds the switching equipment the hosting
 voltage level requires (a breaker and a closed disconnector onto a busbar
 section in node/breaker, a plain attachment in bus/breaker), which is what makes
 one tool work on an IEEE test case and on a detailed grid file alike.
+
+The one convention no derived call covers is the voltage level: two different
+calls in a row, the second filling it with connection points.
+:class:`VoltageLevel` keeps it explicit.
 """
 
 from __future__ import annotations
@@ -29,7 +34,9 @@ from typing import Any
 import pandas as pd
 import pypowsybl as pp
 
+from pypowsybl_mcp.plugins.grid_extension.creation.context import CreationError
 from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
+    CreationCall,
     ElementSchema,
     Field,
     creation_schema,
@@ -104,81 +111,6 @@ class Executor:
 
 
 @dataclass(frozen=True)
-class FeederBay(Executor):
-    """An injection created with its bay: ``create_<x>_bay(network, **attrs)``."""
-
-    function: str
-
-    @property
-    def calls(self) -> tuple[str, ...]:
-        return (f"pp.network.{self.function}",)
-
-    def schema(self, element_type: str) -> ElementSchema:
-        return modification_schema(element_type, "CREATE_FEEDER_BAY")
-
-    def describe(self) -> str:
-        return (
-            "created with its bay: connected to the bus, or to the busbar section "
-            "through a breaker and a closed disconnector in node/breaker topology"
-        )
-
-    def execute(self, network, element_type, element_id, attributes):
-        getattr(pp.network, self.function)(network, id=element_id, **attributes)
-
-
-@dataclass(frozen=True)
-class BranchBays(Executor):
-    """A branch created with a bay at each end."""
-
-    function: str
-    modification: str
-
-    @property
-    def calls(self) -> tuple[str, ...]:
-        return (f"pp.network.{self.function}",)
-
-    def schema(self, element_type: str) -> ElementSchema:
-        return modification_schema(element_type, self.modification)
-
-    def describe(self) -> str:
-        return "created with a feeder bay at each end"
-
-    def execute(self, network, element_type, element_id, attributes):
-        getattr(pp.network, self.function)(network, id=element_id, **attributes)
-
-
-@dataclass(frozen=True)
-class Raw(Executor):
-    """An element pypowsybl creates without switching equipment.
-
-    Its attributes are passed as keywords, which only fill the main dataframe
-    of the call: with ``main_frame_only`` the schema leaves out the others (the
-    generation part of a boundary line) rather than accept fields that would
-    then be refused upstream.
-    """
-
-    method: str
-    main_frame_only: bool = False
-
-    @property
-    def calls(self) -> tuple[str, ...]:
-        return (f"Network.{self.method}",)
-
-    def schema(self, element_type: str) -> ElementSchema:
-        schema = creation_schema(element_type)
-        if self.main_frame_only:
-            return ElementSchema(fields=schema.group(0))
-        return schema
-
-    def describe(self) -> str:
-        return f"created directly with Network.{self.method}()"
-
-    def execute(self, network, element_type, element_id, attributes):
-        index = self.schema(element_type).index_name
-        getattr(network, self.method)(**{index: element_id}, **attributes)
-
-
-@dataclass(frozen=True)
 class VoltageLevel(Executor):
     """A voltage level plus the connection points inside it.
 
@@ -243,41 +175,78 @@ class VoltageLevel(Executor):
 
 
 @dataclass(frozen=True)
-class MultiFrameBay(Executor):
-    """A bay whose call takes several DataFrames, e.g. a shunt and its sections.
+class DerivedCall(Executor):
+    """Any observed pypowsybl creation call, from its registry entry.
 
-    ``extra_frames`` maps the keyword of each additional DataFrame to the schema
-    group holding its fields. A frame is filled either from flat attributes,
-    when its rows are single (the linear model of a shunt, the generation part
-    of a boundary line), or from the table attribute ``rows_attribute`` when it
-    is the frame named ``rows_frame`` (the sections of a non-linear shunt). A
-    frame nothing fills is not passed, so an optional part stays absent.
+    The attributes are spread over the call's DataFrames by metadata group:
+    group 0 is the main DataFrame (one row, keyed on the element's id), each
+    further group a DataFrame of its own, passed only when something fills it
+    (the linear model of a shunt, the generation part of a boundary line). The
+    rows of ``rows_attribute`` fill the DataFrame of ``rows_group`` instead (the
+    steps of a tap changer, the sections of a non-linear shunt), or, when that
+    group is 0, the main DataFrame itself (the rows of a limits group, the
+    points of a capability curve).
     """
 
-    function: str
-    main_frame: str
-    extra_frames: tuple[tuple[str, int], ...]
+    call: CreationCall
     rows_attribute: str | None = None
-    rows_frame: str | None = None
+    rows_group: int = 1
+    #: values a row of the table attribute gets for the columns it leaves out
     row_defaults: dict = field(default_factory=dict)
+    #: whether the call adds to an existing element (limits, tap changers)
+    attaches: bool = False
+    #: only the main DataFrame, for a type created from its schema alone
+    main_frame_only: bool = False
 
     @property
     def calls(self) -> tuple[str, ...]:
-        return (f"pp.network.{self.function}",)
+        return (self.call.name,)
+
+    @property
+    def uniform_rows(self) -> bool:
+        # Rows of the main DataFrame become one list per column upstream, so a
+        # column some rows leave out cannot be passed at all.
+        return bool(self.rows_attribute) and self.rows_group == 0
 
     def schema(self, element_type: str) -> ElementSchema:
-        return modification_schema(element_type, "CREATE_FEEDER_BAY")
+        schema = (
+            modification_schema(element_type, self.call.modification)
+            if self.call.modification
+            else creation_schema(element_type)
+        )
+        if self.main_frame_only:
+            return ElementSchema(fields=schema.group(0))
+        return schema
 
     def describe(self) -> str:
-        return "created with its bay, from several dataframes"
+        if self.call.modification == "CREATE_FEEDER_BAY":
+            return (
+                "created with its bay: connected to the bus, or to the busbar section "
+                "through a breaker and a closed disconnector in node/breaker topology"
+            )
+        if self.call.modification:
+            return "created with a feeder bay at each end"
+        if self.attaches and self.rows_attribute and self.rows_group > 0:
+            return (
+                f"attached to an existing element with {self.call.name}(), with "
+                f"its {self.rows_attribute} table"
+            )
+        if self.attaches:
+            return f"attached to an existing element with {self.call.name}()"
+        if self.rows_attribute:
+            return f"created with its {self.rows_attribute} table"
+        return f"created directly with {self.call.name}()"
 
     def execute(self, network, element_type, element_id, attributes):
         schema = self.schema(element_type)
-        frames = {}
+        index = schema.index_name
+        rows = attributes.get(self.rows_attribute) if self.rows_attribute else None
         taken: set[str] = {self.rows_attribute} if self.rows_attribute else set()
-        for keyword, group in self.extra_frames:
-            if keyword == self.rows_frame:
-                rows = attributes.get(self.rows_attribute) or []
+        frames: dict[str, pd.DataFrame] = {}
+
+        extra = () if self.main_frame_only else self.call.frames[1:]
+        for group, keyword in enumerate(extra, start=1):
+            if self.rows_attribute and group == self.rows_group:
                 if rows:
                     frames[keyword] = _frame(
                         [
@@ -292,107 +261,56 @@ class MultiFrameBay(Executor):
             if row:
                 taken |= set(row)
                 frames[keyword] = _frame([{"id": element_id, **row}], index="id")
-        main = {name: value for name, value in attributes.items() if name not in taken}
-        frames[self.main_frame] = _frame([{"id": element_id, **main}], index="id")
-        getattr(pp.network, self.function)(network, **frames)
 
-
-@dataclass(frozen=True)
-class RowGroup(Executor):
-    """A call taking a header DataFrame plus a table of rows, e.g. tap changers.
-
-    The rows live in schema group 1 and are supplied as a list of dictionaries
-    under ``rows_attribute``; every row is completed with the columns the API
-    expects, defaulted to the neutral value.
-    """
-
-    method: str
-    rows_attribute: str
-    row_defaults: dict = field(default_factory=dict)
-
-    @property
-    def calls(self) -> tuple[str, ...]:
-        return (f"Network.{self.method}",)
-
-    def schema(self, element_type: str) -> ElementSchema:
-        return creation_schema(element_type)
-
-    def describe(self) -> str:
-        return f"created with its {self.rows_attribute} table"
-
-    def execute(self, network, element_type, element_id, attributes):
-        schema = self.schema(element_type)
-        rows = attributes.get(self.rows_attribute) or []
-        header = {
-            name: value
-            for name, value in attributes.items()
-            if name != self.rows_attribute
-        }
-        row_names = {item.name for item in schema.group(1)} - {"id"}
-        table = [
-            {
-                "id": element_id,
-                **{name: self.row_defaults.get(name, 0.0) for name in row_names},
-                **{name: value for name, value in row.items() if name in row_names},
-            }
-            for row in rows
-        ]
-        getattr(network, self.method)(
-            _frame([{"id": element_id, **header}], index="id"),
-            _frame(table, index="id"),
-        )
-
-
-@dataclass(frozen=True)
-class Attachment(Executor):
-    """Attributes attached to an element that already exists, e.g. limits.
-
-    The "id" of the call is the id of the target element, and several rows may
-    describe one target (the sides and durations of a limits group), so the
-    caller supplies them under ``rows_attribute``.
-    """
-
-    # The rows become one list per column, so a column some rows leave out
-    # cannot be passed at all.
-    uniform_rows = True
-
-    method: str
-    rows_attribute: str
-
-    @property
-    def calls(self) -> tuple[str, ...]:
-        return (f"Network.{self.method}",)
-
-    def schema(self, element_type: str) -> ElementSchema:
-        return creation_schema(element_type)
-
-    def describe(self) -> str:
-        return f"attached to an existing element with Network.{self.method}()"
-
-    def execute(self, network, element_type, element_id, attributes):
-        schema = self.schema(element_type)
-        index = schema.index_name
-        rows = attributes.get(self.rows_attribute)
-        if rows is None:
-            rows = [
+        if self.rows_attribute and self.rows_group == 0:
+            main = [
+                {index: element_id, **self.row_defaults, **row} for row in rows or []
+            ]
+        else:
+            main = [
                 {
-                    name: value
-                    for name, value in attributes.items()
-                    if name != self.rows_attribute
+                    index: element_id,
+                    **{
+                        name: value
+                        for name, value in attributes.items()
+                        if name not in taken
+                    },
                 }
             ]
-        columns = {name for name in schema.names if name != index}
-        payload: dict[str, list] = {index: []}
-        for row in rows:
-            payload[index].append(element_id)
-            for name in columns:
-                if name in row:
-                    payload.setdefault(name, []).append(row[name])
-        # Only pass the columns every row provided; a ragged call is rejected
-        # upstream with a much less helpful message.
-        complete = {
-            name: values
-            for name, values in payload.items()
-            if len(values) == len(payload[index])
-        }
-        getattr(network, self.method)(**complete)
+        frames[self.call.frames[0]] = _frame(main, index=index)
+
+        if self.call.owner == "Network":
+            getattr(network, self.call.function)(**frames)
+        else:
+            getattr(pp.network, self.call.function)(network, **frames)
+
+
+@dataclass(frozen=True)
+class Unavailable(Executor):
+    """The call a profile needs, missing from the installed pypowsybl.
+
+    Never raised at import: the profile is then reported, and set aside, by the
+    startup check (``drift.py``) instead of stopping the server.
+    """
+
+    element_type: str
+    family: str
+
+    @property
+    def calls(self) -> tuple[str, ...]:
+        return ()
+
+    def _message(self) -> str:
+        return f"the installed pypowsybl has no {self.family} for {self.element_type}"
+
+    def missing_call(self) -> str | None:
+        return self._message()
+
+    def schema(self, element_type: str) -> ElementSchema:
+        raise CreationError(self._message())
+
+    def describe(self) -> str:
+        return self._message()
+
+    def execute(self, network, element_type, element_id, attributes):
+        raise CreationError(self._message())

@@ -411,5 +411,17 @@
   },
   "unsupported": [
     "alias"
+  ],
+  "bays": [
+    "battery",
+    "boundary_line",
+    "generator",
+    "lcc_converter_station",
+    "line",
+    "load",
+    "shunt_compensator",
+    "static_var_compensator",
+    "two_windings_transformer",
+    "vsc_converter_station"
   ]
 }

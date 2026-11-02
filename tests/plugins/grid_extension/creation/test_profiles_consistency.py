@@ -22,7 +22,8 @@ from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
     Connection,
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
-    CREATION_METHODS,
+    BAY_CALLS,
+    CREATE_CALLS,
     creatable_element_types,
 )
 
@@ -90,7 +91,7 @@ def test_every_schema_only_type_has_a_creation_method(name):
     profile = UNPROFILED[name]
     assert profile.schema_only
     assert profile.executor.missing_call() is None
-    assert hasattr(Network, profile.executor.method)
+    assert hasattr(Network, profile.executor.call.function)
     assert profile.summary
 
 
@@ -98,20 +99,37 @@ def test_profiles_and_fallbacks_cover_every_creatable_type():
     """Nothing pypowsybl can create is left out unless it has no create_* call."""
     assert not set(PROFILES) & set(UNPROFILED)
     left_out = set(creatable_element_types()) - set(PROFILES) - set(UNPROFILED)
-    assert not left_out & set(CREATION_METHODS)
+    assert not left_out & set(CREATE_CALLS)
 
 
-def test_every_creation_method_is_observed():
-    """The spy must see every non-deprecated create_* call but create_extensions."""
+def test_no_profile_names_its_call():
+    """Every call comes from the observed registries, the voltage level aside."""
+    observed = {call.name for call in [*CREATE_CALLS.values(), *BAY_CALLS.values()]}
+    for name, profile in PROFILES.items():
+        if profile.special_executor is not None:
+            continue
+        assert set(profile.executor.calls) <= observed, name
+
+
+def test_bay_connected_types_go_through_their_bay():
+    for name, profile in PROFILES.items():
+        if profile.connection in (Connection.SINGLE, Connection.DOUBLE):
+            assert profile.executor.calls == (BAY_CALLS[name].name,), name
+
+
+def test_the_registries_cover_every_creation_call():
+    """Every non-deprecated create_* call, and every bay helper, is observed."""
+    import pypowsybl.network as pn
     from pypowsybl.network import Network
 
-    observed = set(CREATION_METHODS.values())
-    for profile in PROFILES.values():
-        calls = profile.executor.calls
-        for call in calls:
-            if call.startswith("Network."):
-                assert call.removeprefix("Network.") in observed
-    assert all(hasattr(Network, method) for method in observed)
+    assert len(CREATE_CALLS) == len(set(CREATE_CALLS.values())) >= 32
+    assert {"load", "line", "two_windings_transformer", "boundary_line"} <= set(
+        BAY_CALLS
+    )
+    for call in [*CREATE_CALLS.values(), *BAY_CALLS.values()]:
+        owner = Network if call.owner == "Network" else pn
+        assert hasattr(owner, call.function), call.name
+        assert call.frames, call.name
 
 
 def test_the_descriptor_renders_for_every_profile(profile):
