@@ -87,12 +87,14 @@ removed element no longer exists in the network at all.
 |---------------------------|----------------------------------------------------------------------------------------------------------|
 | `modify_network_topology` | Couple two busbars, insert a substation on a line, tap a line into another, replace a tee point, or revert a cut or a tap. |
 
-One tool for pypowsybl's six topology modifications, named after them; the description lists each with its
-attributes. Before pypowsybl is called, the server checks what it would otherwise accept and get wrong: a position
-along the line between 0 and 100 %, a busbar at the line's nominal voltage (a line cannot change voltage), lines and
-busbars that exist. A revert also removes the switches pypowsybl leaves with nothing behind them. The reply has the
-keys of the creation replies, with the switches built and removed. See §14 of
-[element_creation_and_removal.md](element_creation_and_removal.md).
+One tool for pypowsybl's six topology modifications, named after them; the description lists each with its attributes.
+Before pypowsybl is called, the server checks what it would otherwise accept and get wrong: a position along the line
+between 0 and 100 %, a busbar at the line's nominal voltage (a line cannot change voltage), lines and busbars that
+exist, and the ids pypowsybl would derive for what it creates are free (on most of them pypowsybl fails, when taken,
+after it has cut the line). A revert also removes the switches pypowsybl leaves with nothing behind them; in
+bus/breaker, the empty bus they led to stays, since pypowsybl cannot remove a bus, and the reply names it. The reply has
+the keys of the creation replies, with the switches built and removed; a failure lists whatever pypowsybl had already
+changed. See §14 of [element_creation_and_removal.md](element_creation_and_removal.md).
 
 ---
 

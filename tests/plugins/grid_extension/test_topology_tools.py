@@ -183,7 +183,37 @@ async def test_a_pypowsybl_failure_invalidates_the_load_flow(
     assert not reply["success"]
     assert reply["loadflow_invalidated"]
     assert reply["errors"] == [{"problem": "half way", "hint": None}]
+    assert reply["created_ids"] == reply["removed_ids"] == []
+    assert reply["message"] == "Failed to apply connect_voltage_level_on_line: half way"
     proxy.invalidate_loadflow.assert_called_with("nb")
+
+
+@pytest.mark.asyncio
+async def test_a_failure_lists_what_pypowsybl_had_already_changed(
+    tools, mock_ctx, network, monkeypatch
+):
+    real = pp.network.connect_voltage_level_on_line
+
+    def fails_half_way(network, **kwargs):
+        real(network, **kwargs)
+        raise pp.PyPowsyblError("half way")
+
+    monkeypatch.setattr(pp.network, "connect_voltage_level_on_line", fails_half_way)
+
+    reply = json.loads(
+        await tools.modify_network_topology(
+            "connect_voltage_level_on_line", CUT, ctx=mock_ctx
+        )
+    )
+
+    assert set(reply) == KEYS
+    assert not reply["success"]
+    assert reply["created_ids"] == ["LINE_S2S3_1", "LINE_S2S3_2"]
+    assert reply["removed_ids"] == ["LINE_S2S3"]
+    assert reply["switches"]["created"] == 4
+    assert "pypowsybl had already changed the network" in reply["message"]
+    assert "not as it was before this call" in reply["notes"][0]
+    assert reply["loadflow_invalidated"]
 
 
 @pytest.mark.asyncio

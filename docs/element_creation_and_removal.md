@@ -556,7 +556,11 @@ error:
   `NullPointerException`), and ids of new lines that are free;
 - two different busbars of one voltage level for a coupling device, lines that meet at a voltage level for a merge,
   and, for a tee replacement, a busbar in the voltage level the removed branch leads to;
-- the merged line id a revert needs, which pypowsybl does not require and then crashes without.
+- the merged line id a revert needs, which pypowsybl does not require and then crashes without;
+- the ids pypowsybl derives for what it creates, when they are not given: the two line sections (`<line>_1`,
+  `<line>_2`), the tee point (`<line>_VL`) and, in a bus/breaker voltage level, the bus per section of a cut
+  (`<section>_BUS`) or the bus and switch of a tap (`<line>_BUS`, `<line>_SW`). On most of them pypowsybl fails, when
+  the id is already taken, after it has cut the line, so the refusal names the id and how to avoid it.
 
 Every refusal carries the operation's descriptor as its hint, like a creation's (§10).
 
@@ -565,7 +569,11 @@ and removed, the switches built and removed. Two things are added to what pypows
 
 - **Orphan switches.** pypowsybl's reverts leave the bays that connected the merged lines in place, with nothing behind
   them. In node/breaker voltage levels, the engine removes the switches that the operation left ending at an empty
-  node — the breaker, then the disconnector behind it — so a cut and its revert give back the same switch count.
+  node — the breaker, then the disconnector behind it — so a cut and its revert give back the same switch count. In
+  bus/breaker voltage levels, each removed line ended at a bus pypowsybl created for it, joined by one switch to the
+  busbar; that switch is removed too. pypowsybl cannot remove a bus (`remove_elements` refuses even an empty one), so
+  the bus stays, empty and cut off, and a note names it: a later cut or tap that would create the same id is refused
+  by the checks above. A tap is the case that cannot be worked around, since its bus is always named after the line.
 - **Notes.** A new line without operational limits is noted, as for a creation: a line cut in two keeps its limits on
   both halves, a tapped line has none. When a revert empties a voltage level, pypowsybl removes it and its substation;
   a real (non-fictitious) one removed this way is noted too, since the caller may have built it for the cut.
@@ -573,7 +581,9 @@ and removed, the switches built and removed. Two things are added to what pypows
 The reply has the keys of the creation replies: `success`, `network_id`, `operation`, `methods`, `created_ids`,
 `removed_ids`, `switches` (`created`, `removed`, `orphans_removed`), `notes`, `errors` (each with its hint), `message`
 and `loadflow_invalidated`. Cached load-flow results are cleared after a change, or after a pypowsybl error, which may
-have left the operation half applied (§12).
+have left the operation half applied (§12). When pypowsybl did change the network before failing, the failure reply
+lists those changes in `created_ids`, `removed_ids` and `switches`, says so in its `message`, and adds a note that the
+network is not as it was before the call.
 
 The startup check (§15) covers the operations too: one naming an attribute or a call pypowsybl no longer has is set
 aside, and a topology modification new upstream is reported, as is a change in the attributes of one.

@@ -215,7 +215,12 @@ modify_network_topology("connect_voltage_level_on_line",
 * `revert_connect_voltage_level_on_line` and `revert_create_line_on_line` merge
   the halves back into one line; the switches left without equipment are
   removed with them. If that empties a voltage level, pypowsybl removes it and
-  its substation, and the reply says so in `notes`.
+  its substation, and the reply says so in `notes`. In a bus/breaker voltage
+  level, pypowsybl cannot remove the bus it created for a cut or a tap: it
+  stays, empty, and a line tapped there and reverted cannot be tapped there
+  again (the bus is named after the line).
+* If pypowsybl fails part way, the failure reply lists in `created_ids` and
+  `removed_ids` what it had already changed: check those before going on.
 
 The same rule applies as for building: only when the user asked for this
 change. Opening a line is `set_line_status`, and switching busbars apart is
