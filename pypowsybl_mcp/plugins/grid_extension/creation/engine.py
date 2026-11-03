@@ -81,9 +81,11 @@ CONNECTION_ATTRIBUTE = {
 SCHEMA_ONLY = "schema only: attribute names and types; pypowsybl checks the rest"
 
 CONNECTION_HELP = (
-    "A busbar section id in a node/breaker voltage level, or a bus of the "
-    "bus/breaker view in a bus/breaker one. Not a bus of the bus view (the "
-    "'VL1_0'-style ids load-flow results report)."
+    "A busbar section id in a node/breaker voltage level (listed by "
+    "get_network_element_data(element_type='busbar_section')), or a configured "
+    "bus of the bus/breaker view in a bus/breaker one (listed by "
+    "get_network_element_data(element_type='bus_from_bus_breaker_view')). Not a "
+    "bus of the bus view (the 'VL1_0'-style ids load-flow results report)."
 )
 
 

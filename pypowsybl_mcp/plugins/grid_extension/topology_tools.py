@@ -81,8 +81,11 @@ class TopologyTools(PyPowsyblTool):
                 modification:
                 {operations}
             attributes (dict): Its attributes. A busbar is a busbar section id in
-                a node/breaker voltage level, or a bus of the bus/breaker view in
-                a bus/breaker one -- never a bus of the bus view ("VL1_0").
+                a node/breaker voltage level (element_type 'busbar_section' in
+                get_network_element_data), or a configured bus of the bus/breaker
+                view in a bus/breaker one (element_type
+                'bus_from_bus_breaker_view') -- never a bus of the bus view
+                ("VL1_0").
             network_id (str, optional): Network to change. If None, uses the
                 current network. Default: None.
 

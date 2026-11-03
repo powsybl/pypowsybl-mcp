@@ -158,9 +158,11 @@ class CreationTools(PyPowsyblTool):
                 Minimal sets of the most-used types:
                 {cheat_sheet}
                 Injections and branches attach to a **bus or busbar section**:
-                a busbar section id in a node/breaker voltage level, a bus of the
-                bus/breaker view in a bus/breaker one — never a bus of the bus view
-                (the "VL1_0"-style ids load-flow results report). The tool says
+                a busbar section id in a node/breaker voltage level (element_type
+                'busbar_section' in get_network_element_data), a configured bus of
+                the bus/breaker view in a bus/breaker one (element_type
+                'bus_from_bus_breaker_view') — never a bus of the bus view (the
+                "VL1_0"-style ids load-flow results report). The tool says
                 which ids would have worked if you pass the wrong kind.
                 Limits and tap changers attach to an element that already exists:
                 pass its id as element_id.
