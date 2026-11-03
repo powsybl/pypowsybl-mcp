@@ -341,7 +341,8 @@ class CreationTools(PyPowsyblTool):
         Notes:
             - Every item is checked against its schema **before** anything is
               created -- attribute names, required attributes, types, accepted
-              values and table rows -- and so is the batch itself: two items
+              values, table rows and the rules that need no network (such as
+              min_p <= target_p <= max_p) -- and so is the batch itself: two items
               creating elements with the same id are refused. Such a mistake
               in the last item leaves the network untouched, and every such
               mistake is reported at once

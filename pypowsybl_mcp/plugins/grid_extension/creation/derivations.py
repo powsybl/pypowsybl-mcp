@@ -36,6 +36,9 @@ class Derivation:
     #: Annotated but not assigned, so subclasses that declare it without a
     #: default do not inherit one and stay ordered correctly as dataclasses.
     produces: str
+    #: whether it reads the network or the connection points; the others also
+    #: run in the pre-check of a batch, before anything is created
+    needs_network: bool = False
 
     def describe(self) -> str:  # pragma: no cover - overridden everywhere
         raise NotImplementedError
@@ -56,6 +59,7 @@ class PositionOrder(Derivation):
 
     produces: str
     side: int = 0
+    needs_network = True
 
     def describe(self) -> str:
         return (
@@ -89,6 +93,7 @@ class DirectionOnlyInNodeBreaker(Derivation):
 
     produces: str
     side: int = 0
+    needs_network = True
 
     def describe(self) -> str:
         return f"'{self.produces}' applies to node/breaker voltage levels only"
@@ -110,6 +115,7 @@ class FromConnection(Derivation):
     produces: str
     attribute: str
     side: int = 0
+    needs_network = True
 
     def describe(self) -> str:
         return (
@@ -135,6 +141,7 @@ class NominalVoltage(Derivation):
 
     produces: str
     side: int
+    needs_network = True
 
     def describe(self) -> str:
         return (
