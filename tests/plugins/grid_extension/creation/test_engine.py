@@ -632,6 +632,15 @@ def test_ratio_tap_changer_generates_its_steps(engine, site):
     assert steps.iloc[-1]["rho"] == pytest.approx(1.1)
 
 
+def test_a_tap_changer_numbered_from_low_tap_starts_on_its_middle_step(engine, site):
+    # positions run from low_tap: the middle of -8..8 is 0, not 8
+    engine.create(site, "ratio_tap_changer", {"element_id": "TR", "low_tap": -8})
+
+    changers = site.get_ratio_tap_changers()
+    assert changers.loc["TR", "high_tap"] == 8
+    assert changers.loc["TR", "tap"] == 0
+
+
 def test_a_misspelt_step_column_is_rejected_not_dropped(engine, site):
     with pytest.raises(CreationError, match="no column 'rh0'. Did you mean 'rho'"):
         engine.create(

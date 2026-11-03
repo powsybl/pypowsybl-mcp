@@ -208,11 +208,13 @@ class MiddleTap(Derivation):
     """Start a tap changer on its neutral (middle) step.
 
     A transformer is normally commissioned in the middle of its range, and the
-    middle step of a generated ladder is the neutral one.
+    middle step of a generated ladder is the neutral one. Tap positions are
+    numbered from ``low_tap``, so the middle step is counted from there.
     """
 
     produces: str = "tap"
     rows: str = "steps"
+    low: str = "low_tap"
 
     def describe(self) -> str:
         return f"'{self.produces}' defaults to the middle step"
@@ -222,7 +224,8 @@ class MiddleTap(Derivation):
             return
         steps = context.attributes.get(self.rows) or []
         if steps:
-            context.attributes[self.produces] = len(steps) // 2
+            low = int(context.attributes.get(self.low) or 0)
+            context.attributes[self.produces] = low + len(steps) // 2
 
 
 @dataclass(frozen=True)
