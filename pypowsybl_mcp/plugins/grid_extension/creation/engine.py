@@ -45,6 +45,7 @@ from pypowsybl_mcp.plugins.grid_extension.creation.context import (
     ConnectionPoint,
     CreationContext,
     CreationError,
+    with_article,
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.doc_mining import (
     attribute_docs,
@@ -538,7 +539,8 @@ class CreationEngine:
         for name in given:
             if name in managed:
                 raise CreationError(
-                    f"'{name}' is set automatically for a {profile.element_type} and "
+                    f"'{name}' is set automatically for {with_article(profile.element_type)} "
+                    "and "
                     "must not be passed",
                     hint={"set_automatically": sorted(managed)},
                 )
@@ -574,8 +576,8 @@ class CreationEngine:
             value = context.attributes.get(name)
             if not value:
                 raise CreationError(
-                    f"'{name}' is required to connect a {profile.element_type}. "
-                    + CONNECTION_HELP,
+                    f"'{name}' is required to connect "
+                    f"{with_article(profile.element_type)}. " + CONNECTION_HELP,
                     hint={"connection_attributes": list(names)},
                 )
             points.append(
@@ -686,7 +688,8 @@ class CreationEngine:
         }
         if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
             raise CreationError(
-                f"'{name}' of a {profile.element_type} must be a list of objects, "
+                f"'{name}' of {with_article(profile.element_type)} must be a list of "
+                "objects, "
                 f"one per row, with the columns {', '.join(sorted(table.columns))}",
                 hint=hint,
             )
@@ -752,7 +755,8 @@ class CreationEngine:
         hint = {"table_attribute": name, "columns": sorted(fields)}
         if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
             raise CreationError(
-                f"'{name}' of a {profile.element_type} must be a list of objects, "
+                f"'{name}' of {with_article(profile.element_type)} must be a list of "
+                "objects, "
                 f"one per row, with the columns {', '.join(sorted(fields))}",
                 hint=hint,
             )
@@ -966,8 +970,8 @@ def _coerce(item, value, element_type: str):
             return _boolean(value)
     except (TypeError, ValueError) as error:
         raise CreationError(
-            f"'{item.name}' of a {element_type} must be "
-            f"{'an' if item.kind[0] in 'aeiou' else 'a'} {item.kind}, got {value!r}"
+            f"'{item.name}' of {with_article(element_type)} must be "
+            f"{with_article(item.kind)}, got {value!r}"
         ) from error
     return value
 

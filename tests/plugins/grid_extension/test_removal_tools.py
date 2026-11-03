@@ -213,6 +213,65 @@ async def test_remove_voltage_level_needs_cascade(
 
 
 @pytest.mark.asyncio
+async def test_an_emptied_voltage_level_needs_no_cascade(
+    removal_tools, creation_tools, mock_ctx, bus_breaker_network
+):
+    """Its own bus is not equipment: nothing goes that the caller did not name."""
+    await _datacenter_site(creation_tools, mock_ctx)
+    await removal_tools.remove_network_elements(
+        ["DATACENTER", "LINE_B4_DC"], ctx=mock_ctx
+    )
+
+    result = await removal_tools.remove_network_elements(["VL_DC"], ctx=mock_ctx)
+
+    item = _item(result, "VL_DC")
+    assert item["status"] == "removed"
+    assert item["message"] == "removed voltage level 'VL_DC', which held no equipment"
+    assert item["cascade"] == {"inside": {"bus": 1}, "switches": 0, "beyond": {}}
+    assert json.loads(result)["success"]
+    assert "VL_DC" not in bus_breaker_network.get_voltage_levels().index
+
+
+@pytest.mark.asyncio
+async def test_an_empty_node_breaker_site_needs_no_cascade(
+    removal_tools, creation_tools, mock_ctx, node_breaker_network
+):
+    """Busbar sections and the breakers between them are the level's own structure."""
+    await creation_tools.create_network_elements(
+        [
+            {"element_type": "substation", "id": "S5"},
+            {
+                "element_type": "voltage_level",
+                "id": "S5VL1",
+                "substation_id": "S5",
+                "nominal_v": 400.0,
+                "topology_kind": "NODE_BREAKER",
+                "aligned_buses_or_busbar_count": 2,
+                "section_count": 2,
+                "switch_kinds": ["BREAKER"],
+            },
+        ],
+        network_id="nb",
+        ctx=mock_ctx,
+    )
+    assert (
+        len(node_breaker_network.get_busbar_sections().filter(like="S5VL1", axis=0))
+        == 4
+    )
+
+    result = await removal_tools.remove_network_elements(
+        ["S5"], network_id="nb", ctx=mock_ctx
+    )
+
+    item = _item(result, "S5")
+    assert item["status"] == "removed"
+    assert item["cascade"]["inside"] == {"busbar_section": 4}
+    assert item["cascade"]["switches"] > 0
+    assert "S5" not in node_breaker_network.get_substations().index
+    assert "S5VL1" not in node_breaker_network.get_voltage_levels().index
+
+
+@pytest.mark.asyncio
 async def test_remove_substation_needs_cascade(
     removal_tools, creation_tools, mock_ctx, bus_breaker_network
 ):

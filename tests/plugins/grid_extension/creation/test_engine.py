@@ -12,6 +12,7 @@ import pytest
 from pypowsybl_mcp.plugins.grid_extension.creation.context import (
     BatchRejected,
     CreationError,
+    with_article,
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.engine import (
     CreationEngine,
@@ -490,6 +491,50 @@ def test_operational_limits_go_in_the_group_named_once(engine, site):
     )
 
     assert set(_limits_of(site, "LINE_DC")["group_name"]) == {"WINTER"}
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [
+        {"permanent_limit": 300.0, "group_name": "WINTER"},
+        {
+            "limits": [
+                {"value": 300.0, "acceptable_duration": -1, "group_name": "WINTER"}
+            ]
+        },
+    ],
+)
+def test_limits_in_a_named_group_come_with_a_note(engine, site, attributes):
+    """The analyses only read the selected group, which a named one is not."""
+    report = engine.create(
+        site, "operational_limits", {"element_id": "LINE_DC", **attributes}
+    )
+
+    (note,) = [note for note in report.notes if "selected group" in note]
+    assert "group(s) WINTER" in note
+    assert "without group_name" in note
+    selected = site.get_operational_limits().reset_index()
+    assert "LINE_DC" not in set(selected["element_id"])
+
+
+@pytest.mark.parametrize("group", [None, "DEFAULT"])
+def test_limits_in_the_default_group_need_no_note(engine, site, group):
+    attributes = {"element_id": "LINE_DC", "permanent_limit": 300.0}
+    if group:
+        attributes["group_name"] = group
+
+    report = engine.create(site, "operational_limits", attributes)
+
+    assert not [note for note in report.notes if "selected group" in note]
+
+
+def test_messages_put_the_right_article_before_a_type(engine):
+    assert with_article("load") == "a load"
+    assert with_article("operational_limits") == "an operational_limits"
+    assert with_article("integer") == "an integer"
+    rules = engine.describe("operational_limits")["rules"]
+    assert "'limits' needs at least 1 entry" in rules
+    assert any("'group_name' is set to anything but 'DEFAULT'" in r for r in rules)
 
 
 def test_explicit_limit_rows_take_the_side_named_once(engine, site):

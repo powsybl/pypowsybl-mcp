@@ -24,6 +24,7 @@ from mcp.server.mcpserver import Context
 from pypowsybl_mcp.plugins.grid_extension.creation.context import (
     BatchRejected,
     CreationError,
+    with_article,
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.drift import startup_check
 from pypowsybl_mcp.plugins.grid_extension.creation.engine import CreationEngine
@@ -223,7 +224,7 @@ class CreationTools(PyPowsyblTool):
         except NetworkNotFoundError as e:
             return _reply(_rejected(network_id, element_type, [_error(str(e))], str(e)))
 
-        logger.debug(f"Creating a {element_type} in network {network_id}")
+        logger.debug(f"Creating {with_article(element_type)} in network {network_id}")
 
         methods = self._methods_of(element_type)
         try:
@@ -231,7 +232,7 @@ class CreationTools(PyPowsyblTool):
         except CreationError as error:
             # Raised before anything reaches pypowsybl: the network, and the
             # results computed on it, are unchanged.
-            message = f"Failed to create a {element_type}: {error!s}"
+            message = f"Failed to create {with_article(element_type)}: {error!s}"
             logger.warning(message)
             return _reply(
                 _rejected(
@@ -245,7 +246,7 @@ class CreationTools(PyPowsyblTool):
         except (pp.PyPowsyblError, ValueError, KeyError) as error:
             # pypowsybl may have applied part of the call before refusing it.
             proxy.invalidate_loadflow(network_id)
-            message = f"Failed to create a {element_type}: {error!s}"
+            message = f"Failed to create {with_article(element_type)}: {error!s}"
             logger.error(message)
             return _reply(
                 _rejected(

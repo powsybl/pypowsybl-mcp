@@ -326,6 +326,7 @@ Rules run after defaults and derivations, so they see the final values:
 | `SameSubstation`     | both ends in one substation                                       | two-windings transformer                        |
 | `BusBreakerOnly`     | refused in node/breaker topology                                  | ground                                          |
 | `WarnIfDifferent`    | not an error: a note in the reply                                 | a line between two different nominal voltages   |
+| `NoteIfGiven`        | not an error: a note when an attribute is set (on the element or a row) | limits put in a group other than `DEFAULT`, which the analyses ignore |
 | `RowsRequired`       | a table attribute needs a minimum number of rows                  | at least two tap positions, two curve points    |
 | `ColumnRequired`, `AtMostRows` | every row gives a column; a count bounded by the number of rows | every shunt section has `b`; sections in service |
 | `Exclusive`          | two ways of describing one thing, never both                      | identical shunt sections, or one row per section |
@@ -472,8 +473,8 @@ network and the matching pypowsybl removal is applied.
 |-------------------------------------------------------------|---------------------------------------------------|
 | loads, generators, batteries, lines, transformers, shunts, SVCs, boundary lines, converter stations | `remove_feeder_bays`: the element **and** the breakers and disconnectors that attached it |
 | HVDC line                                                   | `remove_hvdc_lines`, with its converter stations   |
-| voltage level                                               | `remove_voltage_levels`, needs `cascade=True`      |
-| substation                                                  | its voltage levels, then the substation; needs `cascade=True` if it holds any |
+| voltage level                                               | `remove_voltage_levels`, needs `cascade=True` unless it holds no equipment |
+| substation                                                  | its voltage levels, then the substation; needs `cascade=True` if they hold equipment |
 | anything else (switches, buses, busbar sections, …)         | `Network.remove_elements`                          |
 | the network itself                                          | refused: `remove_network()` drops a network from the session |
 
@@ -510,6 +511,11 @@ the record, on a voltage level or substation actually removed):
 The summary scans every element table for the voltage-level columns of each end, then follows HVDC lines and tie
 lines. A test compares it with what `remove_voltage_levels` actually removes, for every voltage level of five sample
 networks. Switches are counted inside the voltage level only: the bays at the far end of its branches go too.
+
+A voltage level that holds **no equipment** passes the gate: when its cascade has nothing beyond it and nothing inside
+but buses and busbar sections (and the switches between them), it is what creating the voltage level built, and
+removing it loses nothing the caller did not name. It is removed without `cascade=True`, with the message "which held
+no equipment"; so is a substation whose voltage levels are all in that state.
 
 Removal is not undoable, and limits, tap changers and reactive limits have no removal of their own: their id is that
 of the element they belong to, so removing it removes the line, transformer or generator. Creating them again

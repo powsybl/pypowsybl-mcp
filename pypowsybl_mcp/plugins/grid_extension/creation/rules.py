@@ -25,7 +25,12 @@ from pypowsybl_mcp.plugins.grid_extension.creation.context import (
     BUS_BREAKER,
     CreationContext,
     CreationError,
+    with_article,
 )
+
+
+def _entries(count: int) -> str:
+    return f"{count} entry" if count == 1 else f"{count} entries"
 
 
 class Rule:
@@ -262,7 +267,8 @@ class BusBreakerOnly(Rule):
             raise CreationError(
                 f"Voltage level '{point.voltage_level_id}' is in "
                 f"{point.topology_kind} topology, and pypowsybl provides no bay "
-                f"creation for a {context.element_type}: it can only be created on "
+                f"creation for {with_article(context.element_type)}: it can only be "
+                "created on "
                 f"a bus of a {BUS_BREAKER} voltage level. Use "
                 "generate_python_script() to build it with its own switching "
                 "equipment"
@@ -292,6 +298,37 @@ class WarnIfDifferent(Rule):
                     side1=getattr(side1, self.what), side2=getattr(side2, self.what)
                 )
             )
+
+
+@dataclass(frozen=True)
+class NoteIfGiven(Rule):
+    """Not an error: note it in the report when an attribute is given a value.
+
+    The value is looked for on the element and on every row of ``rows``, and a
+    value equal to ``unless`` is left alone.
+    """
+
+    field: str
+    message: str
+    rows: str = ""
+    unless: object = None
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return (self.field,)
+
+    def describe(self) -> str:
+        unless = f" to anything but '{self.unless}'" if self.unless else ""
+        return f"a note is added when '{self.field}' is set{unless}"
+
+    def apply(self, context: CreationContext) -> None:
+        rows = context.attributes.get(self.rows) if self.rows else None
+        values = [context.attributes.get(self.field)]
+        if isinstance(rows, list):
+            values += [row.get(self.field) for row in rows if isinstance(row, dict)]
+        given = sorted({str(v) for v in values if v not in (None, "", self.unless)})
+        if given:
+            context.notes.append(self.message.format(value=", ".join(given)))
 
 
 @dataclass(frozen=True)
@@ -334,14 +371,14 @@ class RowsRequired(Rule):
         return ()
 
     def describe(self) -> str:
-        return f"'{self.attribute}' needs at least {self.minimum} entries"
+        return f"'{self.attribute}' needs at least {_entries(self.minimum)}"
 
     def apply(self, context: CreationContext) -> None:
         rows = context.attributes.get(self.attribute) or []
         if len(rows) < self.minimum:
             because = f" ({self.because})" if self.because else ""
             raise CreationError(
-                f"'{self.attribute}' needs at least {self.minimum} entries, got "
+                f"'{self.attribute}' needs at least {_entries(self.minimum)}, got "
                 f"{len(rows)}{because}"
             )
 

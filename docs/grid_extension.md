@@ -76,7 +76,8 @@ replies in §10.
 
 Removal is generic for the same reason creation is: an id is all it takes, the type is read from the network and the
 matching pypowsybl removal is applied. Removing a voltage level or a substation requires `cascade=True`, since it also
-deletes everything they contain; without it the tool reports what *would* be removed, including what lies beyond the
+deletes everything they contain (a voltage level holding no equipment, only its buses or busbar sections, needs no
+confirmation); without it the tool reports what *would* be removed, including what lies beyond the
 voltage level (branches, HVDC links with their far-end converter station, tie lines). Unlike `set_line_status`, a
 removed element no longer exists in the network at all.
 

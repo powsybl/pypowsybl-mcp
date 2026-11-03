@@ -364,7 +364,7 @@ _register(
         ),
         guidance=(
             "min_p defaults to -max_p, a symmetric charge/discharge range. Energy "
-            "content and state of charge are not modelled: a load flow sees a fixed "
+            "content and state of charge are not modeled: a load flow sees a fixed "
             "injection, not a storage schedule."
         ),
         docs=("pp.network.create_battery_bay", "Network.create_batteries"),
@@ -676,10 +676,11 @@ _register(
         ),
         guidance=(
             "rated_u1 and rated_u2 default to the nominal voltages of the two ends, "
-            "which is what sets the ratio. x is roughly "
-            "(short-circuit voltage %) / 100 * rated_u1^2 / rated_s. The transformer "
-            "has no tap changer until a ratio_tap_changer or phase_tap_changer is "
-            "created on it."
+            "which is what sets the ratio. r and x are in ohms referred to side 2, so "
+            "x is roughly (short-circuit voltage %) / 100 * rated_u2^2 / rated_s: "
+            "about 1.2 Ohm for a 400 MVA unit at 12 % with 63 kV on side 2. The "
+            "transformer has no tap changer until a ratio_tap_changer or "
+            "phase_tap_changer is created on it."
         ),
         docs=(
             "pp.network.create_2_windings_transformer_bays",
@@ -780,6 +781,15 @@ _register(
         rules=(
             rule.Positive("permanent_limit"),
             rule.RowsRequired("limits", 1, "a permanent rating is required"),
+            rule.NoteIfGiven(
+                "group_name",
+                "these limits went to group(s) {value}, which are not the selected "
+                "group of the element: get_overloaded_elements(), loading_percent "
+                "and security analyses ignore them. Create them again without "
+                "group_name to rate the element",
+                rows="limits",
+                unless="DEFAULT",
+            ),
         ),
         derivations=(derive.LimitRows(),),
         guidance=(

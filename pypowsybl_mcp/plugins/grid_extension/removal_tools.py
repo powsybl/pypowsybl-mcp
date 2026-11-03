@@ -28,7 +28,9 @@ removal for that type:
 
 Because voltage levels and substations destroy far more than the id names, they
 are refused unless the caller explicitly asks for a cascade, and the refusal
-says what would have been lost.
+says what would have been lost. A voltage level that holds no equipment -- only
+its own buses or busbar sections and the switches between them -- loses nothing
+the caller did not name, so it is removed without that confirmation.
 """
 
 import json
@@ -66,6 +68,10 @@ FEEDER_TYPES = frozenset(
 # whole site can be listed in any order without an id disappearing under a
 # cascade before its turn.
 REMOVAL_RANKS = {"VOLTAGE_LEVEL": 1, "SUBSTATION": 2}
+
+# What a voltage level is built of, as counted in a cascade's "inside": a voltage
+# level holding nothing else is removed without asking for cascade=True.
+VOLTAGE_LEVEL_STRUCTURE = frozenset({"bus", "busbar_section"})
 
 # Columns through which an element table names the voltage level of each end.
 VOLTAGE_LEVEL_COLUMNS = (
@@ -194,6 +200,15 @@ class RemovalTools(PyPowsyblTool):
 
         if element_type == "VOLTAGE_LEVEL":
             details = self._cascade_details(network, [element_id])
+            if not _holds_equipment(details):
+                pp.network.remove_voltage_levels(
+                    network, voltage_level_ids=[element_id]
+                )
+                return removed(
+                    ["pp.network.remove_voltage_levels"],
+                    f"removed voltage level '{element_id}', which held no equipment",
+                    details,
+                )
             if not cascade:
                 problem = (
                     f"voltage level '{element_id}' not removed: removing it also "
@@ -215,7 +230,7 @@ class RemovalTools(PyPowsyblTool):
                 if voltage_levels
                 else None
             )
-            if not cascade and voltage_levels:
+            if not cascade and voltage_levels and _holds_equipment(details):
                 problem = (
                     f"substation '{element_id}' not removed: it still holds voltage "
                     f"level(s) {', '.join(voltage_levels)}, whose removal also "
@@ -264,9 +279,10 @@ class RemovalTools(PyPowsyblTool):
               breakers and disconnectors that attached them
             - HVDC line → removed with its converter stations
             - voltage level → removed with everything it contains, and with the
-              far end of its lines and transformers (needs cascade=True)
+              far end of its lines and transformers (needs cascade=True, unless
+              it holds no equipment: only its buses or busbar sections)
             - substation → its voltage levels are removed first, then itself
-              (needs cascade=True)
+              (needs cascade=True, unless its voltage levels hold no equipment)
             - switch, bus, busbar section → removed as is
 
         This is different from set_line_status(), which only *opens* a branch and
@@ -283,6 +299,7 @@ class RemovalTools(PyPowsyblTool):
                 removals.
             cascade (bool): Confirmation required to remove a voltage level or a
                 substation, because those take down every element they contain.
+                Not needed when they hold no equipment.
                 Default: False, which reports what *would* be removed instead of
                 doing it.
             network_id (str, optional): Network to modify. If None, uses the
@@ -512,6 +529,17 @@ def _label(kind: str, count: int) -> str:
         f"{count} {name}(es)"
         if name.endswith(("s", "ch", "x"))
         else f"{count} {name}(s)"
+    )
+
+
+def _holds_equipment(details: dict) -> bool:
+    """Whether a cascade takes down more than the voltage levels' own structure.
+
+    Buses and busbar sections are what a voltage level is built of (it is created
+    with them), and switches without equipment only join them together.
+    """
+    return bool(details["beyond"]) or any(
+        kind not in VOLTAGE_LEVEL_STRUCTURE for kind in details["inside"]
     )
 
 

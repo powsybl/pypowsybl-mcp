@@ -339,6 +339,20 @@ async def test_limits_update_the_branch_rather_than_create_an_element(
 
 
 @pytest.mark.asyncio
+async def test_a_rejection_reads_an_before_a_vowel(creation_tools, mock_ctx, network):
+    result = await creation_tools.create_network_element(
+        "operational_limits",
+        {"element_id": "L1-2-1", "permanent_limit": "a lot"},
+        ctx=mock_ctx,
+    )
+
+    assert json.loads(result)["message"] == (
+        "Failed to create an operational_limits: 'permanent_limit' of an "
+        "operational_limits must be a number, got 'a lot'"
+    )
+
+
+@pytest.mark.asyncio
 async def test_every_reply_has_the_same_keys(creation_tools, mock_ctx, network):
     """A fixed shape, whatever the outcome."""
     ok = json.loads(
