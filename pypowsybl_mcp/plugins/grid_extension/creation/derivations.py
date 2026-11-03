@@ -275,14 +275,15 @@ class LimitRows(Derivation):
         )
 
     def apply(self, context: CreationContext) -> None:
-        if context.attributes.get(self.produces):
+        kind = context.attributes.get(self.type_field) or "CURRENT"
+        given = context.attributes.get(self.produces)
+        if given:
+            context.attributes[self.produces] = self._completed(given, context, kind)
             return
         permanent = context.attributes.get(self.permanent_field)
         if permanent is None:
             return
-        sides = context.attributes.get(self.side_field) or "BOTH"
-        sides = ["ONE", "TWO"] if sides == "BOTH" else [sides]
-        kind = context.attributes.get(self.type_field) or "CURRENT"
+        sides = self._sides(context.attributes.get(self.side_field))
         rows = []
         for side in sides:
             rows.append(
@@ -306,3 +307,21 @@ class LimitRows(Derivation):
                     }
                 )
         context.attributes[self.produces] = rows
+
+    @staticmethod
+    def _sides(side: str | None) -> list[str]:
+        """BOTH, the default, is not a side pypowsybl knows: one row per side."""
+        return ["ONE", "TWO"] if side in (None, "BOTH") else [side]
+
+    def _completed(self, rows: list[dict], context: CreationContext, kind: str):
+        """Explicit rows, given the side and the type the call names once.
+
+        A row without a side takes the call's ``side``; a row on BOTH sides,
+        given either way, becomes one row per side.
+        """
+        completed = []
+        for row in rows:
+            side = row.get("side") or context.attributes.get(self.side_field)
+            for one in self._sides(side):
+                completed.append({**row, "side": one, "type": row.get("type") or kind})
+        return completed
