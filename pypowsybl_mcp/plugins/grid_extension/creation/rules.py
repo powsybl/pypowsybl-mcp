@@ -33,6 +33,9 @@ class Rule:
 
     #: attribute names the rule refers to, checked against the schema by a test
     fields: tuple[str, ...] = ()
+    #: whether the rule reads the network or the connection points; the others
+    #: also run in the pre-check of a batch, before anything is created
+    needs_network: bool = False
 
     def describe(self) -> str:  # pragma: no cover - overridden everywhere
         raise NotImplementedError
@@ -207,6 +210,7 @@ class DistinctEnds(Rule):
     """The two ends of a branch must be two different connection points."""
 
     fields: tuple[str, ...] = ()
+    needs_network = True
 
     def describe(self) -> str:
         return "the two ends must be distinct connection points"
@@ -224,6 +228,7 @@ class SameSubstation(Rule):
     """Both ends must sit in one substation, as powsybl requires for a transformer."""
 
     fields: tuple[str, ...] = ()
+    needs_network = True
 
     def describe(self) -> str:
         return "both ends must belong to voltage levels of the same substation"
@@ -246,6 +251,7 @@ class BusBreakerOnly(Rule):
     """The element has no bay creation upstream, so it needs a configured bus."""
 
     fields: tuple[str, ...] = ()
+    needs_network = True
 
     def describe(self) -> str:
         return "only bus/breaker voltage levels are supported for this element type"
@@ -271,6 +277,7 @@ class WarnIfDifferent(Rule):
     message: str
 
     fields: tuple[str, ...] = ()
+    needs_network = True
 
     def describe(self) -> str:
         return f"a note is added when the two ends have a different {self.what}"

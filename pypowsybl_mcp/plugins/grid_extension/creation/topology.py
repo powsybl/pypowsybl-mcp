@@ -71,6 +71,7 @@ class SameVoltage(rule.Rule):
 
     point: str
     line: str
+    needs_network = True
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -103,6 +104,7 @@ class SameVoltageLevel(rule.Rule):
 
     first: str
     second: str
+    needs_network = True
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -138,6 +140,7 @@ class AtFarEnd(rule.Rule):
     point: str
     removed: str
     tee_lines: tuple[str, str]
+    needs_network = True
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -177,6 +180,7 @@ class MeetAtAVoltageLevel(rule.Rule):
 
     first: str
     second: str
+    needs_network = True
 
     @property
     def fields(self) -> tuple[str, ...]:

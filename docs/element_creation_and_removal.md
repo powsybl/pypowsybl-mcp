@@ -424,9 +424,11 @@ removal item has `id`, `element_type`, `status` (`removed`, `refused`, `not_foun
 `element_type`.
 
 **Before anything is created**, every item goes through the checks that do not need the network: item shape,
-element type, attribute names, id, required attributes, types, accepted values and table rows. So does the batch as a
-whole: two items creating elements with the same id are refused, whatever their types, since an id names one element
-of the network. Ids that legitimately repeat are let through — an attachment shares the id of the element it is added
+element type, attribute names, id, required attributes, types, accepted values, table rows, and the rules and
+derivations that do not read the network or the connection points (`min_p <= target_p <= max_p`, a non-zero
+reactance, a regulating unit's setpoint; each rule and derivation says which kind it is with `needs_network`). So
+does the batch as a whole: two items creating elements with the same id are refused, whatever their types, since an
+id names one element of the network. Ids that legitimately repeat are let through — an attachment shares the id of the element it is added
 to (a line and its limits), and a schema-only type may name another element (an area given several voltage levels).
 A mistake there rejects the whole batch and the network is untouched.
 

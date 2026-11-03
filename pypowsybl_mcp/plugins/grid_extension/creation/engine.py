@@ -362,12 +362,7 @@ class CreationEngine:
         self._check_required(profile, context)
         self._check_values(profile, context)
 
-        for name, value in profile.defaults.items():
-            context.attributes.setdefault(name, value)
-        for derivation in profile.derivations:
-            derivation.apply(context)
-        for item in profile.rules:
-            item.apply(context)
+        self._complete(profile, context)
 
         payload = {
             name: value
@@ -790,6 +785,24 @@ class CreationEngine:
                     )
         context.attributes[name] = checked
 
+    def _complete(
+        self, profile: CreationProfile, context: CreationContext, network: bool = True
+    ) -> None:
+        """Apply the defaults, then the derivations, then the rules.
+
+        Without ``network`` (the pre-check of a batch, before anything exists),
+        the derivations and rules that read the network or the connection
+        points are left for the creation itself.
+        """
+        for name, value in profile.defaults.items():
+            context.attributes.setdefault(name, value)
+        for derivation in profile.derivations:
+            if network or not derivation.needs_network:
+                derivation.apply(context)
+        for item in profile.rules:
+            if network or not item.needs_network:
+                item.apply(context)
+
     def _result(
         self,
         profile: CreationProfile,
@@ -851,9 +864,10 @@ class CreationEngine:
 
         Everything :meth:`create` checks without looking at the network runs
         here too -- unknown attributes, the id, the required attributes, types
-        and enumerated values, the rows of a table attribute -- so the only
-        mistakes that can stop a batch half way are the ones that depend on
-        what is already in the network.
+        and enumerated values, the rows of a table attribute, and the rules
+        that need no network (``min_p <= target_p <= max_p``, a non-zero
+        reactance...) -- so the only mistakes that can stop a batch half way
+        are the ones that depend on what is already in the network.
         """
         given = self._normalise(profile, payload)
         element_id = given.pop(profile.id_field, None)
@@ -870,6 +884,7 @@ class CreationEngine:
         )
         self._check_required(profile, context)
         self._check_values(profile, context)
+        self._complete(profile, context, network=False)
         return str(element_id).strip()
 
 

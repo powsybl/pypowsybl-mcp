@@ -1242,6 +1242,45 @@ def test_batch_checks_values_before_creating_anything(engine, bus_breaker, load)
     assert "S_NEW" not in bus_breaker.get_substations().index
 
 
+@pytest.mark.parametrize(
+    ("item", "message"),
+    [
+        (
+            {
+                "element_type": "generator",
+                "id": "G_NEW",
+                "bus": "B4",
+                "target_p": 50.0,
+                "max_p": 10.0,
+            },
+            "'target_p' \\(50.0\\) must not be greater than 'max_p'",
+        ),
+        (
+            {
+                "element_type": "line",
+                "id": "L_NEW",
+                "bus1": "B4",
+                "bus2": "B5",
+                "r": 1.0,
+                "x": 0.0,
+            },
+            "'x' must not be 0",
+        ),
+    ],
+    ids=["ordering", "non-zero"],
+)
+def test_batch_checks_the_rules_before_creating_anything(
+    engine, bus_breaker, item, message
+):
+    # rules that need no network used to stop the batch half way
+    with pytest.raises(BatchRejected, match=f"item 2: {message}"):
+        engine.create_many(
+            bus_breaker, [{"element_type": "substation", "id": "S_NEW"}, item]
+        )
+
+    assert "S_NEW" not in bus_breaker.get_substations().index
+
+
 def test_batch_checks_table_rows_before_creating_anything(engine, site):
     with pytest.raises(CreationError, match="item 2: Row 1 of 'steps'"):
         engine.create_many(
