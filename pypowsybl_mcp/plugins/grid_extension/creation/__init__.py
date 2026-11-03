@@ -19,7 +19,7 @@ out. The package is layered accordingly:
 ``doc_mining``
     What ``pypowsybl`` documents: the per-attribute descriptions (and the units
     stated in them) parsed out of the docstrings of the very functions the
-    executors call. Informational only -- it never changes behaviour.
+    executors call. Informational only -- it never changes behavior.
 
 ``rules`` / ``derivations``
     The semantics metadata cannot carry: conditional requirements, orderings,
@@ -35,7 +35,7 @@ out. The package is layered accordingly:
     and types are checked, pypowsybl decides the rest.
 
 ``engine``
-    One pipeline shared by every element type: normalise, validate, resolve the
+    One pipeline shared by every element type: normalize, validate, resolve the
     connection points, apply defaults and derivations, run the rules, dispatch
     to the executor, report.
 
