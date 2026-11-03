@@ -932,6 +932,24 @@ def _item_error(position, element_type, element_id, problem, hint=None) -> dict:
     }
 
 
+#: the words a boolean attribute accepts; anything else is refused rather than
+#: read as false, so a typo cannot silently turn a regulation off
+TRUE_WORDS = frozenset({"true", "yes", "y", "on", "1"})
+FALSE_WORDS = frozenset({"false", "no", "n", "off", "0"})
+
+
+def _boolean(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        word = value.strip().lower()
+        if word in TRUE_WORDS or word in FALSE_WORDS:
+            return word in TRUE_WORDS
+    elif isinstance(value, int | float) and value in (0, 1):
+        return bool(value)
+    raise ValueError(f"not a boolean: {value!r}")
+
+
 def _coerce(item, value, element_type: str):
     """Accept the loose types an MCP client may send, reject what cannot convert."""
     try:
@@ -940,9 +958,7 @@ def _coerce(item, value, element_type: str):
         if item.kind == "integer":
             return int(value)
         if item.kind == "boolean":
-            if isinstance(value, str):
-                return value.strip().lower() in ("true", "yes", "1")
-            return bool(value)
+            return _boolean(value)
     except (TypeError, ValueError) as error:
         raise CreationError(
             f"'{item.name}' of a {element_type} must be "
