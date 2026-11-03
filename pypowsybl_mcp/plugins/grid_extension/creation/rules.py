@@ -332,6 +332,27 @@ class NoteIfGiven(Rule):
 
 
 @dataclass(frozen=True)
+class NoteIfMoreThan(Rule):
+    """Not an error: note it in the report when a count is above ``limit``."""
+
+    field: str
+    limit: int
+    message: str
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return (self.field,)
+
+    def describe(self) -> str:
+        return f"a note is added when '{self.field}' is more than {self.limit}"
+
+    def apply(self, context: CreationContext) -> None:
+        value = context.attributes.get(self.field)
+        if value is not None and int(value) > self.limit:
+            context.notes.append(self.message.format(value=value))
+
+
+@dataclass(frozen=True)
 class RequiredWhenEquals(Rule):
     """``field`` must be given when another attribute has a particular value."""
 

@@ -247,6 +247,16 @@ _register(
             rule.AtLeast("aligned_buses_or_busbar_count", 1),
             rule.AtLeast("section_count", 1),
             rule.Positive("nominal_v"),
+            rule.NoteIfMoreThan(
+                "aligned_buses_or_busbar_count",
+                1,
+                "its {value} busbars are not coupled to one another, so equipment "
+                "on one of them is cut off from equipment on the others and gets no "
+                "load-flow result. If they are meant to work as one node, couple "
+                "busbar 1 to each other busbar, in any one section, with "
+                "modify_network_topology('create_coupling_device') on two of the "
+                "connection points listed here",
+            ),
         ),
         guidance=(
             "Equipment never attaches to a voltage level directly but to one of its "
@@ -254,7 +264,10 @@ _register(
             "pass those to the elements that follow. Match 'topology_kind' to the "
             "network it connects to: BUS_BREAKER for IEEE cases and most study "
             "files, NODE_BREAKER for detailed grid files. Without voltage limits, "
-            "check_voltage_violations() can never report the new busbar."
+            "check_voltage_violations() can never report the new busbar. Several "
+            "busbars (aligned_buses_or_busbar_count above 1) come uncoupled: each "
+            "is a node of its own until a coupling device joins them, while the "
+            "sections along one busbar are joined by their switches."
         ),
         docs=(
             "Network.create_voltage_levels",

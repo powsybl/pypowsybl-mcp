@@ -19,6 +19,7 @@ from pypowsybl_mcp.plugins.grid_extension.creation.engine import (
     Topology,
     resolve_connection_point,
 )
+from pypowsybl_mcp.plugins.grid_extension.creation.topology import TopologyEngine
 
 
 @pytest.fixture
@@ -140,6 +141,73 @@ def test_create_node_breaker_voltage_level_with_several_busbars(engine, node_bre
 
     sections = node_breaker.get_busbar_sections()
     assert len(sections[sections["voltage_level_id"] == "VL_NEW"]) == 4
+
+
+def _uncoupled_notes(report) -> list[str]:
+    return [note for note in report.notes if "not coupled" in note]
+
+
+@pytest.mark.parametrize("topology_kind", ["BUS_BREAKER", "NODE_BREAKER"])
+def test_several_busbars_come_with_a_note_that_they_are_not_coupled(
+    engine, topology_kind
+):
+    """pypowsybl leaves parallel busbars apart: each is a node of its own."""
+    network = pp.network.create_empty()
+    engine.create(network, "substation", {"id": "S"})
+    report = engine.create(
+        network,
+        "voltage_level",
+        {
+            "id": "V",
+            "substation_id": "S",
+            "nominal_v": 400.0,
+            "topology_kind": topology_kind,
+            "aligned_buses_or_busbar_count": 3,
+            "section_count": 2,
+        },
+    )
+    (note,) = _uncoupled_notes(report)
+    assert "its 3 busbars are not coupled" in note
+    assert "create_coupling_device" in note
+
+    for load_id, point in (("LA", "V_1_1"), ("LB", "V_3_2")):
+        engine.create(
+            network,
+            "load",
+            {"id": load_id, "bus_or_busbar_section_id": point, "p0": 1.0},
+        )
+    buses = network.get_loads()["bus_id"]
+    assert buses["LA"] != buses["LB"]
+
+    # What the note says to do joins them: one coupler per extra busbar.
+    for other in ("V_2_1", "V_3_1"):
+        TopologyEngine().apply(
+            network,
+            "create_coupling_device",
+            {
+                "bus_or_busbar_section_id_1": "V_1_1",
+                "bus_or_busbar_section_id_2": other,
+            },
+        )
+    buses = network.get_loads()["bus_id"]
+    assert buses["LA"] == buses["LB"]
+
+
+def test_a_single_busbar_needs_no_coupling_note(engine, bus_breaker):
+    engine.create(bus_breaker, "substation", {"id": "S_DC"})
+
+    report = engine.create(
+        bus_breaker,
+        "voltage_level",
+        {
+            "id": "VL_DC",
+            "substation_id": "S_DC",
+            "nominal_v": 135.0,
+            "section_count": 3,
+        },
+    )
+
+    assert _uncoupled_notes(report) == []
 
 
 # ---------------------------------------------------------------------------

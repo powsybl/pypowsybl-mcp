@@ -327,6 +327,7 @@ Rules run after defaults and derivations, so they see the final values:
 | `BusBreakerOnly`     | refused in node/breaker topology                                  | ground                                          |
 | `WarnIfDifferent`    | not an error: a note in the reply                                 | a line between two different nominal voltages   |
 | `NoteIfGiven`        | not an error: a note when an attribute is set (on the element or a row) | limits put in a group other than `DEFAULT`, which the analyses ignore |
+| `NoteIfMoreThan`     | not an error: a note when a count is above a limit                | a voltage level with several busbars, which pypowsybl leaves uncoupled |
 | `RowsRequired`       | a table attribute needs a minimum number of rows                  | at least two tap positions, two curve points    |
 | `ColumnRequired`, `AtMostRows` | every row gives a column; a count bounded by the number of rows | every shunt section has `b`; sections in service |
 | `Exclusive`          | two ways of describing one thing, never both                      | identical shunt sections, or one row per section |
