@@ -55,6 +55,7 @@ from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
     UNPROFILED,
     Connection,
     CreationProfile,
+    VirtualTable,
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
     Field,
@@ -281,8 +282,13 @@ class CreationEngine:
 
         for name, description in profile.virtual.items():
             entry: dict[str, Any] = {"name": name, "description": description}
-            if name in profile.virtual_kinds:
-                entry["type"] = profile.virtual_kinds[name]
+            kind = profile.virtual_kinds.get(name)
+            if isinstance(kind, VirtualTable):
+                entry["type"] = "table"
+                entry["columns"] = dict(kind.columns)
+                entry["required_columns"] = list(kind.required)
+            elif kind is not None:
+                entry["type"] = kind
             if name in profile.units:
                 entry["unit"] = profile.units[name]
             if name in profile.defaults:
@@ -658,10 +664,66 @@ class CreationEngine:
             return normalised
         if item is None:
             kind = profile.virtual_kinds.get(name)
+            if isinstance(kind, VirtualTable):
+                return self._checked_table(profile, name, value, kind)
             if kind is None:
                 return value
             item = Field(name=name, kind=kind, is_index=False, group=0)
         return _coerce(item, value, profile.element_type)
+
+    def _checked_table(
+        self, profile: CreationProfile, name: str, rows, table: VirtualTable
+    ) -> list[dict]:
+        """The rows of a virtual table, checked the way a table attribute's are.
+
+        A derivation turns them into real rows only after the checks, so a
+        malformed row would otherwise fail there, after the batch pre-check.
+        """
+        hint = {
+            "attribute": name,
+            "columns": sorted(table.columns),
+            "required_columns": list(table.required),
+        }
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise CreationError(
+                f"'{name}' of a {profile.element_type} must be a list of objects, "
+                f"one per row, with the columns {', '.join(sorted(table.columns))}",
+                hint=hint,
+            )
+        checked = []
+        for position, row in enumerate(rows, start=1):
+            values = {}
+            for key, value in row.items():
+                column = str(key).strip()
+                kind = table.columns.get(column)
+                if kind is None:
+                    raise CreationError(
+                        f"Row {position} of '{name}' has no column '{column}'."
+                        f"{_did_you_mean(column, table.columns, cutoff=0.6)}",
+                        hint=hint,
+                    )
+                values[column] = (
+                    None
+                    if value is None
+                    else _coerce(
+                        Field(name=column, kind=kind, is_index=False, group=0),
+                        value,
+                        profile.element_type,
+                    )
+                )
+            missing = [
+                column for column in table.required if values.get(column) is None
+            ]
+            if missing:
+                raise CreationError(
+                    f"Row {position} of '{name}' has no "
+                    + ", ".join(f"'{column}'" for column in missing)
+                    + ": every row needs "
+                    + ", ".join(f"'{column}'" for column in table.required),
+                    hint=hint,
+                )
+            checked.append(values)
+        return checked
 
     def _row_fields(self, profile: CreationProfile) -> dict:
         """Columns a row of the table attribute may set, by name.

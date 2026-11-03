@@ -67,6 +67,11 @@ def test_attachments_declare_their_target_types(profile):
         )
 
 
+def test_every_virtual_attribute_declares_its_type(profile):
+    # an untyped virtual attribute reaches the rules and derivations unchecked
+    assert set(profile.virtual_kinds) == set(profile.virtual)
+
+
 def test_every_profile_has_a_summary_and_guidance(profile):
     """Both are what a caller reads instead of a per-tool docstring."""
     assert profile.summary
