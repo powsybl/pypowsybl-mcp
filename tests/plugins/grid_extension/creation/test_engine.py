@@ -15,6 +15,7 @@ from pypowsybl_mcp.plugins.grid_extension.creation.context import (
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.engine import (
     CreationEngine,
+    Topology,
     resolve_connection_point,
 )
 
@@ -780,6 +781,37 @@ def test_unknown_connection_point(engine, bus_breaker):
 def test_missing_connection_point(engine, bus_breaker):
     with pytest.raises(CreationError, match="is required to connect"):
         engine.create(bus_breaker, "load", {"id": "X", "p0": 1.0})
+
+
+class CountingNetwork:
+    """A network that counts the tables read from it."""
+
+    def __init__(self, network):
+        self.network = network
+        self.reads: dict[str, int] = {}
+
+    def __getattr__(self, name):
+        attribute = getattr(self.network, name)
+
+        def counted(*args, **kwargs):
+            self.reads[name] = self.reads.get(name, 0) + 1
+            return attribute(*args, **kwargs)
+
+        return counted
+
+
+def test_both_ends_are_looked_up_in_the_same_tables(bus_breaker):
+    network = CountingNetwork(bus_breaker)
+    topology = Topology(network)
+
+    first = resolve_connection_point(network, "B4", topology)
+    second = resolve_connection_point(network, "B5", topology)
+
+    assert (first.voltage_level_id, second.voltage_level_id) == ("VL4", "VL5")
+    assert network.reads["get_busbar_sections"] == 1
+    assert network.reads["get_bus_breaker_view_buses"] == 1
+    # the bus view is only read to explain a mistake
+    assert "get_buses" not in network.reads
 
 
 def test_resolve_connection_point_rejects_an_empty_id(bus_breaker):

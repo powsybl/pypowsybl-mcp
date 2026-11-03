@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import difflib
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any
 
 import pypowsybl as pp
@@ -567,6 +568,8 @@ class CreationEngine:
             return
 
         points = []
+        # both ends of a branch are looked up in the same tables
+        topology = Topology(context.network)
         for name in names:
             value = context.attributes.get(name)
             if not value:
@@ -575,7 +578,9 @@ class CreationEngine:
                     + CONNECTION_HELP,
                     hint={"connection_attributes": list(names)},
                 )
-            points.append(resolve_connection_point(context.network, str(value)))
+            points.append(
+                resolve_connection_point(context.network, str(value), topology)
+            )
         context.connections = tuple(points)
 
         if profile.connection is Connection.BUS:
@@ -967,7 +972,47 @@ def _coerce(item, value, element_type: str):
     return value
 
 
-def resolve_connection_point(network, point_id: str) -> ConnectionPoint:
+class Topology:
+    """The tables a connection point is looked up in, each read once, when
+    first needed: a full table per lookup is what a large network cannot
+    afford, and the two ends of a branch need the same ones."""
+
+    def __init__(self, network):
+        self.network = network
+
+    @cached_property
+    def busbar_sections(self):
+        return self.network.get_busbar_sections()
+
+    @cached_property
+    def configured_buses(self):
+        return self.network.get_bus_breaker_view_buses()
+
+    @cached_property
+    def buses(self):
+        return self.network.get_buses()
+
+    def level(self, voltage_level_id: str) -> tuple[str, float, str | None]:
+        """Topology kind, nominal voltage and substation of a voltage level."""
+        row = self.network.get_voltage_levels(
+            all_attributes=True, id=[voltage_level_id]
+        ).loc[voltage_level_id]
+        return (
+            str(row["topology_kind"]),
+            float(row["nominal_v"]),
+            str(row["substation_id"]) if row["substation_id"] else None,
+        )
+
+    def points_of(self, voltage_level_id: str) -> list[str]:
+        """The ids an element of a voltage level can be connected to."""
+        kind, _, _ = self.level(voltage_level_id)
+        table = self.busbar_sections if kind == NODE_BREAKER else self.configured_buses
+        return table[table["voltage_level_id"] == voltage_level_id].index.tolist()
+
+
+def resolve_connection_point(
+    network, point_id: str, topology: Topology | None = None
+) -> ConnectionPoint:
     """Validate a bus or busbar section id and describe where it lives.
 
     pypowsybl only ever answers "Bus or busbar section X not found", which is of
@@ -982,31 +1027,20 @@ def resolve_connection_point(network, point_id: str) -> ConnectionPoint:
     """
     if not point_id or not point_id.strip():
         raise CreationError("A bus or busbar section id is required")
+    topology = topology or Topology(network)
 
-    busbar_sections = network.get_busbar_sections()
-    voltage_levels = network.get_voltage_levels(all_attributes=True)
-
-    def level(voltage_level_id: str) -> tuple[str, float, str | None]:
-        row = voltage_levels.loc[voltage_level_id]
-        return (
-            str(row["topology_kind"]),
-            float(row["nominal_v"]),
-            str(row["substation_id"]) if row["substation_id"] else None,
-        )
-
+    busbar_sections = topology.busbar_sections
     if point_id in busbar_sections.index:
         voltage_level_id = str(busbar_sections.loc[point_id, "voltage_level_id"])
-        kind, nominal_v, substation = level(voltage_level_id)
+        kind, nominal_v, substation = topology.level(voltage_level_id)
         return ConnectionPoint(point_id, voltage_level_id, substation, kind, nominal_v)
 
-    configured = network.get_bus_breaker_view_buses()
+    configured = topology.configured_buses
     if point_id in configured.index:
         voltage_level_id = str(configured.loc[point_id, "voltage_level_id"])
-        kind, nominal_v, substation = level(voltage_level_id)
+        kind, nominal_v, substation = topology.level(voltage_level_id)
         if kind == NODE_BREAKER:
-            sections = busbar_sections[
-                busbar_sections["voltage_level_id"] == voltage_level_id
-            ].index.tolist()
+            sections = topology.points_of(voltage_level_id)
             raise CreationError(
                 f"'{point_id}' is a bus of the bus/breaker view of voltage level "
                 f"'{voltage_level_id}', which is in {NODE_BREAKER} topology: an "
@@ -1015,10 +1049,10 @@ def resolve_connection_point(network, point_id: str) -> ConnectionPoint:
             )
         return ConnectionPoint(point_id, voltage_level_id, substation, kind, nominal_v)
 
-    bus_view = network.get_buses()
+    bus_view = topology.buses
     if point_id in bus_view.index:
         voltage_level_id = str(bus_view.loc[point_id, "voltage_level_id"])
-        candidates = _connection_points_of(network, voltage_level_id, voltage_levels)
+        candidates = topology.points_of(voltage_level_id)
         raise CreationError(
             f"'{point_id}' is a bus of the bus view (computed from the topology of "
             f"voltage level '{voltage_level_id}'), so no element can be attached to "
@@ -1032,11 +1066,3 @@ def resolve_connection_point(network, point_id: str) -> ConnectionPoint:
         "get_network_element_data(element_type='bus_from_bus_breaker_view') for "
         "bus/breaker ones"
     )
-
-
-def _connection_points_of(network, voltage_level_id: str, voltage_levels) -> list[str]:
-    if str(voltage_levels.loc[voltage_level_id, "topology_kind"]) == NODE_BREAKER:
-        sections = network.get_busbar_sections()
-        return sections[sections["voltage_level_id"] == voltage_level_id].index.tolist()
-    buses = network.get_bus_breaker_view_buses()
-    return buses[buses["voltage_level_id"] == voltage_level_id].index.tolist()
