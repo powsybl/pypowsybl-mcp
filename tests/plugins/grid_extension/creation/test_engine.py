@@ -858,6 +858,42 @@ def test_numeric_strings_are_accepted(engine, bus_breaker):
     assert bus_breaker.get_loads().loc["X", "p0"] == 300.0
 
 
+@pytest.mark.parametrize("value", ["on", "Yes", 1, True])
+def test_boolean_words_are_accepted(engine, bus_breaker, value):
+    engine.create(
+        bus_breaker,
+        "generator",
+        {
+            "id": "G_NEW",
+            "bus": "B4",
+            "target_p": 10.0,
+            "max_p": 20.0,
+            "voltage_regulator_on": value,
+            "target_v": 135.0,
+        },
+    )
+
+    assert bus_breaker.get_generators().loc["G_NEW", "voltage_regulator_on"]
+
+
+@pytest.mark.parametrize("value", ["ture", "regulating", 2])
+def test_a_value_that_is_not_a_boolean_is_refused(engine, bus_breaker, value):
+    # anything but a true word used to be read as false, silently
+    with pytest.raises(CreationError, match="'voltage_regulator_on' .* a boolean"):
+        engine.create(
+            bus_breaker,
+            "generator",
+            {
+                "id": "G_NEW",
+                "bus": "B4",
+                "target_p": 10.0,
+                "max_p": 20.0,
+                "voltage_regulator_on": value,
+                "target_v": 135.0,
+            },
+        )
+
+
 def test_attributes_must_be_an_object(engine, bus_breaker):
     with pytest.raises(CreationError, match="must be an object"):
         engine.create(bus_breaker, "load", ["p0"])
