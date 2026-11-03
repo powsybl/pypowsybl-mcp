@@ -101,7 +101,11 @@ Around it:
 2. The call above. Items may be listed in any order. A new voltage level
    generates its connection points and the reply gives their ids
    (`VL_DC_1_1` here) -- the pattern is `<voltage level>_<busbar>_<section>`, and
-   later items in the same call can reference them.
+   later items in the same call can reference them. With several busbars
+   (`aligned_buses_or_busbar_count` above 1) they come **uncoupled**: each busbar
+   is a separate node, and equipment on busbar 2 is cut off from a line arriving
+   on busbar 1. The reply says so in `notes`; couple them with
+   `create_coupling_device` (below) when they should work as one node.
 3. `run_loadflow()` -- does it still converge?
 4. `get_overloaded_elements()` and `check_voltage_violations()` -- acceptable in N?
 5. `run_security_analysis()` -- still acceptable after an N-1?
@@ -205,7 +209,9 @@ modify_network_topology("connect_voltage_level_on_line",
   limits**: rate it with `operational_limits`. A tee can later become a real
   connection with `replace_tee_point_by_voltage_level_on_line`.
 * `create_coupling_device` couples two busbars of one voltage level, with a
-  breaker and its disconnectors.
+  breaker and its disconnectors. A new voltage level with N busbars needs N-1
+  of them -- busbar 1 to each other one, in any one section, since the sections
+  along a busbar are already joined.
 * `revert_connect_voltage_level_on_line` and `revert_create_line_on_line` merge
   the halves back into one line; the switches left without equipment are
   removed with them. If that empties a voltage level, pypowsybl removes it and
