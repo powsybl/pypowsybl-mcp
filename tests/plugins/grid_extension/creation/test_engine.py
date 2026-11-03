@@ -1395,6 +1395,20 @@ def test_batch_rejects_an_item_without_an_id(engine, bus_breaker):
         engine.create_many(bus_breaker, [{"element_type": "substation"}])
 
 
+def test_batch_rejects_a_blank_id_before_creating_anything(engine, bus_breaker):
+    # a blank id passed the pre-check and stopped the batch at its item
+    with pytest.raises(BatchRejected, match="item 2: 'id' is required"):
+        engine.create_many(
+            bus_breaker,
+            [
+                {"element_type": "substation", "id": "S_NEW"},
+                {"element_type": "substation", "id": "  "},
+            ],
+        )
+
+    assert "S_NEW" not in bus_breaker.get_substations().index
+
+
 # ---------------------------------------------------------------------------
 # Description
 # ---------------------------------------------------------------------------
