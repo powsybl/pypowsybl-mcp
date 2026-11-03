@@ -919,7 +919,10 @@ def _unrated_loaded_mask(df, element_type):
     )
     out = pd.DataFrame(index=df.index)
     for side in terminals:
-        energised = df[f"i{side}"].abs().notna()
+        # The one-row frame rebuilt from get_network_element_data's JSON row turns a
+        # disconnected terminal's NaN current into None, making the column object
+        # dtype; coerce so .abs() does not raise on a one-side-open branch.
+        energised = pd.to_numeric(df[f"i{side}"], errors="coerce").abs().notna()
         limit_missing = (
             pd.Series(True, index=df.index)
             if effective is None

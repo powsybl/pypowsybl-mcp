@@ -949,6 +949,18 @@ def test_unrated_loaded_sides_line_with_no_rating_flags_both_sides():
     assert unrated_loaded_sides(row, "line") == [1, 2]
 
 
+def test_unrated_loaded_sides_one_side_open_none_current_does_not_crash():
+    # get_network_element_data's JSON round-trip turns a disconnected terminal's
+    # NaN current into None, so the column is object dtype. abs() on None used to
+    # raise TypeError (uncaught -> the tool failed with no JSON answer). A branch
+    # open on side 2 only: side 1 is energised and unrated -> [1], no crash.
+    assert unrated_loaded_sides({"i1": 100.0, "i2": None}, "line") == [1]
+    # A 3WT with leg 3 open behaves the same (legs 1 and 2 flagged).
+    assert unrated_loaded_sides(
+        {"i1": 100.0, "i2": 100.0, "i3": None}, "three_windings_transformer"
+    ) == [1, 2]
+
+
 def test_unrated_sides_metric_counts_unreachable_terminals_per_row():
     # Row "ok" fully rated -> 0; row "gap" has a NaN leg-3 limit -> 1.
     df = pd.DataFrame(
