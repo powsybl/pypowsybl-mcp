@@ -27,7 +27,6 @@ place, with nothing behind them; :class:`TopologyEngine` removes them.
 
 from __future__ import annotations
 
-import difflib
 import math
 from dataclasses import dataclass, field
 from typing import Any
@@ -42,6 +41,7 @@ from pypowsybl_mcp.plugins.grid_extension.creation.context import (
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.engine import (
     _coerce,
+    _did_you_mean,
     resolve_connection_point,
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
@@ -537,10 +537,7 @@ class TopologyEngine:
         operation = self.operations.get(key)
         if operation is not None:
             return operation
-        close = difflib.get_close_matches(key, sorted(self.operations), n=3, cutoff=0.4)
-        suggestion = (
-            f" Did you mean {', '.join(repr(item) for item in close)}?" if close else ""
-        )
+        suggestion = _did_you_mean(key, self.operations, cutoff=0.4)
         raise CreationError(
             f"No topology operation '{name}'.{suggestion}",
             hint={"operations": sorted(self.operations)},
@@ -577,12 +574,7 @@ class TopologyEngine:
         known = set(schema.names)
         for key in given:
             if key not in known:
-                close = difflib.get_close_matches(key, sorted(known), n=3, cutoff=0.5)
-                suggestion = (
-                    f" Did you mean {', '.join(repr(item) for item in close)}?"
-                    if close
-                    else ""
-                )
+                suggestion = _did_you_mean(key, known, cutoff=0.5)
                 raise CreationError(
                     f"{operation.operation} has no attribute '{key}'.{suggestion}",
                     hint=self.describe(operation.operation),
