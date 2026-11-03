@@ -175,6 +175,22 @@ async def test_remove_hvdc_line_takes_its_converter_stations(
 
 
 @pytest.mark.asyncio
+async def test_an_id_already_taken_down_in_the_same_call_counts_as_removed(
+    removal_tools, mock_ctx, node_breaker_network
+):
+    # the line takes its stations with it: VSC1 used to be reported as failed
+    result = await removal_tools.remove_network_elements(
+        ["HVDC1", "VSC1", "HVDC1"], network_id="nb", ctx=mock_ctx
+    )
+
+    reply = json.loads(result)
+    assert reply["success"] is True
+    assert reply["removed_ids"] == ["HVDC1", "VSC1"]
+    assert "already removed" in _item(result, "VSC1")["message"]
+    assert "VSC1" not in node_breaker_network.get_vsc_converter_stations().index
+
+
+@pytest.mark.asyncio
 async def test_remove_voltage_level_needs_cascade(
     removal_tools, creation_tools, mock_ctx, bus_breaker_network
 ):

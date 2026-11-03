@@ -277,8 +277,10 @@ class RemovalTools(PyPowsyblTool):
             element_ids (list[str]): Ids of the elements to remove. They may mix
                 types, and be given in any order: feeders are removed before the
                 voltage levels and substations that contain them, so listing a
-                whole site works. Unknown ids are reported, they do not abort the
-                other removals.
+                whole site works. An id that an earlier removal of the same call
+                already took down (an HVDC line's converter stations) counts as
+                removed. Unknown ids are reported, they do not abort the other
+                removals.
             cascade (bool): Confirmation required to remove a voltage level or a
                 substation, because those take down every element they contain.
                 Default: False, which reports what *would* be removed instead of
@@ -356,7 +358,12 @@ class RemovalTools(PyPowsyblTool):
 
         if isinstance(element_ids, str):
             element_ids = [element_ids]
-        requested = [str(item).strip() for item in element_ids if str(item).strip()]
+        # an id given twice is removed once
+        requested = list(
+            dict.fromkeys(
+                str(item).strip() for item in element_ids if str(item).strip()
+            )
+        )
         if not requested:
             message = "No element id provided: nothing to remove"
             logger.warning(message)
@@ -378,8 +385,28 @@ class RemovalTools(PyPowsyblTool):
         ordered = sorted(requested, key=lambda i: REMOVAL_RANKS.get(types[i], 0))
 
         items: list[dict] = []
+        present = set(identifiables.index)
+        stale = False  # whether a removal may have taken down more than its id
         for element_id in ordered:
             element_type = types[element_id]
+            if element_type is not None and stale:
+                present = set(network.get_identifiables().index)
+                stale = False
+            if element_type is not None and element_id not in present:
+                # taken down with an element removed before it in this call (the
+                # converter stations of an HVDC line, a voltage level's content)
+                kind = element_type.lower()
+                items.append(
+                    _item(
+                        element_id,
+                        kind,
+                        "removed",
+                        [],
+                        f"{kind} '{element_id}' was already removed with an element "
+                        "removed before it in this call",
+                    )
+                )
+                continue
             if element_type is None:
                 problem = f"no element '{element_id}' in network '{network_id}'"
                 items.append(
@@ -399,7 +426,9 @@ class RemovalTools(PyPowsyblTool):
                 items.append(
                     self._remove_one(network, element_id, element_type, cascade)
                 )
+                stale = stale or items[-1]["status"] == "removed"
             except (pp.PyPowsyblError, ValueError, KeyError) as e:
+                stale = True
                 logger.error(f"Failed to remove '{element_id}': {e}")
                 problem = f"pypowsybl refused to remove '{element_id}': {e!s}"
                 items.append(
