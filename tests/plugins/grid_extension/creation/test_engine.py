@@ -497,6 +497,53 @@ def test_a_virtual_attribute_of_the_wrong_type_is_refused(engine, site):
         )
 
 
+@pytest.mark.parametrize(
+    ("temporary", "message"),
+    [
+        ([600], "must be a list of objects"),
+        (
+            [{"value": 400.0}],
+            "Row 1 of 'temporary_limits' has no 'acceptable_duration'",
+        ),
+        (
+            [{"value": 400.0, "acceptable_duration": 60, "duraton": 1}],
+            "no column 'duraton'",
+        ),
+        ([{"value": "high", "acceptable_duration": 60}], "must be a number"),
+    ],
+    ids=["not-objects", "missing-column", "unknown-column", "bad-type"],
+)
+def test_temporary_limits_are_checked_row_by_row(engine, site, temporary, message):
+    with pytest.raises(CreationError, match=message):
+        engine.create(
+            site,
+            "operational_limits",
+            {
+                "element_id": "LINE_DC",
+                "permanent_limit": 300.0,
+                "temporary_limits": temporary,
+            },
+        )
+
+
+def test_batch_checks_virtual_tables_before_creating_anything(engine, site):
+    with pytest.raises(CreationError, match="item 2: .*temporary_limits"):
+        engine.create_many(
+            site,
+            [
+                {"element_type": "substation", "id": "S_NEW"},
+                {
+                    "element_type": "operational_limits",
+                    "element_id": "LINE_DC",
+                    "permanent_limit": 300.0,
+                    "temporary_limits": [{"value": 400.0}],
+                },
+            ],
+        )
+
+    assert "S_NEW" not in site.get_substations().index
+
+
 def test_minmax_reactive_limits(engine, bus_breaker):
     engine.create(
         bus_breaker,

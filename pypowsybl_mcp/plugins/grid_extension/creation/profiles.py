@@ -68,6 +68,15 @@ BAY_MANAGED = (
 DIRECTIONS = ("TOP", "BOTTOM")
 
 
+@dataclass(frozen=True)
+class VirtualTable:
+    """The rows of a virtual attribute: the type of each column, and the
+    columns every row must give."""
+
+    columns: dict[str, str]
+    required: tuple[str, ...] = ()
+
+
 class Connection(str, Enum):
     """How an element attaches to the rest of the network."""
 
@@ -99,9 +108,9 @@ class CreationProfile:
     derivations: tuple[derive.Derivation, ...] = ()
     virtual: dict[str, str] = field(default_factory=dict)
     #: type of each virtual attribute ("number", "integer", "boolean" or
-    #: "string"): what pypowsybl's metadata says of a real attribute, so a
-    #: virtual one is checked the same way
-    virtual_kinds: dict[str, str] = field(default_factory=dict)
+    #: "string"), or the columns of a virtual table: what pypowsybl's metadata
+    #: says of a real attribute, so a virtual one is checked the same way
+    virtual_kinds: dict[str, str | VirtualTable] = field(default_factory=dict)
     #: attribute holding a table of rows, when the call takes one
     rows_attribute: str | None = None
     #: schema group of those rows: the second dataframe of the call by default
@@ -749,7 +758,18 @@ _register(
             ),
             "limit_type": "CURRENT (default), ACTIVE_POWER or APPARENT_POWER",
         },
-        virtual_kinds={"permanent_limit": "number", "limit_type": "string"},
+        virtual_kinds={
+            "permanent_limit": "number",
+            "temporary_limits": VirtualTable(
+                columns={
+                    "value": "number",
+                    "acceptable_duration": "integer",
+                    "name": "string",
+                },
+                required=("value", "acceptable_duration"),
+            ),
+            "limit_type": "string",
+        },
         defaults={"side": "BOTH", "limit_type": "CURRENT"},
         units={"permanent_limit": "A", "value": "A", "acceptable_duration": "seconds"},
         enums={
