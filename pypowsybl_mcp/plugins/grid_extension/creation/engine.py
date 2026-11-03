@@ -870,22 +870,18 @@ class CreationEngine:
         are the ones that depend on what is already in the network.
         """
         given = self._normalise(profile, payload)
-        element_id = given.pop(profile.id_field, None)
+        element_id = self._take_id(profile, given)
         self._reject_unknown(profile, given)
-        if element_id is None:
-            raise CreationError(
-                f"'{profile.id_field}' is required for a {profile.element_type}"
-            )
         context = CreationContext(
             network=None,
             element_type=profile.element_type,
-            element_id=str(element_id),
+            element_id=element_id,
             attributes=given,
         )
         self._check_required(profile, context)
         self._check_values(profile, context)
         self._complete(profile, context, network=False)
-        return str(element_id).strip()
+        return element_id
 
 
 def _did_you_mean(name: str, candidates, cutoff: float) -> str:
