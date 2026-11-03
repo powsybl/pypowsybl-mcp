@@ -38,6 +38,7 @@ from pypowsybl_mcp.plugins.grid_extension.creation.context import (
     NODE_BREAKER,
     CreationContext,
     CreationError,
+    with_article,
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.engine import (
     _coerce,
@@ -657,7 +658,8 @@ class TopologyEngine:
             if new_id is not None and new_id in identifiables.index:
                 kind = str(identifiables.loc[new_id, "type"]).lower()
                 raise CreationError(
-                    f"'{key}' is '{new_id}', already used by a {kind} in this network; "
+                    f"'{key}' is '{new_id}', already used by {with_article(kind)} in "
+                    "this network; "
                     "choose another id"
                 )
 

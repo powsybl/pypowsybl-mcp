@@ -133,7 +133,7 @@ create_network_elements(items=[
    "nominal_v": 63.0},
   {"element_type": "two_windings_transformer", "id": "TR_DC",
    "bus_or_busbar_section_id_1": "VL_135_1_1",
-   "bus_or_busbar_section_id_2": "VL_63_1_1", "r": 0.2, "x": 10.0,
+   "bus_or_busbar_section_id_2": "VL_63_1_1", "r": 0.05, "x": 1.2,
    "rated_s": 400.0},
   {"element_type": "load", "id": "DATACENTER",
    "bus_or_busbar_section_id": "VL_63_1_1", "p0": 100.0, "q0": 20.0},
@@ -147,7 +147,9 @@ create_network_elements(items=[
 ```
 
 `rated_u1` / `rated_u2` default to the nominal voltages of the two ends, which is
-what sets the ratio; `x` is roughly `usc% / 100 * rated_u1^2 / rated_s`. A
+what sets the ratio. `r` and `x` are in ohms **referred to side 2**, so `x` is
+roughly `usc% / 100 * rated_u2^2 / rated_s`: 1.2 Ohm for the 400 MVA, 12 %
+transformer above, whose side 2 is at 63 kV. A
 created transformer has **no tap changer** until a `ratio_tap_changer` (voltage)
 or `phase_tap_changer` (active power) is added, and until then
 `set_tap_position()` has nothing to move. Their steps are generated as a ladder
@@ -245,6 +247,8 @@ picks the right removal from the type it finds in the network:
   are refused unless `cascade=True`; the refusal lists what would go -- the
   equipment inside, and by id what lies beyond it: branches, HVDC links with
   their far-end converter station, tie lines -- so ask first, then confirm.
+  A voltage level left with no equipment (only its own buses or busbar
+  sections) is removed without `cascade`.
 * A **switch, bus or busbar section** is removed as is -- prefer removing the
   equipment itself, since deleting topology can disconnect things silently.
 

@@ -13,8 +13,12 @@ is the property that makes an introspection-driven design safe to maintain: the
 hand-written half can never drift silently from the generated half.
 """
 
+from pathlib import Path
+
+import pypowsybl as pp
 import pytest
 
+from pypowsybl_mcp.plugins import grid_extension
 from pypowsybl_mcp.plugins.grid_extension.creation.drift import PROFILE_CHECKS
 from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
     PROFILES,
@@ -152,3 +156,20 @@ def test_the_descriptor_renders_for_every_profile(profile):
     names = {item["name"] for item in described["required"] + described["optional"]}
     assert set(profile.required) <= names
     assert not names & set(profile.managed)
+
+
+def test_the_transformer_reactance_guidance_uses_the_side_2_base():
+    """pypowsybl refers a transformer's r and x to side 2, and so must the guidance.
+
+    IEEE14's T4-7-1 (135/14 kV) has x = 0.20912 pu on 100 MVA, which in ohms only
+    holds on the side-2 base rated_u2^2 / 100. A formula on rated_u1 makes a new
+    135/20 kV transformer's x about 45 times too large, and the load flow diverges.
+    """
+    transformer = pp.network.create_ieee14().get_2_windings_transformers()
+    t4_7 = transformer.loc["T4-7-1"]
+    assert t4_7.x / (t4_7.rated_u2**2 / 100) == pytest.approx(0.20912, rel=1e-3)
+
+    skill = Path(grid_extension.__file__).parent / "skills" / "grid-extension.md"
+    for text in (PROFILES["two_windings_transformer"].guidance, skill.read_text()):
+        assert "rated_u2^2" in text
+        assert "rated_u1^2" not in text
