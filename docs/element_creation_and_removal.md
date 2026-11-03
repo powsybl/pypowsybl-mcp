@@ -479,7 +479,9 @@ network and the matching pypowsybl removal is applied.
 
 Ids may mix types and be given in any order: feeders are removed first, then voltage levels, then substations, so a
 cascade never deletes an id still to be processed. Each id gets one item in the reply, with a `status` of `removed`,
-`refused`, `not_found` or `failed`; an unknown id does not abort the others.
+`refused`, `not_found` or `failed`; an unknown id does not abort the others. An id that an earlier removal of the
+same call already took down (the converter stations of a removed HVDC line) is `removed`, with a message saying so,
+and an id given twice is processed once.
 
 ##### The cascade gate
 
