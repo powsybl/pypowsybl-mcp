@@ -22,12 +22,22 @@ not check is written down here, one :class:`TopologyOperation` each:
   to, and the attributes the reverts need to not crash.
 
 After a revert, pypowsybl leaves the switches of the bays it no longer needs in
-place, with nothing behind them; :class:`TopologyEngine` removes them.
+place, with nothing behind them; :class:`TopologyEngine` removes them. In a
+bus/breaker voltage level those switches lead to a bus pypowsybl created for the
+line; pypowsybl cannot remove a bus, so that one stays, empty and cut off, and
+the result says so.
+
+pypowsybl names what it creates after the ids it is given -- the line sections,
+the tee point, and in bus/breaker a bus and a switch -- and on most of them it
+fails, when the id is already taken, after it has cut the line. Those derived
+ids are checked before the call; if pypowsybl still fails,
+:class:`TopologyCallError` lists what it had already changed.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -226,6 +236,9 @@ class TopologyOperation:
     existing_lines: tuple[str, ...] = ()
     #: attributes naming elements the operation creates: their ids must be free
     new_ids: tuple[str, ...] = ()
+    #: the ids pypowsybl derives for what it creates, from the attributes and
+    #: whether the busbar is bus/breaker, each with how to avoid a clash
+    derived_ids: Callable[[dict, bool], list[tuple[str, str]]] | None = None
     #: whether the switches it leaves with nothing behind them are removed
     removes_orphan_switches: bool = False
 
@@ -245,6 +258,59 @@ class TopologyOperation:
 POSITION = rule.Between(
     "position_percent", 0.0, 100.0, "the place of the cut along the line, from side 1"
 )
+
+_NAME_SECTIONS = "name the line sections with line1_id and line2_id"
+
+
+def _sections(given: dict) -> list[tuple[str, str]]:
+    """The two line sections a cut or a tap creates, named or by default."""
+    line = given["line_id"]
+    return [
+        (given.get(key) or f"{line}_{side}", key)
+        for side, key in ((1, "line1_id"), (2, "line2_id"))
+    ]
+
+
+def _cut_ids(given: dict, bus_breaker: bool) -> list[tuple[str, str]]:
+    sections = _sections(given)
+    derived = [(name, _NAME_SECTIONS) for name, key in sections if not given.get(key)]
+    if bus_breaker:
+        # a bus per section, between it and the busbar, named after the section
+        derived += [(f"{name}_BUS", _NAME_SECTIONS) for name, _ in sections]
+    return derived
+
+
+def _tap_ids(given: dict, bus_breaker: bool) -> list[tuple[str, str]]:
+    line = given["line_id"]
+    derived = [
+        (name, _NAME_SECTIONS) for name, key in _sections(given) if not given.get(key)
+    ]
+    if not given.get("fictitious_voltage_level_id"):
+        derived.append(
+            (f"{line}_VL", "name the tee point with fictitious_voltage_level_id")
+        )
+    if bus_breaker:
+        # always named after the tapped line, whatever the other names
+        derived += [
+            (
+                f"{line}_BUS",
+                (
+                    "pypowsybl names it after line_id, whatever the other attributes, "
+                    "and cannot remove a bus: if it was left by the revert of an "
+                    "earlier tap of this line, the line can no longer be tapped at a "
+                    "bus/breaker voltage level"
+                ),
+            ),
+            (
+                f"{line}_SW",
+                (
+                    "pypowsybl names it after line_id, whatever the other attributes: "
+                    "free that id first"
+                ),
+            ),
+        ]
+    return derived
+
 
 OPERATIONS: dict[str, TopologyOperation] = {
     operation.operation: operation
@@ -290,6 +356,7 @@ OPERATIONS: dict[str, TopologyOperation] = {
             connection_points=("bbs_or_bus_id",),
             existing_lines=("line_id",),
             new_ids=("line1_id", "line2_id"),
+            derived_ids=_cut_ids,
             rules=(POSITION, SameVoltage("bbs_or_bus_id", "line_id")),
         ),
         TopologyOperation(
@@ -338,6 +405,7 @@ OPERATIONS: dict[str, TopologyOperation] = {
                 "fictitious_voltage_level_id",
                 "fictitious_substation_id",
             ),
+            derived_ids=_tap_ids,
             rules=(
                 POSITION,
                 rule.NonZero(
@@ -390,7 +458,8 @@ OPERATIONS: dict[str, TopologyOperation] = {
                 "line1_id and line2_id are merged into line_id, which no longer goes "
                 "through the voltage level they met at. Any two lines meeting at a "
                 "voltage level can be merged, not only the halves of a cut. The switches "
-                "that connected them there are removed."
+                "that connected them there are removed; in a bus/breaker voltage level "
+                "the bus each one led to stays, empty, as pypowsybl cannot remove a bus."
             ),
             required=("line1_id", "line2_id", "line_id"),
             existing_lines=("line1_id", "line2_id"),
@@ -407,7 +476,10 @@ OPERATIONS: dict[str, TopologyOperation] = {
             guidance=(
                 "line_to_be_merged1_id and line_to_be_merged2_id are merged into "
                 "merged_line_id, line_to_be_deleted is removed with the fictitious tee "
-                "point, and the switches that connected it at its busbar are removed."
+                "point, and the switches that connected it at its busbar are removed; "
+                "in a bus/breaker voltage level the bus they led to stays, empty, as "
+                "pypowsybl cannot remove a bus, and that line can then no longer be "
+                "tapped there."
             ),
             required=(
                 "line_to_be_merged1_id",
@@ -507,6 +579,50 @@ def dangling_switches(network, voltage_level_id: str) -> set[str]:
                 dangling.add(edge)
 
 
+def _bus_breaker_levels(network, voltage_level_ids) -> list[str]:
+    levels = network.get_voltage_levels(all_attributes=True)
+    return [
+        level
+        for level in sorted(voltage_level_ids)
+        if level in levels.index and levels.loc[level, "topology_kind"] != NODE_BREAKER
+    ]
+
+
+def line_end_buses(network, line_ids, voltage_level_ids) -> dict[str, str]:
+    """The buses the lines end at, in the bus/breaker ones of the voltage levels."""
+    ends = {}
+    for level in _bus_breaker_levels(network, voltage_level_ids):
+        elements = network.get_bus_breaker_topology(level).elements
+        for bus in elements.loc[elements.index.isin(list(line_ids)), "bus_id"]:
+            if isinstance(bus, str) and bus:
+                ends[bus] = level
+    return ends
+
+
+def abandoned_buses(network, buses: dict[str, str]) -> dict[str, str]:
+    """Of `buses` (bus -> its bus/breaker voltage level), those left with nothing.
+
+    A bus holding no equipment and a single switch, to the rest of its voltage
+    level: what is left where a removed line ended. Each comes with that switch.
+    """
+    abandoned = {}
+    # a revert may have removed the voltage level, left empty, with its buses
+    remaining = set(network.get_voltage_levels().index)
+    for level in sorted(set(buses.values()) & remaining):
+        topology = network.get_bus_breaker_topology(level)
+        held = set(topology.elements["bus_id"])
+        for bus in sorted(b for b, of in buses.items() if of == level):
+            if bus not in topology.buses.index or bus in held:
+                continue
+            switches = topology.switches.index[
+                (topology.switches["bus1_id"] == bus)
+                | (topology.switches["bus2_id"] == bus)
+            ]
+            if len(switches) == 1:
+                abandoned[bus] = str(switches[0])
+    return abandoned
+
+
 def _real_containers(network) -> dict[str, str]:
     """The voltage levels and substations that are not fictitious, by id."""
     containers = {}
@@ -516,6 +632,53 @@ def _real_containers(network) -> dict[str, str]:
     ):
         containers.update(dict.fromkeys(frame.index[~frame["fictitious"]], kind))
     return containers
+
+
+@dataclass(frozen=True)
+class Changes:
+    """What an operation changed, switches counted apart."""
+
+    created_ids: tuple[str, ...]
+    removed_ids: tuple[str, ...]
+    switches_created: int
+    switches_removed: int
+
+    @classmethod
+    def between(cls, before, after) -> Changes:
+        created = sorted(set(after.index) - set(before.index))
+        removed = sorted(set(before.index) - set(after.index))
+        return cls(
+            created_ids=tuple(i for i in created if after[i] != "SWITCH"),
+            removed_ids=tuple(i for i in removed if before[i] != "SWITCH"),
+            switches_created=int(sum(after[i] == "SWITCH" for i in created)),
+            switches_removed=int(sum(before[i] == "SWITCH" for i in removed)),
+        )
+
+    def __bool__(self) -> bool:
+        return bool(
+            self.created_ids
+            or self.removed_ids
+            or self.switches_created
+            or self.switches_removed
+        )
+
+    def parts(self) -> list[str]:
+        parts = []
+        if self.created_ids:
+            parts.append("created " + ", ".join(f"'{i}'" for i in self.created_ids))
+        if self.removed_ids:
+            parts.append("removed " + ", ".join(f"'{i}'" for i in self.removed_ids))
+        if self.switches_created:
+            parts.append(f"built {self.switches_created} switch(es)")
+        return parts
+
+
+class TopologyCallError(Exception):
+    """pypowsybl refused an operation, possibly after changing part of the network."""
+
+    def __init__(self, cause: Exception, changes: Changes):
+        super().__init__(str(cause))
+        self.changes = changes
 
 
 @dataclass(frozen=True)
@@ -613,28 +776,43 @@ class TopologyEngine:
             raise
 
         watched = set()
+        line_ids = [given[key] for key in operation.existing_lines]
         if operation.removes_orphan_switches:
-            for key in operation.existing_lines:
-                watched.update(_line_voltage_levels(network, given[key]))
+            for line_id in line_ids:
+                watched.update(_line_voltage_levels(network, line_id))
         dangling_before = {
             level: dangling_switches(network, level) for level in watched
         }
+        # in bus/breaker, where the lines end: buses pypowsybl may leave behind
+        ends = line_end_buses(network, line_ids, watched)
         before = network.get_identifiables()["type"].astype(str)
         containers = _real_containers(network)
 
-        getattr(pp.network, operation.call.function)(
-            network, **{key: value for key, value in given.items() if value is not None}
-        )
+        try:
+            getattr(pp.network, operation.call.function)(
+                network,
+                **{key: value for key, value in given.items() if value is not None},
+            )
+        except (pp.PyPowsyblError, ValueError, KeyError) as error:
+            # pypowsybl may have cut a line before failing: say what it changed
+            after = network.get_identifiables()["type"].astype(str)
+            raise TopologyCallError(error, Changes.between(before, after)) from error
 
+        abandoned = abandoned_buses(network, ends)
         orphans = sorted(
-            switch
-            for level in watched
-            for switch in dangling_switches(network, level) - dangling_before[level]
+            {
+                switch
+                for level in watched
+                for switch in dangling_switches(network, level) - dangling_before[level]
+            }
+            | set(abandoned.values())
         )
         if orphans:
             network.remove_elements(orphans)
         after = network.get_identifiables()["type"].astype(str)
-        return self._result(operation, network, before, after, orphans, containers)
+        return self._result(
+            operation, network, before, after, orphans, containers, abandoned, ends
+        )
 
     def _check_network(self, operation, network, given) -> None:
         for key in operation.connection_points:
@@ -662,16 +840,35 @@ class TopologyEngine:
                     "this network; "
                     "choose another id"
                 )
+        if operation.derived_ids is not None:
+            bus_breaker = any(
+                not resolve_connection_point(network, str(given[key])).is_node_breaker
+                for key in operation.connection_points
+                if given.get(key) is not None
+            )
+            for new_id, advice in operation.derived_ids(given, bus_breaker):
+                if new_id in identifiables.index:
+                    kind = str(identifiables.loc[new_id, "type"]).lower()
+                    raise CreationError(
+                        f"pypowsybl would create '{new_id}' for this operation, but "
+                        f"that id is already used by {with_article(kind)} in this "
+                        "network, and pypowsybl can fail on it after it has already "
+                        f"cut the line: {advice}"
+                    )
 
     def _result(
-        self, operation, network, before, after, orphans, containers
+        self,
+        operation,
+        network,
+        before,
+        after,
+        orphans,
+        containers,
+        abandoned=None,
+        ends=None,
     ) -> TopologyResult:
-        created = sorted(set(after.index) - set(before.index))
-        removed = sorted(set(before.index) - set(after.index))
-        switches_created = [i for i in created if after[i] == "SWITCH"]
-        switches_removed = [i for i in removed if before[i] == "SWITCH"]
-        created_ids = tuple(i for i in created if after[i] != "SWITCH")
-        removed_ids = tuple(i for i in removed if before[i] != "SWITCH")
+        changes = Changes.between(before, after)
+        created_ids, removed_ids = changes.created_ids, changes.removed_ids
 
         notes = []
         limits = network.get_operational_limits()
@@ -691,13 +888,18 @@ class TopologyEngine:
                 + ", ".join(f"{containers[i]} '{i}'" for i in emptied)
                 + ", left empty by the operation"
             )
-        parts = []
-        if created_ids:
-            parts.append("created " + ", ".join(f"'{i}'" for i in created_ids))
-        if removed_ids:
-            parts.append("removed " + ", ".join(f"'{i}'" for i in removed_ids))
-        if switches_created:
-            parts.append(f"built {len(switches_created)} switch(es)")
+        if abandoned:
+            # pypowsybl cannot remove a configured bus: say it stays, and why it matters
+            buses = [f"'{bus}' (in {ends[bus]})" for bus in sorted(abandoned)]
+            notes.append(
+                "pypowsybl cannot remove a bus, so "
+                + ", ".join(buses)
+                + (" stays" if len(buses) == 1 else " stay")
+                + " where the removed line(s) ended, empty and cut off, with no "
+                "effect on a load flow. pypowsybl names such a bus after the line, "
+                "so a later cut or tap that would create the same id is refused"
+            )
+        parts = changes.parts()
         if orphans:
             parts.append(
                 f"removed {len(orphans)} switch(es) left with nothing behind them"
@@ -708,8 +910,8 @@ class TopologyEngine:
             methods=(operation.call.name,),
             created_ids=created_ids,
             removed_ids=removed_ids,
-            switches_created=len(switches_created),
-            switches_removed=len(switches_removed),
+            switches_created=changes.switches_created,
+            switches_removed=changes.switches_removed,
             orphan_switches_removed=tuple(orphans),
             notes=tuple(notes),
             message=message,

@@ -25,6 +25,7 @@ from mcp.server.mcpserver import Context
 from pypowsybl_mcp.plugins.grid_extension.creation.context import CreationError
 from pypowsybl_mcp.plugins.grid_extension.creation.topology import (
     OPERATIONS,
+    TopologyCallError,
     TopologyEngine,
 )
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
@@ -93,9 +94,12 @@ class TopologyTools(PyPowsyblTool):
             str: JSON, with the same keys whatever the outcome:
                 - success, network_id, operation, methods (the pypowsybl call)
                 - created_ids, removed_ids: the elements that appeared or went,
-                  switches aside
+                  switches aside -- also on a failure, when pypowsybl had already
+                  changed part of the network
                 - switches: {{created, removed, orphans_removed}}; a revert removes
                   the switches it would otherwise leave with nothing behind them
+                  (in bus/breaker, the empty bus they led to stays: pypowsybl
+                  cannot remove a bus)
                 - notes: e.g. a new line without limits
                 - errors: [{{problem, hint}}] on a rejection, hint being the
                   operation's descriptor
@@ -115,7 +119,9 @@ class TopologyTools(PyPowsyblTool):
         Notes:
             - Checked before anything changes: the lines and busbars exist, a
               position strictly between 0 and 100 %, a busbar at the line's
-              nominal voltage (a line cannot change voltage)
+              nominal voltage (a line cannot change voltage), and the ids
+              pypowsybl would create (line sections, tee point, bus/breaker bus
+              and switch) are free
             - A line cut in two keeps its limits on both halves; a new line
               tapped into another has none until operational_limits are added
             - Cached load-flow results are cleared: re-run run_loadflow()
@@ -150,6 +156,37 @@ class TopologyTools(PyPowsyblTool):
                     [_error(str(error), error.hint)],
                 )
             )
+        except TopologyCallError as error:
+            # pypowsybl refused it, possibly after applying part of it
+            proxy.invalidate_loadflow(network_id)
+            changes = error.changes
+            message = f"Failed to apply {operation}: {error!s}"
+            reply = _rejected(
+                network_id,
+                operation,
+                methods,
+                message,
+                [_error(str(error))],
+                loadflow_invalidated=True,
+            )
+            if changes:
+                reply["message"] += (
+                    "; pypowsybl had already changed the network: "
+                    + "; ".join(changes.parts())
+                )
+                reply["created_ids"] = list(changes.created_ids)
+                reply["removed_ids"] = list(changes.removed_ids)
+                reply["switches"]["created"] = changes.switches_created
+                reply["switches"]["removed"] = changes.switches_removed
+                reply["notes"] = [
+                    (
+                        "the network is not as it was before this call: the changes "
+                        "listed in created_ids and removed_ids stay. Check them with "
+                        "get_network_element_data() before going on"
+                    )
+                ]
+            logger.error(reply["message"])
+            return _reply(reply)
         except (pp.PyPowsyblError, ValueError, KeyError) as error:
             # pypowsybl may have applied part of the operation before refusing it.
             proxy.invalidate_loadflow(network_id)
@@ -205,7 +242,7 @@ def _rejected(
     errors,
     loadflow_invalidated=False,
 ) -> dict:
-    """The reply to an operation that changed nothing (or may have, half way)."""
+    """The reply to an operation refused, before or by pypowsybl."""
     return {
         "success": False,
         "network_id": network_id,
