@@ -56,7 +56,10 @@ from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
     Connection,
     CreationProfile,
 )
-from pypowsybl_mcp.plugins.grid_extension.creation.schema import creatable_element_types
+from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
+    Field,
+    creatable_element_types,
+)
 
 #: everyday names accepted for the canonical pypowsybl attribute
 ALIASES = {
@@ -278,6 +281,8 @@ class CreationEngine:
 
         for name, description in profile.virtual.items():
             entry: dict[str, Any] = {"name": name, "description": description}
+            if name in profile.virtual_kinds:
+                entry["type"] = profile.virtual_kinds[name]
             if name in profile.units:
                 entry["unit"] = profile.units[name]
             if name in profile.defaults:
@@ -652,7 +657,10 @@ class CreationEngine:
                 )
             return normalised
         if item is None:
-            return value
+            kind = profile.virtual_kinds.get(name)
+            if kind is None:
+                return value
+            item = Field(name=name, kind=kind, is_index=False, group=0)
         return _coerce(item, value, profile.element_type)
 
     def _row_fields(self, profile: CreationProfile) -> dict:

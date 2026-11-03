@@ -98,6 +98,10 @@ class CreationProfile:
     rules: tuple[rule.Rule, ...] = ()
     derivations: tuple[derive.Derivation, ...] = ()
     virtual: dict[str, str] = field(default_factory=dict)
+    #: type of each virtual attribute ("number", "integer", "boolean" or
+    #: "string"): what pypowsybl's metadata says of a real attribute, so a
+    #: virtual one is checked the same way
+    virtual_kinds: dict[str, str] = field(default_factory=dict)
     #: attribute holding a table of rows, when the call takes one
     rows_attribute: str | None = None
     #: schema group of those rows: the second dataframe of the call by default
@@ -745,6 +749,7 @@ _register(
             ),
             "limit_type": "CURRENT (default), ACTIVE_POWER or APPARENT_POWER",
         },
+        virtual_kinds={"permanent_limit": "number", "limit_type": "string"},
         defaults={"side": "BOTH", "limit_type": "CURRENT"},
         units={"permanent_limit": "A", "value": "A", "acceptable_duration": "seconds"},
         enums={
@@ -830,6 +835,7 @@ _register(
             "step_count": "number of tap positions when the steps are generated",
             "range_percent": "half-range of the ratio in percent, e.g. 10 for +/-10%",
         },
+        virtual_kinds={"step_count": "integer", "range_percent": "number"},
         defaults={
             "step_count": 17,
             "range_percent": 10.0,
@@ -881,6 +887,7 @@ _register(
             "step_count": "number of tap positions when the steps are generated",
             "max_angle_degrees": "largest phase shift, reached at the extreme positions",
         },
+        virtual_kinds={"step_count": "integer", "max_angle_degrees": "number"},
         defaults={
             "step_count": 17,
             "max_angle_degrees": 10.0,
