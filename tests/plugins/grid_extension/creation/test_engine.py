@@ -473,6 +473,30 @@ def test_operational_limits_make_a_branch_overloadable(engine, site):
     assert set(rows.index.get_level_values("acceptable_duration")) == {-1, 1200}
 
 
+def test_virtual_attributes_are_coerced_like_real_ones(engine, site):
+    # a numeric string reached the rules uncoerced and crashed them
+    engine.create(
+        site,
+        "operational_limits",
+        {"element_id": "LINE_DC", "permanent_limit": "300"},
+    )
+    engine.create(site, "ratio_tap_changer", {"element_id": "TR", "step_count": "5"})
+
+    limits = site.get_operational_limits()
+    rows = limits[limits.index.get_level_values("element_id") == "LINE_DC"]
+    assert set(rows["value"]) == {300.0}
+    assert site.get_ratio_tap_changers().loc["TR", "high_tap"] == 4
+
+
+def test_a_virtual_attribute_of_the_wrong_type_is_refused(engine, site):
+    with pytest.raises(CreationError, match="'permanent_limit' .* must be a number"):
+        engine.create(
+            site,
+            "operational_limits",
+            {"element_id": "LINE_DC", "permanent_limit": "a lot"},
+        )
+
+
 def test_minmax_reactive_limits(engine, bus_breaker):
     engine.create(
         bus_breaker,
