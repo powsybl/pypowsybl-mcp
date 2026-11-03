@@ -473,6 +473,48 @@ def test_operational_limits_make_a_branch_overloadable(engine, site):
     assert set(rows.index.get_level_values("acceptable_duration")) == {-1, 1200}
 
 
+def _limits_of(network, element_id):
+    limits = network.get_operational_limits(
+        all_attributes=True, show_inactive_sets=True
+    ).reset_index()
+    return limits[limits["element_id"] == element_id]
+
+
+def test_operational_limits_go_in_the_group_named_once(engine, site):
+    # given once for the call, the group used to be dropped for DEFAULT
+    engine.create(
+        site,
+        "operational_limits",
+        {"element_id": "LINE_DC", "permanent_limit": 300.0, "group_name": "WINTER"},
+    )
+
+    assert set(_limits_of(site, "LINE_DC")["group_name"]) == {"WINTER"}
+
+
+def test_explicit_limit_rows_take_the_side_named_once(engine, site):
+    engine.create(
+        site,
+        "operational_limits",
+        {
+            "element_id": "LINE_DC",
+            "side": "TWO",
+            "limits": [{"value": 300.0, "acceptable_duration": -1}],
+        },
+    )
+    engine.create(
+        site,
+        "operational_limits",
+        {
+            "element_id": "TR",
+            "limits": [{"value": 500.0, "acceptable_duration": -1}],
+        },
+    )
+
+    assert list(_limits_of(site, "LINE_DC")["side"]) == ["TWO"]
+    # BOTH, the default, is one row per side
+    assert sorted(_limits_of(site, "TR")["side"]) == ["ONE", "TWO"]
+
+
 def test_virtual_attributes_are_coerced_like_real_ones(engine, site):
     # a numeric string reached the rules uncoerced and crashed them
     engine.create(

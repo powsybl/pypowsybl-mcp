@@ -263,8 +263,17 @@ class DerivedCall(Executor):
                 frames[keyword] = _frame([{"id": element_id, **row}], index="id")
 
         if self.rows_attribute and self.rows_group == 0:
+            # The rows are the main DataFrame itself, so an attribute given
+            # once for the whole call (the group of a set of limits) goes on
+            # every row; a row's own value wins.
+            shared = {
+                name: value
+                for name, value in attributes.items()
+                if name not in taken and name in schema.names and name != index
+            }
             main = [
-                {index: element_id, **self.row_defaults, **row} for row in rows or []
+                {index: element_id, **self.row_defaults, **shared, **row}
+                for row in rows or []
             ]
         else:
             main = [
