@@ -9,7 +9,7 @@
 Whatever is being created, the same steps run in the same order::
 
     look the profile up
-      -> normalise attribute names
+      -> normalize attribute names
       -> take the id out
       -> reject unknown or engine-managed attributes
       -> resolve the connection point(s), or the element being attached to
@@ -349,7 +349,7 @@ class CreationEngine:
     def create(self, network, element_type: str, attributes: dict) -> CreationResult:
         """Create one element; ``str()`` of the result is the line to report."""
         profile = self.profile_for(element_type)
-        given = self._normalise(profile, attributes)
+        given = self._normalize(profile, attributes)
         element_id = self._take_id(profile, given)
         self._reject_unknown(profile, given)
 
@@ -499,7 +499,7 @@ class CreationEngine:
     # Steps
     # ------------------------------------------------------------------
 
-    def _normalise(self, profile: CreationProfile, attributes: dict) -> dict:
+    def _normalize(self, profile: CreationProfile, attributes: dict) -> dict:
         if not isinstance(attributes, dict):
             raise CreationError(
                 "'attributes' must be an object mapping attribute names to values"
@@ -654,14 +654,14 @@ class CreationEngine:
         """A value checked against its enumeration, or coerced to its type."""
         legal = profile.enums.get(name)
         if legal:
-            normalised = str(value).strip().upper()
-            if normalised not in legal:
+            normalized = str(value).strip().upper()
+            if normalized not in legal:
                 raise CreationError(
-                    f"'{normalised}' is not a valid {name} for a "
+                    f"'{normalized}' is not a valid {name} for a "
                     f"{profile.element_type}. Accepted values: " + ", ".join(legal),
                     hint={name: list(legal)},
                 )
-            return normalised
+            return normalized
         if item is None:
             kind = profile.virtual_kinds.get(name)
             if isinstance(kind, VirtualTable):
@@ -740,7 +740,7 @@ class CreationEngine:
     def _check_rows(self, profile: CreationProfile, context: CreationContext) -> None:
         """Check the rows of a table attribute the way top-level attributes are.
 
-        Without this a misspelt column is silently dropped -- a step given as
+        Without this a misspelled column is silently dropped -- a step given as
         ``{"rh0": 0.9}`` becomes a step at the default ratio -- and a column
         missing from one row only is rejected upstream as missing altogether.
         """
@@ -874,7 +874,7 @@ class CreationEngine:
         reactance...) -- so the only mistakes that can stop a batch half way
         are the ones that depend on what is already in the network.
         """
-        given = self._normalise(profile, payload)
+        given = self._normalize(profile, payload)
         element_id = self._take_id(profile, given)
         self._reject_unknown(profile, given)
         context = CreationContext(

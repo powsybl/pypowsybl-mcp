@@ -198,7 +198,7 @@ def test_create_generator_regulating(engine, bus_breaker):
 
     generators = bus_breaker.get_generators()
     assert bool(generators.loc["G", "voltage_regulator_on"])
-    # Enumerated values are accepted in any case and normalised.
+    # Enumerated values are accepted in any case and normalized.
     assert generators.loc["G", "energy_source"] == "SOLAR"
 
 
@@ -642,7 +642,7 @@ def test_a_tap_changer_numbered_from_low_tap_starts_on_its_middle_step(engine, s
     assert changers.loc["TR", "tap"] == 0
 
 
-def test_a_misspelt_step_column_is_rejected_not_dropped(engine, site):
+def test_a_misspelled_step_column_is_rejected_not_dropped(engine, site):
     with pytest.raises(CreationError, match="no column 'rh0'. Did you mean 'rho'"):
         engine.create(
             site,
