@@ -210,12 +210,7 @@ class CreationEngine:
                 "other elements or only reads it."
             )
         else:
-            close = difflib.get_close_matches(name, sorted(supported), n=3, cutoff=0.4)
-            suggestion = (
-                f" Did you mean {', '.join(repr(item) for item in close)}?"
-                if close
-                else ""
-            )
+            suggestion = _did_you_mean(name, supported, cutoff=0.4)
             reason = f"No element type '{element_type}' exists.{suggestion}"
         raise CreationError(
             f"{reason} Call describe_element_creation() to list the supported types",
@@ -541,12 +536,7 @@ class CreationEngine:
                     hint={"set_automatically": sorted(managed)},
                 )
             if name not in known:
-                close = difflib.get_close_matches(name, sorted(known), n=3, cutoff=0.5)
-                suggestion = (
-                    f" Did you mean {', '.join(repr(item) for item in close)}?"
-                    if close
-                    else ""
-                )
+                suggestion = _did_you_mean(name, known, cutoff=0.5)
                 raise CreationError(
                     f"A {profile.element_type} has no attribute '{name}'.{suggestion}",
                     hint={"accepted_attributes": sorted(known - managed)},
@@ -704,15 +694,9 @@ class CreationEngine:
                 column = str(key).strip()
                 item = fields.get(column)
                 if item is None:
-                    close = difflib.get_close_matches(column, sorted(fields), n=3)
-                    suggestion = (
-                        f" Did you mean {', '.join(repr(entry) for entry in close)}?"
-                        if close
-                        else ""
-                    )
                     raise CreationError(
                         f"Row {position} of '{name}' has no column '{column}'."
-                        f"{suggestion}",
+                        f"{_did_you_mean(column, fields, cutoff=0.6)}",
                         hint=hint,
                     )
                 values[column] = (
@@ -817,6 +801,15 @@ class CreationEngine:
         self._check_required(profile, context)
         self._check_values(profile, context)
         return str(element_id).strip()
+
+
+def _did_you_mean(name: str, candidates, cutoff: float) -> str:
+    """The " Did you mean 'a', 'b'?" suffix naming the candidates close to a
+    misspelled name, or an empty string when none is."""
+    close = difflib.get_close_matches(name, sorted(candidates), n=3, cutoff=cutoff)
+    if not close:
+        return ""
+    return f" Did you mean {', '.join(repr(item) for item in close)}?"
 
 
 def _creates_its_id(profile: CreationProfile) -> bool:
