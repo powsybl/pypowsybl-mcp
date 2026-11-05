@@ -1562,6 +1562,101 @@ async def test_modify_network_line_unsupported_parameter(network_tools, mock_ctx
 
 
 @pytest.mark.asyncio
+async def test_modify_network_voltage_level_not_found(network_tools, mock_ctx):
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_voltage_levels.return_value.index = ["vl1"]
+    proxy.networks["net1"] = mock_net
+
+    result = await network_tools.modify_network(
+        element_type="voltage_level",
+        element_id="missing",
+        parameter="low_voltage_limit",
+        value=128.0,
+        network_id="net1",
+        ctx=mock_ctx,
+    )
+
+    assert "Voltage level 'missing' not found in network 'net1'" in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("parameter", "value"),
+    [("low_voltage_limit", 128.0), ("high_voltage_limit", 145.0)],
+)
+async def test_modify_network_voltage_level_limit_success(
+    network_tools, mock_ctx, parameter, value
+):
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_voltage_levels.return_value.index = ["vl1"]
+    proxy.networks["net1"] = mock_net
+
+    result = await network_tools.modify_network(
+        element_type="voltage_level",
+        element_id="vl1",
+        parameter=parameter,
+        value=value,
+        network_id="net1",
+        ctx=mock_ctx,
+    )
+
+    assert f"Updated voltage_level 'vl1' {parameter} to {value} kV" in result
+    mock_net.update_voltage_levels.assert_called_once_with(
+        id=["vl1"], **{parameter: [value]}
+    )
+
+
+@pytest.mark.asyncio
+async def test_modify_network_voltage_level_unsupported_parameter(
+    network_tools, mock_ctx
+):
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_voltage_levels.return_value.index = ["vl1"]
+    proxy.networks["net1"] = mock_net
+
+    result = await network_tools.modify_network(
+        element_type="voltage_level",
+        element_id="vl1",
+        parameter="nominal_v",
+        value=400.0,
+        network_id="net1",
+        ctx=mock_ctx,
+    )
+
+    assert "Unsupported parameter 'nominal_v' for voltage_level" in result
+
+
+@pytest.mark.asyncio
+async def test_modify_network_voltage_level_limits_on_real_network(
+    network_tools, mock_ctx
+):
+    proxy = network_tools.get_proxy("test-session")
+    network = pp.network.create_ieee14()
+    proxy.networks["net1"] = network
+
+    await network_tools.modify_network(
+        "voltage_level", "VL1", "high_voltage_limit", 150.0, "net1", ctx=mock_ctx
+    )
+    await network_tools.modify_network(
+        "voltage_level", "VL1", "low_voltage_limit", 120.0, "net1", ctx=mock_ctx
+    )
+    limits = network.get_voltage_levels().loc["VL1"]
+    assert limits["low_voltage_limit"] == 120.0
+    assert limits["high_voltage_limit"] == 150.0
+
+    # An inconsistent range is rejected by pypowsybl and reported, not raised
+    result = await network_tools.modify_network(
+        "voltage_level", "VL1", "low_voltage_limit", 160.0, "net1", ctx=mock_ctx
+    )
+    assert "Failed to modify network" in result
+    assert "Inconsistent voltage limit range" in result
+    assert network.get_voltage_levels().loc["VL1"]["low_voltage_limit"] == 120.0
+
+
+@pytest.mark.asyncio
 async def test_modify_network_unsupported_element_type(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     proxy.networks["net1"] = MagicMock()

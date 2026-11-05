@@ -38,7 +38,7 @@ This document lists all MCP tools exposed by the PyPowsybl MCP server, grouped b
 
 | Tool                 | Description                                                                       |
 |----------------------|-----------------------------------------------------------------------------------|
-| `modify_network`     | Change parameters (P, Q, target voltage, …) of one or more network elements.      |
+| `modify_network`     | Change parameters (P, Q, target voltage, voltage limits, …) of network elements.  |
 | `set_line_status`    | Connect or disconnect a branch (line or transformer).                             |
 | `set_switch_status`  | Open or close a switch in the network (breaker, disconnector, load-break switch). |
 | `set_tap_position`   | Move a transformer's ratio or phase tap changer to a new position.                |

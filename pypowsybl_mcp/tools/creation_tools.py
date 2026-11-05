@@ -445,6 +445,8 @@ class CreationTools(PyPowsyblTool):
               connection points
             - create_line(): Connect this voltage level to the existing grid
             - get_network_element_data(element_type='voltage_level'): List voltage levels
+            - modify_network(element_type='voltage_level'): Change the voltage limits
+              of an existing voltage level
         """
         try:
             proxy, network_id, network = self.resolve_network(ctx, network_id)

@@ -67,6 +67,15 @@ MODIFY_NETWORK_SPEC: dict[str, dict] = {
             "x": ("x", "reactance", "Ω"),
         },
     },
+    "voltage_level": {
+        "getter": "get_voltage_levels",
+        "label": "Voltage level",
+        "updater": "update_voltage_levels",
+        "parameters": {
+            "low_voltage_limit": ("low_voltage_limit", "low_voltage_limit", "kV"),
+            "high_voltage_limit": ("high_voltage_limit", "high_voltage_limit", "kV"),
+        },
+    },
 }
 
 
@@ -352,7 +361,7 @@ class NetworkTools(PyPowsyblTool):
         ctx: Context[ServerSession, None] = None,  # FastMCP injects this
     ) -> str:
         """
-        Modify parameters of network elements (generators, loads, lines).
+        Modify parameters of network elements (generators, loads, lines, voltage levels).
 
         Allows dynamic adjustment of network parameters for scenario analysis, optimization,
         or corrective actions. Commonly used to test different operating conditions or
@@ -366,6 +375,7 @@ class NetworkTools(PyPowsyblTool):
                 - "generator": Generation units
                 - "load": Load/demand points
                 - "line": Transmission lines
+                - "voltage_level": Voltage levels (operational voltage limits)
             element_id (str): Unique ID of the specific element to modify. Use get_network_info()
                 or query network data to find valid element IDs.
             parameter (str): Parameter to modify. Valid options depend on element_type:
@@ -381,6 +391,14 @@ class NetworkTools(PyPowsyblTool):
                 For "line":
                     - "r": Resistance (Ω)
                     - "x": Reactance (Ω)
+
+                For "voltage_level":
+                    - "low_voltage_limit": Lower operational voltage limit (kV)
+                    - "high_voltage_limit": Upper operational voltage limit (kV)
+                    One limit per call: call twice to change both. The new range
+                    must stay consistent (0 <= low <= high), otherwise the update
+                    is rejected. These limits are the ones used by
+                    check_voltage_violations() and run_security_analysis().
 
             value (float): New value for the parameter (in units specified above)
             network_id (str, optional): Network to modify. If None, uses current network. Default: None.
@@ -404,6 +422,10 @@ class NetworkTools(PyPowsyblTool):
             # Modify line impedance
             modify_network("line", "LINE_2_3", "x", 0.15)
             → "Updated line 'LINE_2_3' reactance to 0.15 Ω in network 'ieee_14'"
+
+            # Tighten the voltage limits of an existing voltage level
+            modify_network("voltage_level", "VL1", "low_voltage_limit", 128.0)
+            → "Updated voltage_level 'VL1' low_voltage_limit to 128.0 kV in network 'ieee_14'"
 
         Common Modifications:
 
