@@ -1479,6 +1479,52 @@ def test_batch_checks_table_rows_before_creating_anything(engine, site):
     assert "S_NEW" not in site.get_substations().index
 
 
+@pytest.mark.parametrize(
+    "name", [True, {"text": "x"}, ["x"]], ids=["boolean", "object", "list"]
+)
+def test_batch_checks_string_types_before_creating_anything(engine, bus_breaker, name):
+    # pypowsybl refused them only once the earlier items were created
+    with pytest.raises(
+        BatchRejected, match="item 2: 'name' of a substation must be a string"
+    ):
+        engine.create_many(
+            bus_breaker,
+            [
+                {"element_type": "substation", "id": "S_NEW"},
+                {"element_type": "substation", "id": "S_BAD", "name": name},
+            ],
+        )
+
+    assert "S_NEW" not in bus_breaker.get_substations().index
+
+
+def test_a_number_given_for_a_string_is_read_as_its_text(engine, bus_breaker):
+    engine.create(bus_breaker, "substation", {"id": "S_NEW", "name": 12})
+
+    assert bus_breaker.get_substations().loc["S_NEW", "name"] == "12"
+
+
+def test_switch_kinds_may_be_a_list_of_strings(engine, node_breaker):
+    engine.create(node_breaker, "substation", {"id": "S_NEW"})
+    attributes = {
+        "id": "VL_NEW",
+        "substation_id": "S_NEW",
+        "nominal_v": 400.0,
+        "topology_kind": "NODE_BREAKER",
+        "section_count": 2,
+    }
+
+    with pytest.raises(CreationError, match="'switch_kinds' .* must be a string"):
+        engine.create(
+            node_breaker, "voltage_level", {**attributes, "switch_kinds": [1]}
+        )
+    engine.create(
+        node_breaker, "voltage_level", {**attributes, "switch_kinds": ["BREAKER"]}
+    )
+
+    assert "VL_NEW" in node_breaker.get_voltage_levels().index
+
+
 def test_batch_rejects_ids_repeated_within_it(engine, bus_breaker):
     """Caught before anything is created, across types, every repeat at once."""
     with pytest.raises(BatchRejected) as rejection:
