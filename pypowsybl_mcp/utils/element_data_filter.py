@@ -74,6 +74,29 @@ DERIVED_METRICS = (
     "unrated_sides",
 )
 
+# Raw per-terminal / bus state columns a load flow writes (currents, flows, bus
+# voltages). A condition or order_by referencing any of these — or a DERIVED_METRIC
+# above, which is computed from them — depends on a solved state, so a pure read
+# such as get_network_element_data cannot trust it without a fresh solve.
+LOADFLOW_STATE_COLUMNS = (
+    "i1",
+    "i2",
+    "i3",
+    "p",
+    "q",
+    "p1",
+    "p2",
+    "p3",
+    "q1",
+    "q2",
+    "q3",
+    "v_mag",
+    "v_angle",
+)
+
+# The full set of fields whose value is only meaningful after a load flow.
+LOADFLOW_DEPENDENT_FIELDS = frozenset(DERIVED_METRICS) | frozenset(LOADFLOW_STATE_COLUMNS)
+
 # Lines and transformers have two terminals (side 1 and side 2).
 TWO_SIDED_TYPES = ("line", "hvdc_line", "two_windings_transformer")
 

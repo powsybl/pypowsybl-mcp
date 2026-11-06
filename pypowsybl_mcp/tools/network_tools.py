@@ -22,6 +22,8 @@ from pypowsybl_mcp.utils.artifact_utils import (
     normalize_return_options,
 )
 from pypowsybl_mcp.utils.element_data_filter import (
+    LOADFLOW_DEPENDENT_FIELDS,
+    LOADFLOW_STATE_COLUMNS,
     AssetScopeFilter,
     FilterError,
     apply_element_filter,
@@ -2004,6 +2006,96 @@ class NetworkTools(PyPowsyblTool):
                 {"success": False, "network_id": network_id, "error": str(e)}, indent=2
             )
 
+    @staticmethod
+    def _loadflow_reliability_block(
+        proxy, network_id, variant_id, conditions, order_by, elements_df
+    ):
+        """Flag a filter that leans on load-flow values without a verified solve.
+
+        get_network_element_data is a pure read — it never solves (that would clobber
+        the named variant it reads and re-solve inside the check_current_violations
+        loop). But a condition or order_by on a load-flow-dependent field
+        (loading_percent, p_abs, i1, v_mag, ...) only means something once the variant
+        carries a fresh, converged, AC, current-provider solve; otherwise the rows are
+        all-NaN (so the filter silently returns nothing) or reflect a stale solve.
+
+        Returns a block to merge into the response: a `loadflow` provenance echo plus,
+        when the state cannot be verified fresh, a LOUD `warnings` entry and a
+        `reliability` flag. A static-only filter gets an empty block, so its response
+        and cost are unchanged.
+        """
+        try:
+            referenced = collect_condition_fields(conditions)
+        except FilterError:
+            referenced = set()
+        order_text = str(order_by).strip() if order_by else ""
+        if order_text and order_text.lower() not in (
+            "asc",
+            "desc",
+            "ascending",
+            "descending",
+        ):
+            referenced.add(order_text.lstrip("+-").strip())
+
+        lf_referenced = sorted(referenced & LOADFLOW_DEPENDENT_FIELDS)
+        if not lf_referenced:
+            return {}  # purely static filter: unchanged, no echo, no warning
+
+        record = proxy.loadflow_results.get(network_id)
+        fresh = bool(
+            record
+            and record.get("variant") == variant_id
+            and record.get("converged")
+            and not record.get("dc")
+            and record.get("provider") == proxy.lf_provider
+        )
+        # Certain "no flows present": every load-flow state column in the table is NaN.
+        present_state = [
+            c for c in LOADFLOW_STATE_COLUMNS if c in elements_df.columns
+        ]
+        no_flows = bool(present_state) and all(
+            elements_df[c].isna().all() for c in present_state
+        )
+
+        block = {
+            "loadflow": record if record else None,
+            "loadflow_dependent_fields": lf_referenced,
+        }
+        if fresh and not no_flows:
+            return block  # verified solve backs the values; provenance only
+
+        if no_flows:
+            reason = (
+                "no load flow has populated this variant (every flow/voltage column "
+                "is empty)"
+            )
+        elif record is None:
+            reason = "no load flow has been solved for this network this session"
+        else:
+            reason = (
+                "the last recorded solve does not match this query "
+                f"(solved variant={record.get('variant')!r}, "
+                f"converged={record.get('converged')}, dc={record.get('dc')}, "
+                f"provider={record.get('provider')!r})"
+            )
+        block["reliability"] = "UNVERIFIED_LOADFLOW"
+        block["warnings"] = [
+            (
+                "WARNING - UNVERIFIED LOAD FLOW: this query filters or sorts on "
+                f"load-flow-dependent field(s) {lf_referenced} but {reason}. "
+                "get_network_element_data does NOT solve a load flow, so these "
+                "results may be EMPTY (unsolved rows are dropped) or STALE. Run a "
+                "load flow on this variant first, or use check_current_violations / "
+                "check_voltage_violations, which always solve before checking."
+            )
+        ]
+        logger.warning(
+            f"get_network_element_data on '{network_id}' (variant '{variant_id}') "
+            f"filtered on load-flow-dependent {lf_referenced} with an unverified "
+            f"load flow: {reason}"
+        )
+        return block
+
     async def get_network_element_data(
         self,
         network_id: str | None = None,
@@ -2084,7 +2176,7 @@ class NetworkTools(PyPowsyblTool):
                 conditions=[{"field": "loading_percent", "op": ">", "value": 100}])
         """
         try:
-            _, network_id, network = self.resolve_network(ctx, network_id)
+            proxy, network_id, network = self.resolve_network(ctx, network_id)
         except NetworkNotFoundError as e:
             logger.warning(str(e))
             return json.dumps({"success": False, "error": str(e)}, indent=2)
@@ -2328,6 +2420,18 @@ class NetworkTools(PyPowsyblTool):
                     "total_elements": total_elements,
                     "matched_count": matched_count,
                 }
+                # Loud warning when the filter leans on load-flow values that this
+                # pure read cannot verify are a fresh converged AC solve.
+                summary.update(
+                    self._loadflow_reliability_block(
+                        proxy,
+                        network_id,
+                        variant_id,
+                        conditions,
+                        order_by,
+                        elements_df,
+                    )
+                )
 
                 if return_mode == "artifact":
                     # Every match, not just the page: an artifact is asked for

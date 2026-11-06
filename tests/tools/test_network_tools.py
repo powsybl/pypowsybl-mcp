@@ -741,6 +741,140 @@ async def test_get_network_element_data_filter_full_dataset(network_tools, mock_
 
 
 @pytest.mark.asyncio
+async def test_get_network_element_data_warns_on_unverified_loadflow_filter(
+    network_tools, mock_ctx
+):
+    """Filtering on a load-flow-dependent field with no solve recorded -> LOUD warning."""
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_generators.return_value = pd.DataFrame(
+        {"p": [95.0, 10.0], "max_p": [100.0, 100.0]}, index=["g0", "g1"]
+    )
+    mock_net.get_variant_ids.return_value = ["InitialState"]
+    proxy.networks["net1"] = mock_net  # no load flow solved this session
+
+    data = json.loads(
+        await network_tools.get_network_element_data(
+            network_id="net1",
+            element_type="generator",
+            conditions=[{"field": "loading_percent", "op": ">", "value": 90}],
+            ctx=mock_ctx,
+        )
+    )
+    assert data["reliability"] == "UNVERIFIED_LOADFLOW"
+    assert data["loadflow"] is None
+    assert data["loadflow_dependent_fields"] == ["loading_percent"]
+    assert data["warnings"]
+    assert "UNVERIFIED LOAD FLOW" in data["warnings"][0]
+    # the filter itself still works
+    assert set(data["elements"].keys()) == {"g0"}
+
+
+@pytest.mark.asyncio
+async def test_get_network_element_data_static_filter_has_no_warning(
+    network_tools, mock_ctx
+):
+    """A purely static filter (max_p) is unaffected: no echo, no warning."""
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_generators.return_value = pd.DataFrame(
+        {"p": [95.0, 10.0], "max_p": [100.0, 40.0]}, index=["g0", "g1"]
+    )
+    mock_net.get_variant_ids.return_value = ["InitialState"]
+    proxy.networks["net1"] = mock_net
+
+    data = json.loads(
+        await network_tools.get_network_element_data(
+            network_id="net1",
+            element_type="generator",
+            conditions=[{"field": "max_p", "op": ">", "value": 50}],
+            ctx=mock_ctx,
+        )
+    )
+    assert "warnings" not in data
+    assert "reliability" not in data
+    assert "loadflow" not in data
+    assert set(data["elements"].keys()) == {"g0"}
+
+
+@pytest.mark.asyncio
+async def test_get_network_element_data_fresh_solve_echoes_provenance(
+    network_tools, mock_ctx
+):
+    """A fresh converged AC solve for this variant -> provenance echo, no warning."""
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_generators.return_value = pd.DataFrame(
+        {"p": [95.0, 10.0], "max_p": [100.0, 100.0]}, index=["g0", "g1"]
+    )
+    mock_net.get_variant_ids.return_value = ["InitialState"]
+    proxy.networks["net1"] = mock_net
+    proxy.record_loadflow(
+        "net1",
+        converged=True,
+        dc=False,
+        provider=proxy.lf_provider,
+        variant="InitialState",
+        parameters={},
+        components=1,
+    )
+
+    data = json.loads(
+        await network_tools.get_network_element_data(
+            network_id="net1",
+            element_type="generator",
+            conditions=[{"field": "loading_percent", "op": ">", "value": 90}],
+            ctx=mock_ctx,
+        )
+    )
+    assert "warnings" not in data
+    assert "reliability" not in data
+    assert data["loadflow"]["variant"] == "InitialState"
+    assert data["loadflow"]["converged"] is True
+    assert data["loadflow_dependent_fields"] == ["loading_percent"]
+
+
+@pytest.mark.asyncio
+async def test_get_network_element_data_warns_when_state_all_nan(
+    network_tools, mock_ctx
+):
+    """Even with a recorded solve, all-NaN flow columns prove no flows -> warning."""
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_lines.return_value = pd.DataFrame(
+        {
+            "i1": [float("nan"), float("nan")],
+            "i2": [float("nan"), float("nan")],
+            "permanent_limit1": [100.0, 100.0],
+        },
+        index=["l0", "l1"],
+    )
+    mock_net.get_variant_ids.return_value = ["InitialState"]
+    proxy.networks["net1"] = mock_net
+    proxy.record_loadflow(
+        "net1",
+        converged=True,
+        dc=False,
+        provider=proxy.lf_provider,
+        variant="InitialState",
+        parameters={},
+        components=1,
+    )
+
+    data = json.loads(
+        await network_tools.get_network_element_data(
+            network_id="net1",
+            element_type="line",
+            conditions=[{"field": "loading_percent", "op": ">", "value": 0}],
+            ctx=mock_ctx,
+        )
+    )
+    assert data["reliability"] == "UNVERIFIED_LOADFLOW"
+    assert "every flow/voltage column is empty" in data["warnings"][0]
+    assert data["matched_count"] == 0  # all-NaN loadings dropped by the filter
+
+
+@pytest.mark.asyncio
 async def test_get_network_element_data_filter_sorted(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
