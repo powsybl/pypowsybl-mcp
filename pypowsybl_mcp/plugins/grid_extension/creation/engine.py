@@ -959,6 +959,27 @@ def _boolean(value) -> bool:
     raise ValueError(f"not a boolean: {value!r}")
 
 
+def _string(item, value):
+    """A number reads as its text; anything else that is not a string is refused
+    here, as pypowsybl would refuse it only once earlier items of a batch exist.
+    A boolean is refused rather than stored as "True"."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return str(value)
+    if (
+        item.name in LIST_COLUMNS
+        and isinstance(value, list)
+        and all(isinstance(entry, str) for entry in value)
+    ):
+        return value
+    raise TypeError(f"not a string: {value!r}")
+
+
+#: the string columns pypowsybl also accepts as a list of strings, joining it itself
+LIST_COLUMNS = frozenset({"switch_kinds"})
+
+
 def _coerce(item, value, element_type: str):
     """Accept the loose types an MCP client may send, reject what cannot convert."""
     try:
@@ -968,6 +989,8 @@ def _coerce(item, value, element_type: str):
             return int(value)
         if item.kind == "boolean":
             return _boolean(value)
+        if item.kind == "string":
+            return _string(item, value)
     except (TypeError, ValueError) as error:
         raise CreationError(
             f"'{item.name}' of {with_article(element_type)} must be "
