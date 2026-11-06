@@ -213,6 +213,22 @@ def build_snapshot(
     return snapshot
 
 
+def refuse_unauthorized(request: Request) -> JSONResponse | None:
+    """The response refusing `request`, or None when it carries the admin token.
+
+    Public so that a plugin adding its own admin route protects it the same way.
+    """
+    if not os.getenv("MCP_AUTH_TOKEN"):
+        logger.warning("Admin API refused: MCP_AUTH_TOKEN is not set")
+        return JSONResponse(
+            {"error": "admin API disabled: MCP_AUTH_TOKEN is not set"},
+            status_code=403,
+        )
+    if not _authorized(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    return None
+
+
 def register_admin_routes(
     mcp: MCPServer, proxies: TTLCache, registry: SessionRegistry = SESSIONS
 ) -> None:
@@ -233,14 +249,8 @@ def register_admin_routes(
         `?networks=full` adds per-network element counts - expensive on large
         networks, so it is opt-in.
         """
-        if not os.getenv("MCP_AUTH_TOKEN"):
-            logger.warning("Admin API refused: MCP_AUTH_TOKEN is not set")
-            return JSONResponse(
-                {"error": "admin API disabled: MCP_AUTH_TOKEN is not set"},
-                status_code=403,
-            )
-        if not _authorized(request):
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if (refusal := refuse_unauthorized(request)) is not None:
+            return refusal
 
         full = request.query_params.get("networks") == "full"
         return JSONResponse(build_snapshot(proxies, registry, full_networks=full))
