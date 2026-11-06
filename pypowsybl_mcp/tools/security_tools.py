@@ -7,6 +7,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+import pandas as pd
 import pypowsybl as pp
 from cachetools import TTLCache
 from loguru import logger
@@ -14,21 +15,21 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
-from pypowsybl_mcp.tools.network_tools import NetworkTools
 from pypowsybl_mcp.utils.artifact_utils import (
     artifact_response,
     normalize_return_options,
+)
+from pypowsybl_mcp.utils.element_data_filter import (
+    converter_station_nominal_voltages,
+    element_nominal_voltage,
 )
 from pypowsybl_mcp.utils.element_types import (
     ELEMENT_TYPE_TO_GETTER,
     element_type_hint,
 )
 from pypowsybl_mcp.utils.pagination import (
-    DEFAULT_PAGINATION_LIMIT,
-    MAX_PAGINATION_LIMIT,
     paginate,
 )
-from pypowsybl_mcp.utils.user_session_management import get_session_id
 
 
 def register_security_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
@@ -80,32 +81,6 @@ class SecurityTools(PyPowsyblTool):
         }
 
     @staticmethod
-    def _inline_overloaded_answer(
-        summary: dict, rows: list[dict], matched_count: int
-    ) -> dict:
-        """Put the overloaded rows in the answer, and say so when some were left out.
-
-        `rows` is the most loaded first and already capped; `matched_count` is how
-        many elements are really above the threshold. A cut that is not reported
-        reads as "these are all of them", so the answer flags it and points at the
-        artifact, which holds the whole list.
-        """
-        answer = {
-            **summary,
-            "matched_count": matched_count,
-            "returned_count": len(rows),
-        }
-        if len(rows) < matched_count:
-            answer["truncated"] = True
-            answer["hint"] = (
-                f"Only the {len(rows)} most loaded of {matched_count} elements are "
-                "listed. Call again with return_as='artifact' to get all of them "
-                "as a file."
-            )
-        answer["overloaded"] = rows
-        return answer
-
-    @staticmethod
     def _loading_and_excess(
         value: float, limit: float
     ) -> tuple[float | None, float | None]:
@@ -127,23 +102,12 @@ class SecurityTools(PyPowsyblTool):
 
     @staticmethod
     def _converter_station_voltages(network, voltage_by_level: dict) -> dict:
-        """Map every converter station id to its voltage level's nominal voltage.
+        """Converter station id -> its voltage level's nominal voltage.
 
-        HVDC lines do not name their voltage levels directly: they reference two
-        converter stations, which are the elements actually attached to a
-        voltage level. Both station kinds (VSC and LCC) are collected, since an
-        HVDC line may use either.
+        Thin wrapper over the shared resolver; contingency building keeps the
+        legacy 0-for-unresolvable semantics via _element_nominal_voltage below.
         """
-        voltage_by_station = {}
-        for getter in ("get_vsc_converter_stations", "get_lcc_converter_stations"):
-            stations_df = getattr(network, getter)()
-            if "voltage_level_id" not in stations_df.columns:
-                continue
-            for station_id, station_row in stations_df.iterrows():
-                voltage_by_station[station_id] = voltage_by_level.get(
-                    station_row["voltage_level_id"], 0
-                )
-        return voltage_by_station
+        return converter_station_nominal_voltages(network, voltage_by_level)
 
     @staticmethod
     def _element_nominal_voltage(
@@ -152,36 +116,16 @@ class SecurityTools(PyPowsyblTool):
         voltage_by_level: dict,
         voltage_by_converter_station: dict | None = None,
     ) -> float:
-        """Return the voltage used to decide if an element matches voltage filters.
-        Lines and two-winding transformers connect two voltage levels, so they
-        are classified by the highest side. This keeps mixed-voltage assets
-        visible in high-voltage studies. HVDC lines follow the same rule, via
-        the voltage levels of their two converter stations: the filters are
-        documented in terms of the voltage levels an element is connected to,
-        which is the AC side, not the DC pole voltage carried by the line row.
+        """Classifying voltage for an element (higher side), 0 when unresolvable.
+
+        Delegates to the shared resolver (which returns NaN when unresolvable)
+        and coerces NaN -> 0 so the contingency band filter keeps treating an
+        unresolvable element as 0 kV, as before.
         """
-        if element_type in ["line", "two_windings_transformer"]:
-            voltage_level1_id = element_row.get("voltage_level1_id")
-            voltage_level2_id = element_row.get("voltage_level2_id")
-            voltage1 = voltage_by_level.get(voltage_level1_id, 0)
-            voltage2 = voltage_by_level.get(voltage_level2_id, 0)
-            return max(voltage1, voltage2)
-
-        if element_type == "generator":
-            voltage_level_id = element_row.get("voltage_level_id")
-            return voltage_by_level.get(voltage_level_id, 0)
-
-        if element_type == "hvdc_line":
-            voltage_by_station = voltage_by_converter_station or {}
-            voltage1 = voltage_by_station.get(
-                element_row.get("converter_station1_id"), 0
-            )
-            voltage2 = voltage_by_station.get(
-                element_row.get("converter_station2_id"), 0
-            )
-            return max(voltage1, voltage2)
-
-        return 0
+        value = element_nominal_voltage(
+            element_type, element_row, voltage_by_level, voltage_by_converter_station
+        )
+        return 0.0 if pd.isna(value) else value
 
     @staticmethod
     def _build_contingencies_from_filter(
@@ -309,15 +253,41 @@ class SecurityTools(PyPowsyblTool):
         return filter_result["contingencies"], "auto"
 
     @staticmethod
+    def _violation_passes(
+        limit_type: str,
+        loading_percent: float | None,
+        limit_type_filter: set[str] | None,
+        threshold_percent: float | None,
+    ) -> bool:
+        """Whether a violation survives the active filters.
+
+        Shared by the pre- and post-contingency loops so the whole response obeys
+        one lens. ``limit_type_filter`` keeps only the requested kinds (e.g.
+        {"CURRENT"}). ``threshold_percent`` is a thermal-overload filter: it
+        narrows CURRENT rows only — voltage violations have no "% over" in this
+        sense and always pass it — and a CURRENT row whose loading is not
+        computable (infinite limit) is dropped once a threshold is in force.
+        """
+        if limit_type_filter is not None and limit_type not in limit_type_filter:
+            return False
+        if threshold_percent is not None and limit_type == "CURRENT":
+            return loading_percent is not None and loading_percent > threshold_percent
+        return True
+
+    @staticmethod
     def _compute_ranked_contingencies(
-        post_contingency_results, limit_type_filter: set[str] | None = None
+        post_contingency_results,
+        limit_type_filter: set[str] | None = None,
+        threshold_percent: float | None = None,
     ) -> tuple[list[dict], int]:
         """Sort the contingencies, worst first, and add a loading to each violation.
 
         The contingency with the most problems comes first. Every violation gets
         its loading and its overload in percent, so nobody has to compute them
-        again. If limit_type_filter is given, we keep only those kinds of
-        violations, for example {"CURRENT"} for line overloads.
+        again. Violations that do not pass the active filters (limit_type_filter,
+        threshold_percent — see _violation_passes) are dropped here, so every
+        downstream view (ranked_violations, the detail list, the top-contingency
+        counts and total_violations) stays consistent with the filter.
         """
         ranked_contingencies = []
         total_violations = 0
@@ -329,18 +299,16 @@ class SecurityTools(PyPowsyblTool):
 
             for violation in limit_violations:
                 limit_type = SecurityTools._limit_type_name(violation)
-                if (
-                    limit_type_filter is not None
-                    and limit_type not in limit_type_filter
-                ):
-                    continue
-
                 violation_data = SecurityTools._limit_violation_data(violation)
                 loading_percent, excess_percent = SecurityTools._loading_and_excess(
                     violation_data["value"], violation_data["limit"]
                 )
                 violation_data["loading_percent"] = loading_percent
                 violation_data["excess_percent"] = excess_percent
+                if not SecurityTools._violation_passes(
+                    limit_type, loading_percent, limit_type_filter, threshold_percent
+                ):
+                    continue
                 contingency_violations.append(violation_data)
 
             total_violations += len(contingency_violations)
@@ -361,14 +329,18 @@ class SecurityTools(PyPowsyblTool):
 
     @staticmethod
     def _flatten_ranked_violations(
-        ranked_contingencies: list[dict], top_violations: int | None
+        ranked_contingencies: list[dict],
+        top_violations: int | None,
     ) -> list[dict]:
         """Gather every violation into one flat list, most loaded first.
 
         Each row remembers the contingency it comes from, so the list reads like
         a simple table. Rows without a real loading (infinite limit) go to the
         end. We keep at most top_violations rows, or all of them when it is None
-        - which is what an artifact wants, since nothing is truncated there.
+        - which is what an artifact wants, since nothing is truncated there. The
+        rows are already narrowed by the active filters (limit_type_filter,
+        threshold_percent) in _compute_ranked_contingencies, so this is a pure
+        flatten-and-sort.
         """
         flat = []
         for item in ranked_contingencies:
@@ -401,8 +373,8 @@ class SecurityTools(PyPowsyblTool):
         detail_limit: int = 25,
         limit_type: str | None = None,
         top_violations: int = 20,
+        threshold_percent: float | None = None,
         return_as: str = "inline",
-        artifact_format: str = "json",
         limit: int | None = None,
         cursor: str | int | None = None,
         ctx: Context = None,  # MCPServer injects this
@@ -469,15 +441,28 @@ class SecurityTools(PyPowsyblTool):
                 "LOW_VOLTAGE". Default None keeps them all; use "CURRENT" for overloads.
             top_violations (int, optional): How many lines to keep in the
                 "ranked_violations" table. Default: 20.
+            threshold_percent (float, optional): Keep only CURRENT (thermal)
+                violations loaded strictly above this percentage; voltage
+                violations are never affected by it. Applied consistently across
+                ranked_violations, the detail contingencies_with_violations,
+                top_violating_contingencies, post_contingency.total_violations and
+                the pre_contingency violations; only violation_types_breakdown /
+                all_violations_count stay the full, unfiltered census of the study.
+                NOTE: the security analysis reports an element only once it is
+                ALREADY over its limit, so every CURRENT violation is already above
+                100%. A threshold below 100 therefore keeps them all and CANNOT
+                reveal near-limit (sub-100%) branches — those never appear as
+                violations at all. Use >= 100 (e.g. 120) to isolate the serious
+                overloads; to find near-limit branches in the base state, use
+                check_current_violations. Default None keeps every violation.
             return_as (str, optional): "inline" (default) puts the violations in the
-                answer, capped by top_violations and detail_limit. "artifact" writes
-                every violation of every contingency to a temporary file instead -
-                one row per violation, carrying its contingency_id - and returns a
-                link to it next to the same counts. Use it for a full N-1 study: the
-                table runs into the thousands of rows, and the file is fetched over
-                plain HTTP by whoever needs the data instead of being read out loud.
-            artifact_format (str, optional): "json" (default) or "csv", when
-                return_as="artifact". Default: "json".
+                answer, capped by top_violations and detail_limit. "artifact_json" /
+                "artifact_csv" writes every violation of every contingency to a
+                temporary file instead - one row per violation, carrying its
+                contingency_id - and returns a link to it next to the same counts.
+                Use it for a full N-1 study: the table runs into the thousands of
+                rows, and the file is fetched over plain HTTP by whoever needs the
+                data instead of being read out loud.
             limit (int, optional): Max entries in contingencies_with_violations per page.
             cursor (str | int, optional): Page offset for contingencies_with_violations.
 
@@ -486,10 +471,15 @@ class SecurityTools(PyPowsyblTool):
                 - success (bool): Whether analysis completed successfully
                 - network_id (str): Network identifier
                 - pre_contingency (dict): Pre-contingency state and violations
-                - post_contingency (dict): Post-contingency summary, with a count of
-                  each violation type (violation_types_breakdown, all_violations_count)
+                - post_contingency (dict): Post-contingency summary — total_violations
+                  (count matching the active filters, i.e. above threshold_percent
+                  when set), violations_above_threshold (same count, named explicitly,
+                  present only when threshold_percent is set), and the full,
+                  unfiltered census (violation_types_breakdown, all_violations_count)
                 - ranked_violations (list): The violations of every contingency in one
-                  list, most loaded first, each with its loading and overload in percent
+                  list, most loaded first, each with its loading and overload in percent;
+                  capped at top_violations. ranked_violations_truncated (bool) and hint
+                  are added when that cap cut the list
                 - top_violating_contingencies (list): Small ranked subset in summary mode
                 - contingencies_with_violations (list): Detailed violation information in detail mode
                 - error (str): Error message (if failed)
@@ -564,11 +554,24 @@ class SecurityTools(PyPowsyblTool):
                 },
                 indent=2,
             )
+        if threshold_percent is not None:
+            try:
+                threshold_percent = float(threshold_percent)
+            except (TypeError, ValueError):
+                threshold_percent = -1.0
+            if threshold_percent < 0:
+                return json.dumps(
+                    {
+                        "success": False,
+                        "error": "Parameter 'threshold_percent' must be a number >= 0",
+                    },
+                    indent=2,
+                )
 
         try:
-            return_mode, artifact_format = normalize_return_options(
-                return_as, artifact_format
-            )
+            # Folded vocabulary: the format rides in return_as
+            # (artifact_json/artifact_csv); pass None for the legacy second arg.
+            return_mode, artifact_format = normalize_return_options(return_as, None)
         except ValueError as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
@@ -614,12 +617,22 @@ class SecurityTools(PyPowsyblTool):
             if hasattr(pre_contingency_result, "limit_violations"):
                 violations = pre_contingency_result.limit_violations
                 for violation in violations:
+                    limit_type = self._limit_type_name(violation)
                     violation_data = self._limit_violation_data(violation)
                     loading_percent, excess_percent = self._loading_and_excess(
                         violation_data["value"], violation_data["limit"]
                     )
                     violation_data["loading_percent"] = loading_percent
                     violation_data["excess_percent"] = excess_percent
+                    # Same filters as the post-contingency views, so the whole
+                    # response obeys one lens (limit_type + threshold).
+                    if not self._violation_passes(
+                        limit_type,
+                        loading_percent,
+                        limit_type_filter,
+                        threshold_percent,
+                    ):
+                        continue
                     pre_contingency_violations.append(violation_data)
 
             pre_contingency_data = {
@@ -642,7 +655,7 @@ class SecurityTools(PyPowsyblTool):
             all_violations_count = sum(violation_types_breakdown.values())
 
             ranked_contingencies, total_violations = self._compute_ranked_contingencies(
-                post_contingency_results, limit_type_filter
+                post_contingency_results, limit_type_filter, threshold_percent
             )
             contingencies_with_violations_list = [
                 item for item in ranked_contingencies if item["violation_count"] > 0
@@ -657,6 +670,11 @@ class SecurityTools(PyPowsyblTool):
                 "all_violations_count": all_violations_count,
                 "violation_types_breakdown": violation_types_breakdown,
             }
+            if threshold_percent is not None:
+                # Spell out the above-threshold count: total_violations is already
+                # filtered to it, but all_violations_count sits right beside it, so
+                # name it explicitly to remove any ambiguity.
+                post_contingency_data["violations_above_threshold"] = total_violations
 
             result = {
                 "success": True,
@@ -669,6 +687,7 @@ class SecurityTools(PyPowsyblTool):
                 "pre_contingency": pre_contingency_data,
                 "post_contingency": post_contingency_data,
                 "top_k": top_k,
+                "threshold_percent": threshold_percent,
             }
 
             if return_mode == "artifact":
@@ -705,6 +724,15 @@ class SecurityTools(PyPowsyblTool):
             result["ranked_violations"] = self._flatten_ranked_violations(
                 contingencies_with_violations_list, top_violations
             )
+            # total_violations is the full flattened count, so this is an exact
+            # truncation test — say when the top_violations cap cut the list.
+            if total_violations > top_violations:
+                result["ranked_violations_truncated"] = True
+                result["hint"] = (
+                    f"Showing the top {top_violations} of {total_violations} "
+                    "violations in ranked_violations; raise top_violations or use "
+                    "return_as='artifact_json' for the full list."
+                )
 
             if mode == "summary":
                 # Keep only the most relevant contingencies to avoid huge payloads.
@@ -895,350 +923,3 @@ class SecurityTools(PyPowsyblTool):
             return json.dumps(
                 {"success": False, "network_id": network_id, "error": str(e)}, indent=2
             )
-
-    async def get_overloaded_elements(
-        self,
-        network_id: str | None = None,
-        element_type: str = "line",
-        study: str = "n",
-        threshold_percent: float = 100.0,
-        limit_kind: str | None = None,
-        contingencies: list[dict] | str | None = None,
-        min_nominal_voltage: float | None = None,
-        return_as: str = "inline",
-        artifact_format: str = "json",
-        ctx: Context = None,
-    ) -> str:
-        """
-        Find network elements loaded above a threshold, in normal (N) or N-1 operation.
-
-        This is a convenience wrapper so you do not have to chain several tools yourself.
-        One call replaces a manual sequence of loadflow + filter, or loadflow + contingencies
-        + security analysis + parsing.
-
-        Args:
-            network_id (str, optional): Network to analyze. Uses the current network if omitted.
-            element_type (str, optional): Kind of elements to look at (default: "line").
-                For study="n", passed to get_network_element_data.
-                For study="n1", used to build the contingency list when contingencies is omitted.
-            study (str, optional): Operating case to check:
-                - "n" (default): everyday operation on the current network state.
-                - "n1": after single-element outages (security analysis).
-            threshold_percent (float, optional): Keep elements strictly above this loading
-                in percent (default: 100.0). For study="n1", only the elements that
-                break their limit after a contingency are reported by the security
-                analysis, so a threshold below 100 returns the same elements as 100:
-                it cannot reveal lines that stay just under their limit.
-            limit_kind (str, optional): Which ampacity rating to use for study="n" only.
-                Defaults to "permanent" for study="n". Ignored for study="n1" because
-                run_security_analysis picks the correct limit internally.
-            contingencies (list[dict] | str, optional): Contingency list for study="n1".
-                If omitted, create_contingencies_list() is called automatically.
-            min_nominal_voltage (float, optional): When contingencies are auto-generated,
-                only elements at or above this voltage (kV) are included.
-            return_as (str, optional): "inline" (default) puts the overloaded elements
-                in the answer, the most loaded first; only the first 100 of them,
-                with truncated=true when more matched (matched_count always gives
-                the full number). "artifact" writes every one of them to
-                a temporary file instead and returns a link to it, with the counts and
-                a short preview - the useful mode when the whole list is wanted, such
-                as a broad threshold on a real network.
-            artifact_format (str, optional): "json" (default) or "csv", when
-                return_as="artifact". Default: "json".
-
-        Returns:
-            str: JSON with success, study, threshold_percent, matched_count, and overloaded
-                entries. Each entry has element_id and loading_percent; N-1 entries also
-                include contingency_id, value, limit, and limit_type. returned_count
-                says how many entries are listed, and truncated and hint appear when
-                the list was cut.
-                With return_as="artifact", the overloaded list is replaced by an
-                artifact (url, format, row_count, columns, ...) and a preview.
-
-        study="n" workflow (equivalent to get_network_element_data with mode="filter"):
-            1. Reads line currents from the last loadflow on the active variant.
-            2. Compares them to permanent (or chosen) limits.
-            3. Returns elements above threshold_percent.
-
-        study="n1" workflow (delegates to run_security_analysis):
-            1. Requires a converged loadflow first (run_loadflow).
-            2. Runs security analysis on the contingency list.
-            3. Converts limit violations into overloaded elements above threshold_percent.
-
-        For a deep dive on ONE contingency (full line table, not just violations):
-            clone_variant → set_line_status → run_loadflow →
-            get_network_element_data(variant_id=..., limit_kind="temporary").
-
-        Example:
-            # Lines above 100 % in normal operation
-            get_overloaded_elements(study="n", threshold_percent=100)
-
-            # N-1 violations above 100 % on all lines
-            get_overloaded_elements(study="n1", threshold_percent=100)
-        """
-        try:
-            _, network_id, _ = self.resolve_network(ctx, network_id)
-        except NetworkNotFoundError as e:
-            return json.dumps({"success": False, "error": str(e)}, indent=2)
-
-        study_normalized = (study or "n").strip().lower()
-        if study_normalized not in ("n", "n1"):
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": f"Unsupported study '{study}'. Use 'n' or 'n1'.",
-                },
-                indent=2,
-            )
-
-        try:
-            threshold = float(threshold_percent)
-        except (TypeError, ValueError):
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": f"threshold_percent must be a number, got {threshold_percent!r}",
-                },
-                indent=2,
-            )
-
-        try:
-            return_mode, artifact_format = normalize_return_options(
-                return_as, artifact_format
-            )
-        except ValueError as e:
-            return json.dumps({"success": False, "error": str(e)}, indent=2)
-
-        if study_normalized == "n":
-            return await self._overloaded_in_normal_operation(
-                network_id=network_id,
-                element_type=element_type,
-                threshold=threshold,
-                limit_kind=limit_kind or "permanent",
-                return_mode=return_mode,
-                artifact_format=artifact_format,
-                ctx=ctx,
-            )
-
-        return await self._overloaded_after_contingencies(
-            network_id=network_id,
-            element_type=element_type,
-            threshold=threshold,
-            contingencies=contingencies,
-            min_nominal_voltage=min_nominal_voltage,
-            return_mode=return_mode,
-            artifact_format=artifact_format,
-            ctx=ctx,
-        )
-
-    async def _overloaded_in_normal_operation(
-        self,
-        *,
-        network_id: str,
-        element_type: str,
-        threshold: float,
-        limit_kind: str,
-        return_mode: str,
-        artifact_format: str,
-        ctx: Context,
-    ) -> str:
-        """Study N: reuse the existing line filter on the current network snapshot."""
-        network_tools = NetworkTools(self.pypowsybl_proxies)
-
-        # The filter answers one page at a time, most loaded first. An inline
-        # answer keeps the first page only, so it stays small; an artifact is
-        # asked for precisely to get every match, so it walks all the pages.
-        page_limit = (
-            MAX_PAGINATION_LIMIT
-            if return_mode == "artifact"
-            else DEFAULT_PAGINATION_LIMIT
-        )
-        elements: dict[str, dict] = {}
-        cursor = None
-        while True:
-            raw = await network_tools.get_network_element_data(
-                network_id=network_id,
-                element_type=element_type,
-                mode="filter",
-                metric="loading_percent",
-                filter_op=">",
-                filter_value=threshold,
-                limit_kind=limit_kind,
-                limit=page_limit,
-                cursor=cursor,
-                ctx=ctx,
-            )
-
-            try:
-                data = json.loads(raw)
-            except json.JSONDecodeError:
-                return json.dumps(
-                    {"success": False, "network_id": network_id, "error": raw},
-                    indent=2,
-                )
-
-            if not data.get("success"):
-                return raw
-
-            elements.update(data.get("elements", {}))
-            if return_mode != "artifact":
-                break
-            # A cursor that does not move would loop forever: stop there too.
-            next_cursor = (data.get("pagination") or {}).get("nextCursor")
-            if next_cursor is None or next_cursor == cursor:
-                break
-            cursor = next_cursor
-
-        # Flatten the elements dict into a simple list the agent can scan quickly.
-        overloaded = []
-        for element_id, fields in elements.items():
-            overloaded.append(
-                {
-                    "element_id": element_id,
-                    "loading_percent": fields.get("loading_percent"),
-                    "limit_kind": data.get("limit_kind", limit_kind),
-                }
-            )
-
-        summary = {
-            "success": True,
-            "study": "n",
-            "network_id": network_id,
-            "element_type": element_type,
-            "threshold_percent": threshold,
-            "limit_kind": data.get("limit_kind", limit_kind),
-            "variant_id": data.get("variant_id", "InitialState"),
-            "matched_count": len(overloaded),
-        }
-
-        if return_mode == "artifact":
-            return json.dumps(
-                artifact_response(
-                    summary,
-                    overloaded,
-                    f"{network_id}_overloaded_n",
-                    artifact_format,
-                ),
-                indent=2,
-                default=str,
-            )
-
-        # The filter counts every match before cutting its page.
-        return json.dumps(
-            self._inline_overloaded_answer(
-                summary, overloaded, data.get("matched_count", len(overloaded))
-            ),
-            indent=2,
-        )
-
-    async def _overloaded_after_contingencies(
-        self,
-        *,
-        network_id: str,
-        element_type: str,
-        threshold: float,
-        contingencies: list[dict] | str | None,
-        min_nominal_voltage: float | None,
-        return_mode: str,
-        artifact_format: str,
-        ctx: Context,
-    ) -> str:
-        """Study N-1: run security analysis and keep violations above the threshold."""
-        session_id = get_session_id(ctx)
-        proxy = self.get_proxy(session_id)
-
-        lf = proxy.loadflow_results.get(network_id)
-        if not lf or not lf.get("converged"):
-            return json.dumps(
-                {
-                    "success": False,
-                    "network_id": network_id,
-                    "study": "n1",
-                    "error": "A converged loadflow is required before N-1 analysis.",
-                    "hint": "Call run_loadflow() first, then retry get_overloaded_elements(study='n1').",
-                },
-                indent=2,
-            )
-
-        if contingencies is None:
-            raw_list = await self.create_contingencies_list(
-                network_id=network_id,
-                element_type=element_type,
-                min_nominal_voltage=min_nominal_voltage,
-                ctx=ctx,
-            )
-            list_data = json.loads(raw_list)
-            if not list_data.get("success"):
-                return raw_list
-            contingencies = list_data["contingencies"]
-
-        # We ask for the detailed answer here: the summary one only keeps the top
-        # contingencies, not the full list we go through below. The very high
-        # detail_limit makes sure no overloaded contingency is left out.
-        raw_sa = await self.run_security_analysis(
-            network_id=network_id,
-            contingencies=contingencies,
-            limit_type="CURRENT",
-            mode="detail",
-            detail_limit=1_000_000,
-            ctx=ctx,
-        )
-        sa_data = json.loads(raw_sa)
-        if not sa_data.get("success"):
-            return raw_sa
-
-        overloaded = []
-        for contingency in sa_data.get("contingencies_with_violations", []):
-            contingency_id = contingency.get("contingency_id")
-            for violation in contingency.get("violations", []):
-                # The loading is already worked out by run_security_analysis. It is
-                # None when the limit is zero or infinite, so we leave those out.
-                loading_percent = violation.get("loading_percent")
-                if loading_percent is None or loading_percent <= threshold:
-                    continue
-                overloaded.append(
-                    {
-                        "contingency_id": contingency_id,
-                        "element_id": violation.get("subject_id"),
-                        "loading_percent": loading_percent,
-                        "value": violation.get("value"),
-                        "limit": violation.get("limit"),
-                        "limit_type": violation.get("limit_type"),
-                    }
-                )
-
-        # Most loaded first, so a shortened view still shows the worst lines.
-        overloaded.sort(key=lambda item: item["loading_percent"], reverse=True)
-
-        post = sa_data.get("post_contingency", {})
-
-        summary = {
-            "success": True,
-            "study": "n1",
-            "network_id": network_id,
-            "element_type": element_type,
-            "threshold_percent": threshold,
-            "matched_count": len(overloaded),
-            "total_contingencies": post.get("total_contingencies"),
-            "contingencies_with_violations": post.get("contingencies_with_violations"),
-        }
-
-        if return_mode == "artifact":
-            return json.dumps(
-                artifact_response(
-                    summary,
-                    overloaded,
-                    f"{network_id}_overloaded_n1",
-                    artifact_format,
-                ),
-                indent=2,
-                default=str,
-            )
-
-        # Sorted above, so the cut keeps the worst cases.
-        return json.dumps(
-            self._inline_overloaded_answer(
-                summary, overloaded[:DEFAULT_PAGINATION_LIMIT], len(overloaded)
-            ),
-            indent=2,
-        )
