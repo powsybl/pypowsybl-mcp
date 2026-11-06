@@ -22,6 +22,7 @@ from pypowsybl_mcp.utils.artifact_utils import (
     normalize_return_options,
 )
 from pypowsybl_mcp.utils.element_data_filter import (
+    AssetScopeFilter,
     FilterError,
     apply_element_filter,
     attach_full_current_limits,
@@ -1361,6 +1362,10 @@ class NetworkTools(PyPowsyblTool):
         max_voltage: float = 1.05,
         unit: str = "pu",
         use_network_limits: bool = True,
+        min_nominal_voltage: float | None = None,
+        max_nominal_voltage: float | None = None,
+        country: str | list[str] | None = None,
+        regionCvg: str | list[str] | None = None,  # camelCase: IIDM property name
         return_as: str = "inline",
         limit: int | None = None,
         cursor: str | int | None = None,
@@ -1399,6 +1404,16 @@ class NetworkTools(PyPowsyblTool):
                 voltage; kV values are applied as given to every bus.
             use_network_limits (bool, optional): Use the low/high voltage limits carried
                 by the voltage levels when available. Default: True.
+            min_nominal_voltage / max_nominal_voltage (float, optional): Keep only
+                buses whose nominal voltage is within the band (kV, inclusive).
+                None = no band filter.
+            country (str | list[str], optional): Keep only buses in one of these
+                substation country ISO codes. Scalar, list, or comma-separated;
+                case-insensitive. None = no filter.
+            regionCvg (str | list[str], optional): Same, on the regionCvg property
+                (RTE operator region; the country ISO for foreign substations).
+                Absent on non-RTE networks, where it matches nothing. None = no
+                filter.
             return_as (str, optional): "inline" (default) puts the violations in the
                 answer, paginated. "artifact_json" / "artifact_csv" writes every
                 violation to a temporary file instead and returns a link to it, with
@@ -1514,6 +1529,13 @@ class NetworkTools(PyPowsyblTool):
             violations = []
             evaluated = 0
             limit_sources = {"network": 0, "parameter": 0}
+            scope = AssetScopeFilter(
+                network,
+                min_nominal_voltage=min_nominal_voltage,
+                max_nominal_voltage=max_nominal_voltage,
+                country=country,
+                regionCvg=regionCvg,
+            )
 
             for bus_id, bus in enriched.iterrows():
                 v_kv = float(bus.get("v_mag", float("nan")))
@@ -1521,6 +1543,13 @@ class NetworkTools(PyPowsyblTool):
 
                 # Disconnected or islanded buses carry no solved voltage.
                 if pd.isna(v_kv):
+                    continue
+
+                # Output scope filter (nominal-voltage band / country / regionCvg):
+                # drop out-of-scope buses before they are evaluated, counted or paged.
+                if scope.active and not scope.passes(
+                    [bus.get("voltage_level_id")], nominal_v=nominal_v
+                ):
                     continue
 
                 low_kv = bus.get("low_voltage_limit", float("nan"))
@@ -1596,6 +1625,9 @@ class NetworkTools(PyPowsyblTool):
                 "violation_count": len(violations),
             }
 
+            if scope.active:
+                summary["filters_applied"] = scope.describe()
+
             if return_mode == "artifact":
                 result = artifact_response(
                     summary,
@@ -1634,6 +1666,8 @@ class NetworkTools(PyPowsyblTool):
         limit_kind: str = "permanent",
         min_nominal_voltage: float | None = None,
         max_nominal_voltage: float | None = None,
+        country: str | list[str] | None = None,
+        regionCvg: str | list[str] | None = None,  # camelCase: IIDM property name
         main_component: str = "none",
         return_as: str = "inline",
         limit: int | None = None,
@@ -1667,6 +1701,14 @@ class NetworkTools(PyPowsyblTool):
             min_nominal_voltage / max_nominal_voltage (float, optional): Keep only
                 branches whose nominal voltage (higher side) is within the band
                 (kV, inclusive). None = no band filter.
+            country (str | list[str], optional): Keep only branches touching one of
+                these substation country ISO codes (ANY side — an interconnector
+                counts for both ends). Scalar, list, or comma-separated;
+                case-insensitive. None = no filter.
+            regionCvg (str | list[str], optional): Same, on the regionCvg property
+                (RTE operator region; the country ISO for foreign substations).
+                Absent on non-RTE networks, where it matches nothing. None = no
+                filter.
             main_component (str, optional): Component scope — "none" (default,
                 every branch, matching the voltage tool), "both", "connected",
                 "synchronous".
@@ -1733,10 +1775,8 @@ class NetworkTools(PyPowsyblTool):
             working_variant = network.get_working_variant_id()
 
             # Nominal voltage per voltage level — used to label every violation's
-            # nominal_v and, when set, for the optional band filter.
-            band_active = (
-                min_nominal_voltage is not None or max_nominal_voltage is not None
-            )
+            # nominal_v. Band / country / regionCvg scoping is delegated to the
+            # shared AssetScopeFilter, applied per row before sort and pagination.
             vl_nominal = {}
             try:
                 vls = network.get_voltage_levels()
@@ -1744,6 +1784,14 @@ class NetworkTools(PyPowsyblTool):
                     vl_nominal = vls["nominal_v"].to_dict()
             except (pp.PyPowsyblError, ValueError, KeyError):
                 vl_nominal = {}
+
+            scope = AssetScopeFilter(
+                network,
+                min_nominal_voltage=min_nominal_voltage,
+                max_nominal_voltage=max_nominal_voltage,
+                country=country,
+                regionCvg=regionCvg,
+            )
 
             violations = []
             # Branches that carry a current on a terminal with no permanent rating:
@@ -1787,19 +1835,18 @@ class NetworkTools(PyPowsyblTool):
                         nominal_v = element_nominal_voltage(
                             element_t, fields, vl_nominal
                         )
-                        if band_active:
-                            if pd.isna(nominal_v):
-                                continue
-                            if (
-                                min_nominal_voltage is not None
-                                and nominal_v < min_nominal_voltage
-                            ):
-                                continue
-                            if (
-                                max_nominal_voltage is not None
-                                and nominal_v > max_nominal_voltage
-                            ):
-                                continue
+                        # Output scope filter (band / country / regionCvg). Drops
+                        # the branch from both `violations` and the `unrated`
+                        # coverage list, before the sort/count/paginate below.
+                        if scope.active and not scope.passes(
+                            [
+                                fields.get("voltage_level1_id"),
+                                fields.get("voltage_level2_id"),
+                                fields.get("voltage_level3_id"),
+                            ],
+                            nominal_v=nominal_v,
+                        ):
+                            continue
                         # Which energised terminals have no permanent rating (so
                         # their loading could not be computed). [] for a fully-rated
                         # branch — the common case.
@@ -1913,6 +1960,9 @@ class NetworkTools(PyPowsyblTool):
                 "unrated_count": len(unrated),
                 "unrated": unrated,
             }
+
+            if scope.active:
+                summary["filters_applied"] = scope.describe()
 
             if return_mode == "artifact":
                 result = artifact_response(

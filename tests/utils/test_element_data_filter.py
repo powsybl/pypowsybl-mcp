@@ -10,7 +10,9 @@ import pandas as pd
 import pytest
 
 from pypowsybl_mcp.utils.element_data_filter import (
+    AssetScopeFilter,
     FilterError,
+    _norm_scope_set,
     apply_element_filter,
     attach_current_limits,
     attach_substation_geotags,
@@ -37,6 +39,7 @@ def _geo_network(*, with_region=True, converters=False):
     net.get_voltage_levels.return_value = pd.DataFrame(
         {
             "substation_id": ["S1", "S2"],
+            "nominal_v": [400.0, 225.0],
             "low_voltage_limit": [380.0, 210.0],
             "high_voltage_limit": [420.0, 240.0],
         },
@@ -819,6 +822,115 @@ def test_attach_voltage_limits_on_bus_rows():
 
     assert out.loc["B1", "high_voltage_limit"] == pytest.approx(420.0)
     assert out.loc["B2", "low_voltage_limit"] == pytest.approx(210.0)
+
+
+# --- _norm_scope_set -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (None, None),
+        ("", None),
+        ([], None),
+        (["", None], None),
+        ("FR", frozenset({"FR"})),
+        ("fr", frozenset({"FR"})),
+        ("FR,BE", frozenset({"FR", "BE"})),
+        (["FR", "BE"], frozenset({"FR", "BE"})),
+        (["FR,BE"], frozenset({"FR", "BE"})),
+        ([" fr ", "be"], frozenset({"FR", "BE"})),
+        (("FR", "be"), frozenset({"FR", "BE"})),
+    ],
+)
+def test_norm_scope_set(value, expected):
+    assert _norm_scope_set(value) == expected
+
+
+# --- AssetScopeFilter ------------------------------------------------------
+
+
+def test_scope_filter_inactive_passes_everything():
+    scope = AssetScopeFilter(_geo_network())
+    assert scope.active is False
+    assert scope.passes(["VL2"]) is True  # even an out-of-"band" VL: no filter
+
+
+def test_scope_filter_band_higher_side_inclusive():
+    scope = AssetScopeFilter(_geo_network(), min_nominal_voltage=300)
+    assert scope.active is True
+    # value passed by the caller
+    assert scope.passes(["VL1"], nominal_v=400.0) is True
+    assert scope.passes(["VL2"], nominal_v=225.0) is False
+    # inclusive bound
+    assert AssetScopeFilter(_geo_network(), min_nominal_voltage=225).passes(
+        ["VL2"], nominal_v=225.0
+    ) is True
+
+
+def test_scope_filter_band_nan_excluded_when_active():
+    scope = AssetScopeFilter(_geo_network(), min_nominal_voltage=63)
+    assert scope.passes(["VL1"], nominal_v=float("nan")) is False
+
+
+def test_scope_filter_band_resolves_from_vl_when_no_nominal_passed():
+    scope = AssetScopeFilter(_geo_network(), min_nominal_voltage=300)
+    assert scope.passes(["VL1"]) is True   # VL1 -> 400 kV
+    assert scope.passes(["VL2"]) is False  # VL2 -> 225 kV
+
+
+def test_scope_filter_country_any_side():
+    scope = AssetScopeFilter(_geo_network(), country="ES")
+    # interconnector VL1(FR)+VL2(ES) touches ES on one side -> kept
+    assert scope.passes(["VL1", "VL2"]) is True
+    # a bus on VL1(FR) alone -> not in ES
+    assert scope.passes(["VL1"]) is False
+
+
+def test_scope_filter_country_case_insensitive():
+    assert AssetScopeFilter(_geo_network(), country="fr").passes(["VL1"]) is True
+
+
+def test_scope_filter_region_matches_and_flag_clear():
+    scope = AssetScopeFilter(_geo_network(), regionCvg="PARIS")
+    assert scope.passes(["VL1"]) is True
+    assert scope.passes(["VL2"]) is False
+    assert scope.region_ignorable is False
+
+
+def test_scope_filter_region_ignorable_on_network_without_regioncvg():
+    scope = AssetScopeFilter(_geo_network(with_region=False), regionCvg="PARIS")
+    assert scope.region_ignorable is True
+    assert scope.passes(["VL1"]) is False  # matches nothing, never crashes
+
+
+def test_scope_filter_dimensions_are_anded():
+    scope = AssetScopeFilter(_geo_network(), country="FR", min_nominal_voltage=300)
+    assert scope.passes(["VL1"], nominal_v=400.0) is True       # FR and >=300
+    assert scope.passes(["VL2"], nominal_v=225.0) is False      # ES, fails both
+
+
+def test_scope_filter_unresolvable_side_contributes_nothing():
+    scope = AssetScopeFilter(_geo_network(), country="FR")
+    # one side on an unknown VL, the other on VL1(FR) -> kept on the resolvable side
+    assert scope.passes(["UNKNOWN", "VL1"]) is True
+    assert scope.passes(["UNKNOWN", None]) is False
+
+
+def test_scope_filter_describe():
+    scope = AssetScopeFilter(
+        _geo_network(with_region=False),
+        country="fr,be",
+        regionCvg="paris",
+        min_nominal_voltage=63,
+    )
+    described = scope.describe()
+    assert described["country"] == ["BE", "FR"]
+    assert described["regionCvg"] == ["PARIS"]
+    assert described["min_nominal_voltage"] == 63
+    assert described["side_match"] == "any"
+    # region set but network has none -> the ignorable flag rides along
+    assert described["region_ignorable"] is True
 
 
 def test_attach_voltage_limits_non_bus_is_unchanged():

@@ -552,6 +552,159 @@ def element_nominal_voltage(
     return higher
 
 
+def _norm_scope_set(value):
+    """Normalise a scope argument into an upper-cased frozenset, or None.
+
+    ``None`` / ``""`` / ``[]`` -> None (no filter). A scalar, a list, or a
+    comma-separated string all collapse to the same set; every element is itself
+    split on commas and stripped, so ``"FR,BE"``, ``["FR", "BE"]`` and
+    ``["FR,BE"]`` are equivalent. An all-blank input yields None. Matching is
+    case-insensitive, so values are upper-cased here once.
+    """
+    if value is None:
+        return None
+    items = value if isinstance(value, (list, tuple, set, frozenset)) else [value]
+    out = set()
+    for item in items:
+        if item is None:
+            continue
+        for part in str(item).split(","):
+            part = part.strip().upper()
+            if part:
+                out.add(part)
+    return frozenset(out) or None
+
+
+class AssetScopeFilter:
+    """One output predicate shared by the violation tools: is an asset within the
+    requested nominal-voltage band / country / regionCvg scope?
+
+    An asset is described by its voltage-level ids (one for a bus or injection,
+    two or three for a branch) plus, optionally, a precomputed nominal voltage.
+    The band is tested on the higher side (so a 400/90 kV asset stays visible in
+    a 400 kV band); country and regionCvg are tested ANY-side (an interconnector
+    that touches the requested zone is in scope). Dimensions combine with AND; the
+    values inside one dimension combine with OR.
+
+    Resolution maps are built once, and only when the filter is ``active``, so a
+    tool that passes no filter pays nothing and its code path is unchanged. The
+    predicate is purely map-based — it never calls compute_metric — so sweeping
+    several element types through one filter cannot raise on a column that only
+    some of them expose.
+    """
+
+    def __init__(
+        self,
+        network,
+        *,
+        min_nominal_voltage=None,
+        max_nominal_voltage=None,
+        country=None,
+        regionCvg=None,  # camelCase: the IIDM property name, used tool-wide
+    ):
+        self._min = min_nominal_voltage
+        self._max = max_nominal_voltage
+        self._countries = _norm_scope_set(country)
+        self._regions = _norm_scope_set(regionCvg)
+        self._band_active = self._min is not None or self._max is not None
+        self._geo_active = self._countries is not None or self._regions is not None
+        self.active = self._band_active or self._geo_active
+        self.region_ignorable = False
+
+        self._nominal_by_vl = {}
+        self._country_by_vl = {}
+        self._region_by_vl = {}
+        if not self.active:
+            return
+
+        # Scoping must never crash the report: degrade to empty maps (a band then
+        # excludes NaN, a geo filter then matches nothing) rather than raising.
+        try:
+            if self._band_active:
+                self._nominal_by_vl = _vl_nominal_voltage_map(network).to_dict()
+            if self._geo_active:
+                vl_to_sub = _voltage_level_to_substation(network)
+                geo = _substation_geotags(network)
+                if self._countries is not None:
+                    self._country_by_vl = self._vl_tag_map(vl_to_sub, geo, "country")
+                if self._regions is not None:
+                    self._region_by_vl = self._vl_tag_map(vl_to_sub, geo, "regionCvg")
+                    # regionCvg is absent on non-RTE networks; the filter then
+                    # matches nothing. Flag it so a caller can tell "none in region"
+                    # apart from "this network carries no regions".
+                    self.region_ignorable = bool(
+                        "regionCvg" not in geo.columns or geo["regionCvg"].isna().all()
+                    )
+        except Exception:  # noqa: BLE001 - any getter failure degrades to no-match
+            self._nominal_by_vl = {}
+            self._country_by_vl = {}
+            self._region_by_vl = {}
+
+    @staticmethod
+    def _vl_tag_map(vl_to_sub, geo, tag):
+        """dict voltage_level_id -> UPPER(tag); unresolved / NA sides dropped."""
+        if tag not in geo.columns:
+            return {}
+        by_vl = vl_to_sub.map(geo[tag])
+        return {vl: str(code).upper() for vl, code in by_vl.items() if pd.notna(code)}
+
+    def _higher_nominal(self, vl_ids):
+        """Higher-side nominal voltage over the vl ids, NaN if none resolve."""
+        value = float("nan")
+        for vl in vl_ids:
+            if vl is not None:
+                value = _higher_side(value, self._nominal_by_vl.get(vl, float("nan")))
+        return value
+
+    def _tags(self, vl_ids, tag_by_vl):
+        """Set of UPPER tags over the resolvable sides."""
+        return {tag_by_vl[vl] for vl in vl_ids if vl is not None and vl in tag_by_vl}
+
+    def passes(self, vl_ids, nominal_v=None):
+        """Whether an asset on these voltage levels is within scope.
+
+        ``nominal_v`` lets the caller pass a value it already computed; when None
+        the band is tested on the higher side resolved from ``vl_ids``. Every
+        active dimension must pass (AND); within a dimension any side may match
+        (OR). A NaN/unresolvable side contributes nothing to the geo sets, and a
+        NaN nominal voltage fails an active band.
+        """
+        if not self.active:
+            return True
+        vl_ids = list(vl_ids)
+
+        if self._band_active:
+            nv = nominal_v if nominal_v is not None else self._higher_nominal(vl_ids)
+            if nv is None or pd.isna(nv):
+                return False
+            if self._min is not None and nv < self._min:
+                return False
+            if self._max is not None and nv > self._max:
+                return False
+
+        if self._countries is not None and not (
+            self._tags(vl_ids, self._country_by_vl) & self._countries
+        ):
+            return False
+
+        return self._regions is None or bool(
+            self._tags(vl_ids, self._region_by_vl) & self._regions
+        )
+
+    def describe(self):
+        """The filters_applied echo; meaningful only when ``active``."""
+        out = {
+            "min_nominal_voltage": self._min,
+            "max_nominal_voltage": self._max,
+            "country": sorted(self._countries) if self._countries is not None else None,
+            "regionCvg": sorted(self._regions) if self._regions is not None else None,
+            "side_match": "any",
+        }
+        if self._regions is not None and self.region_ignorable:
+            out["region_ignorable"] = True
+        return out
+
+
 def attach_voltage_limits(df, network, element_type):
     """Attach the voltage level's low/high_voltage_limit (kV) to bus rows.
 

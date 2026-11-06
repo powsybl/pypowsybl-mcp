@@ -284,6 +284,112 @@ def _mock_network_with_buses(v_mag, nominal_v=400.0, low=None, high=None):
     return mock_net
 
 
+def _voltage_geo_network():
+    """Three over-voltage buses for the geo/band output-filter tests:
+    B1, B3 on VL1 (S1 -> FR, region PARIS, 400 kV) and B2 on VL2 (S2 -> ES,
+    225 kV). No network voltage limits, so the default p.u. bounds apply and all
+    three breach HIGH_VOLTAGE."""
+    net = MagicMock()
+    net.get_working_variant_id.return_value = "InitialState"
+    net.get_buses.return_value = pd.DataFrame(
+        {
+            "v_mag": [440.0, 250.0, 445.0],
+            "name": ["b1", "b2", "b3"],
+            "voltage_level_id": ["VL1", "VL2", "VL1"],
+        },
+        index=["B1", "B2", "B3"],
+    )
+    net.get_voltage_levels.return_value = pd.DataFrame(
+        {
+            "substation_id": ["S1", "S2"],
+            "nominal_v": [400.0, 225.0],
+            "low_voltage_limit": [float("nan"), float("nan")],
+            "high_voltage_limit": [float("nan"), float("nan")],
+        },
+        index=["VL1", "VL2"],
+    )
+    net.get_substations.return_value = pd.DataFrame(
+        {"country": ["FR", "ES"], "regionCvg": ["PARIS", "ES"]},
+        index=["S1", "S2"],
+    )
+    return net
+
+
+@pytest.mark.asyncio
+async def test_check_voltage_violations_country_filter(network_tools, mock_ctx):
+    proxy = network_tools.get_proxy("test-session")
+    proxy.loadflow_results["net1"] = {"converged": True}
+    proxy.networks["net1"] = _voltage_geo_network()
+
+    data = json.loads(
+        await network_tools.check_voltage_violations(
+            network_id="net1", country="FR", ctx=mock_ctx
+        )
+    )
+    assert {v["bus_id"] for v in data["violations"]} == {"B1", "B3"}
+    assert data["violation_count"] == 2
+    assert data["evaluated_buses"] == 2  # out-of-scope buses are not evaluated
+    assert data["total_buses"] == 3      # census stays full
+    assert data["filters_applied"]["country"] == ["FR"]
+    assert data["filters_applied"]["side_match"] == "any"
+
+
+@pytest.mark.asyncio
+async def test_check_voltage_violations_region_and_band_filters(
+    network_tools, mock_ctx
+):
+    proxy = network_tools.get_proxy("test-session")
+    proxy.loadflow_results["net1"] = {"converged": True}
+    proxy.networks["net1"] = _voltage_geo_network()
+
+    region = json.loads(
+        await network_tools.check_voltage_violations(
+            network_id="net1", regionCvg="ES", ctx=mock_ctx
+        )
+    )
+    assert {v["bus_id"] for v in region["violations"]} == {"B2"}
+
+    band = json.loads(
+        await network_tools.check_voltage_violations(
+            network_id="net1", min_nominal_voltage=300, ctx=mock_ctx
+        )
+    )
+    assert {v["bus_id"] for v in band["violations"]} == {"B1", "B3"}
+
+
+@pytest.mark.asyncio
+async def test_check_voltage_violations_no_filter_unchanged(network_tools, mock_ctx):
+    """Without a filter the response has no filters_applied block (shape kept)."""
+    proxy = network_tools.get_proxy("test-session")
+    proxy.loadflow_results["net1"] = {"converged": True}
+    proxy.networks["net1"] = _voltage_geo_network()
+
+    data = json.loads(
+        await network_tools.check_voltage_violations(network_id="net1", ctx=mock_ctx)
+    )
+    assert data["violation_count"] == 3
+    assert "filters_applied" not in data
+
+
+@pytest.mark.asyncio
+async def test_check_voltage_violations_filter_then_paginate(network_tools, mock_ctx):
+    """The ordering invariant: filter runs before count and pagination, so
+    pagination.total is the filtered count (2), not the census (3)."""
+    proxy = network_tools.get_proxy("test-session")
+    proxy.loadflow_results["net1"] = {"converged": True}
+    proxy.networks["net1"] = _voltage_geo_network()
+
+    data = json.loads(
+        await network_tools.check_voltage_violations(
+            network_id="net1", country="FR", limit=1, ctx=mock_ctx
+        )
+    )
+    assert data["pagination"]["total"] == 2  # filtered, not the 3-bus census
+    assert data["pagination"]["returned"] == 1
+    assert data["pagination"]["nextCursor"] == "1"
+    assert len(data["violations"]) == 1
+
+
 @pytest.mark.asyncio
 async def test_check_voltage_violations_success(network_tools, mock_ctx):
     """Default p.u. bounds are converted to kV with the bus nominal voltage."""
@@ -3258,8 +3364,11 @@ def _current_network():
         {
             "i1": [150.0, 50.0],
             "i2": [-150.0, -50.0],
+            # L1 is an interconnector VL1(S1, FR/PARIS) x VL2(S2, ES): its higher
+            # side is still 400 kV, so band tests are unchanged, but it lets the
+            # geo tests exercise ANY-side matching.
             "voltage_level1_id": ["VL1", "VL2"],
-            "voltage_level2_id": ["VL1", "VL2"],
+            "voltage_level2_id": ["VL2", "VL2"],
         },
         index=["L1", "L2"],
     )
@@ -3300,6 +3409,11 @@ def _current_network():
     net.get_voltage_levels.return_value = pd.DataFrame(
         {"substation_id": ["S1", "S2", "S2"], "nominal_v": [400.0, 225.0, 90.0]},
         index=["VL1", "VL2", "VL3"],
+    )
+    # S1 -> FR (region PARIS), S2 -> ES. Only consulted when a geo filter is set.
+    net.get_substations.return_value = pd.DataFrame(
+        {"country": ["FR", "ES"], "regionCvg": ["PARIS", "ES"]},
+        index=["S1", "S2"],
     )
     return net
 
@@ -3365,6 +3479,59 @@ async def test_check_current_violations_single_type_and_band(network_tools, mock
         )
     )
     assert {v["element_id"] for v in band["violations"]} == {"L1", "T1"}
+
+
+@pytest.mark.asyncio
+async def test_check_current_violations_country_any_side(network_tools, mock_ctx):
+    """ANY-side country matching: the interconnector L1 (FR x ES) is kept for both
+    FR and ES; the FR-only transformer T1 only for FR."""
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = _current_network()
+    proxy.loadflow_results["net1"] = {"converged": True}
+
+    fr = json.loads(
+        await network_tools.check_current_violations(
+            network_id="net1", country="FR", ctx=mock_ctx
+        )
+    )
+    assert {v["element_id"] for v in fr["violations"]} == {"L1", "T1"}
+    assert fr["filters_applied"]["country"] == ["FR"]
+
+    es = json.loads(
+        await network_tools.check_current_violations(
+            network_id="net1", country="ES", ctx=mock_ctx
+        )
+    )
+    assert {v["element_id"] for v in es["violations"]} == {"L1"}
+
+
+@pytest.mark.asyncio
+async def test_check_current_violations_region_filter(network_tools, mock_ctx):
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = _current_network()
+    proxy.loadflow_results["net1"] = {"converged": True}
+
+    data = json.loads(
+        await network_tools.check_current_violations(
+            network_id="net1", regionCvg="ES", ctx=mock_ctx
+        )
+    )
+    assert {v["element_id"] for v in data["violations"]} == {"L1"}
+    assert data["filters_applied"]["regionCvg"] == ["ES"]
+
+
+@pytest.mark.asyncio
+async def test_check_current_violations_no_filter_has_no_echo(network_tools, mock_ctx):
+    proxy = network_tools.get_proxy("test-session")
+    proxy.networks["net1"] = _current_network()
+    proxy.loadflow_results["net1"] = {"converged": True}
+
+    data = json.loads(
+        await network_tools.check_current_violations(network_id="net1", ctx=mock_ctx)
+    )
+    assert "filters_applied" not in data
+    # census unaffected by the (absent) filter
+    assert {v["element_id"] for v in data["violations"]} == {"L1", "T1"}
 
 
 @pytest.mark.asyncio
