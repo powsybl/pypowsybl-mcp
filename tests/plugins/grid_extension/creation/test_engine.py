@@ -1504,6 +1504,49 @@ def test_a_number_given_for_a_string_is_read_as_its_text(engine, bus_breaker):
     assert bus_breaker.get_substations().loc["S_NEW", "name"] == "12"
 
 
+@pytest.mark.parametrize(
+    "node", [1.7, "1.5", True, float("inf")], ids=["fraction", "text", "boolean", "inf"]
+)
+def test_an_integer_is_neither_truncated_nor_read_from_a_boolean(
+    engine, bus_breaker, node
+):
+    with pytest.raises(
+        CreationError, match="'node' of a busbar_section must be an integer"
+    ):
+        engine.create(
+            bus_breaker,
+            "busbar_section",
+            {"id": "BBS", "voltage_level_id": "VL4", "node": node},
+        )
+
+
+@pytest.mark.parametrize(
+    "count", [2, 2.0, "2", "2.0"], ids=["int", "float", "text", "decimal-text"]
+)
+def test_a_whole_number_is_an_integer_whatever_its_type(engine, node_breaker, count):
+    engine.create(node_breaker, "substation", {"id": "S_NEW"})
+
+    engine.create(
+        node_breaker,
+        "voltage_level",
+        {
+            "id": "VL_NEW",
+            "substation_id": "S_NEW",
+            "nominal_v": 400.0,
+            "topology_kind": "NODE_BREAKER",
+            "aligned_buses_or_busbar_count": count,
+        },
+    )
+
+    sections = node_breaker.get_busbar_sections()
+    assert len(sections[sections["voltage_level_id"] == "VL_NEW"]) == 2
+
+
+def test_a_number_is_not_read_from_a_boolean(engine, bus_breaker):
+    with pytest.raises(CreationError, match="'p0' of a load must be a number"):
+        engine.create(bus_breaker, "load", {"id": "LD_NEW", "bus": "B4", "p0": True})
+
+
 def test_switch_kinds_may_be_a_list_of_strings(engine, node_breaker):
     engine.create(node_breaker, "substation", {"id": "S_NEW"})
     attributes = {

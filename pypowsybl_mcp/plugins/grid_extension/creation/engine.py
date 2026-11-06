@@ -32,6 +32,7 @@ replaces the per-tool JSON schema of a one-tool-per-type surface.
 from __future__ import annotations
 
 import difflib
+import numbers
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
@@ -959,6 +960,31 @@ def _boolean(value) -> bool:
     raise ValueError(f"not a boolean: {value!r}")
 
 
+def _number(value) -> float:
+    """A boolean is refused rather than read as 0 or 1."""
+    if isinstance(value, bool):
+        raise TypeError(f"not a number: {value!r}")
+    return float(value)
+
+
+def _integer(value) -> int:
+    """A whole number, given as such, as a float (3.0) or as text ("3", "3.0");
+    a fraction is refused rather than truncated, and a boolean rather than
+    read as 0 or 1."""
+    if isinstance(value, bool):
+        raise TypeError(f"not an integer: {value!r}")
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            value = float(value)
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    raise ValueError(f"not an integer: {value!r}")
+
+
 def _string(item, value):
     """A number reads as its text; anything else that is not a string is refused
     here, as pypowsybl would refuse it only once earlier items of a batch exist.
@@ -984,9 +1010,9 @@ def _coerce(item, value, element_type: str):
     """Accept the loose types an MCP client may send, reject what cannot convert."""
     try:
         if item.kind == "number":
-            return float(value)
+            return _number(value)
         if item.kind == "integer":
-            return int(value)
+            return _integer(value)
         if item.kind == "boolean":
             return _boolean(value)
         if item.kind == "string":
