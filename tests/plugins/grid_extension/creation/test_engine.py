@@ -810,6 +810,44 @@ def test_minmax_reactive_limits(engine, bus_breaker):
     assert generators.loc["B1-G", "max_q"] == 100.0
 
 
+def test_reactive_limits_tell_a_vsc_station_from_an_lcc_one(engine, node_breaker):
+    # both are HVDC_CONVERTER_STATION to get_identifiables(): an LCC station
+    # passed the check and pypowsybl then refused it, a VSC was never matched
+    report = engine.create(
+        node_breaker,
+        "minmax_reactive_limits",
+        {"element_id": "VSC1", "min_q": -10.0, "max_q": 10.0},
+    )
+    assert "on vsc_converter_station 'VSC1'" in str(report)
+
+    with pytest.raises(
+        CreationError, match="cannot be attached to a lcc_converter_station"
+    ):
+        engine.create(
+            node_breaker,
+            "minmax_reactive_limits",
+            {"element_id": "LCC1", "min_q": -10.0, "max_q": 10.0},
+        )
+
+
+def test_limits_are_refused_on_a_tie_line_and_go_to_its_boundary_lines(engine):
+    network = pp.network.create_eurostag_tutorial_example1_with_tie_lines_and_areas()
+    with pytest.raises(CreationError, match="cannot be attached to a tie_line"):
+        engine.create(
+            network,
+            "operational_limits",
+            {"element_id": "NHV1_NHV2_1", "permanent_limit": 700.0},
+        )
+
+    for boundary_line in ("NHV1_XNODE1", "XNODE1_NHV2"):
+        engine.create(
+            network,
+            "operational_limits",
+            {"element_id": boundary_line, "permanent_limit": 700.0},
+        )
+    assert sorted(_limits_of(network, "NHV1_NHV2_1")["side"]) == ["ONE", "TWO"]
+
+
 def test_reactive_capability_curve(engine, bus_breaker):
     engine.create(
         bus_breaker,

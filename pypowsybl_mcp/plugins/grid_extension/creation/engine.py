@@ -600,7 +600,7 @@ class CreationEngine:
                 f"Element '{context.element_id}' not found in this network. Use "
                 "get_network_element_data() to list the existing ids"
             )
-        target_type = str(identifiables.loc[context.element_id, "type"]).lower()
+        target_type = target_type_of(context.network, context.element_id)
         if profile.target_types and target_type not in profile.target_types:
             raise CreationError(
                 f"{profile.element_type} cannot be attached to a {target_type} "
@@ -892,6 +892,21 @@ class CreationEngine:
         self._check_values(profile, context)
         self._complete(profile, context, network=False)
         return element_id
+
+
+def target_type_of(network, element_id: str) -> str:
+    """The element type of an existing element, as the profiles name it.
+
+    ``get_identifiables()`` reports VSC and LCC stations alike as
+    HVDC_CONVERTER_STATION, while only a VSC station has reactive limits: the
+    two are told apart here.
+    """
+    identifiables = network.get_identifiables()
+    kind = str(identifiables.loc[element_id, "type"]).lower()
+    if kind == "hvdc_converter_station":
+        vsc = network.get_vsc_converter_stations(attributes=[]).index
+        return "vsc_converter_station" if element_id in vsc else "lcc_converter_station"
+    return kind
 
 
 def _did_you_mean(name: str, candidates, cutoff: float) -> str:

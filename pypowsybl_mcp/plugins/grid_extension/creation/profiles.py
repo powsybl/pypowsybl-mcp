@@ -170,19 +170,9 @@ class CreationProfile:
         return self.schema.index_name
 
 
-BRANCH_TYPES = frozenset(
-    {
-        "line",
-        "two_windings_transformer",
-        "three_windings_transformer",
-        "tie_line",
-        "boundary_line",
-        "dangling_line",
-    }
-)
-REACTIVE_TYPES = frozenset(
-    {"generator", "battery", "vsc_converter_station", "hvdc_converter_station"}
-)
+#: what reactive limits can be set on: an LCC station has none, its reactive
+#: power follows from its power factor
+REACTIVE_TYPES = frozenset({"generator", "battery", "vsc_converter_station"})
 
 PROFILES: dict[str, CreationProfile] = {}
 
@@ -792,7 +782,9 @@ _register(
         element_type="operational_limits",
         summary="The current (or power) ratings of a branch, without which it can never be overloaded.",
         connection=Connection.TARGET,
-        target_types=BRANCH_TYPES,
+        # a tie line is rated through the boundary lines it joins: pypowsybl
+        # refuses limits on the tie line itself
+        target_types=frozenset(LIMIT_SIDES),
         order=60,
         rows_attribute="limits",
         # the rows are the main dataframe of the call itself
@@ -851,7 +843,11 @@ _register(
             "amps would overload the low-voltage winding); a three-windings "
             "transformer needs one call per leg, side ONE, TWO or THREE each in "
             "its own amps, since no leg is derived from another; a boundary line "
-            "has the single side NONE. Calling again for the same element and side "
+            "has the single side NONE. A tie line is rated through the two "
+            "boundary lines it joins (boundary_line1_id and boundary_line2_id in "
+            "get_network_element_data(element_type='tie_line')), whose limits are "
+            "its sides ONE and TWO: pypowsybl refuses limits on the tie line "
+            "itself. Calling again for the same element and side "
             "replaces the limits of that side rather than adding to them. Leave "
             "group_name unset: an explicitly named group is not the active one and "
             "the analyses ignore it."

@@ -20,6 +20,10 @@ import pytest
 
 from pypowsybl_mcp.plugins import grid_extension
 from pypowsybl_mcp.plugins.grid_extension.creation.drift import PROFILE_CHECKS
+from pypowsybl_mcp.plugins.grid_extension.creation.engine import (
+    CreationEngine,
+    target_type_of,
+)
 from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
     PROFILES,
     UNPROFILED,
@@ -173,3 +177,41 @@ def test_the_transformer_reactance_guidance_uses_the_side_2_base():
     for text in (PROFILES["two_windings_transformer"].guidance, skill.read_text()):
         assert "rated_u2^2" in text
         assert "rated_u1^2" not in text
+
+
+def _reported_target_types() -> set[str]:
+    """Every element type the engine reads off existing elements, over sample
+    networks that hold every kind an attachment may target."""
+    with_boundary_line = pp.network.create_ieee14()
+    engine = CreationEngine()
+    engine.create(
+        with_boundary_line,
+        "boundary_line",
+        {"id": "BL", "bus": "B4", "r": 1.0, "x": 10.0},
+    )
+    engine.create(
+        with_boundary_line,
+        "battery",
+        {"id": "BAT", "bus": "B4", "target_p": 0.0, "max_p": 10.0},
+    )
+    networks = [
+        with_boundary_line,
+        pp.network.create_four_substations_node_breaker_network(),  # VSC, LCC
+        pp.network.create_micro_grid_be_network(),  # three-windings transformer
+        pp.network.create_eurostag_tutorial_example1_with_tie_lines_and_areas(),
+    ]
+    return {
+        target_type_of(network, element_id)
+        for network in networks
+        for element_id in network.get_identifiables().index
+    }
+
+
+def test_every_target_type_is_one_the_network_reports():
+    """A target type the engine never reads off an element can never match:
+    dangling_line (BOUNDARY_LINE since 1.15) and vsc_converter_station (reported
+    as HVDC_CONVERTER_STATION) were silently dead entries."""
+    reported = _reported_target_types()
+    for element_type, item in sorted(PROFILES.items()):
+        unknown = item.target_types - reported
+        assert not unknown, f"{element_type}: never reported: {sorted(unknown)}"
