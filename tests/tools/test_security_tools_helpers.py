@@ -344,3 +344,48 @@ def test_register_security_tools():
     register_security_tools(mock_mcp, proxies)
 
     assert mock_mcp.tool.called
+
+
+def test_flatten_ranked_violations_sorts_and_keeps_every_row():
+    ranked = [
+        {
+            "contingency_id": "C1",
+            "status": "CONVERGED",
+            "violations": [
+                {"subject_id": "L1", "loading_percent": 150.0},
+                {"subject_id": "L2", "loading_percent": 80.0},
+                {"subject_id": "L3", "loading_percent": None},
+            ],
+        }
+    ]
+
+    # Filtering moved upstream (_compute_ranked_contingencies), so this is now a
+    # pure flatten + sort: worst first, a None loading sorted last, nothing dropped.
+    out = SecurityTools._flatten_ranked_violations(ranked, None)
+    assert [v["subject_id"] for v in out] == ["L1", "L2", "L3"]
+
+    # The top_violations cut still applies.
+    top1 = SecurityTools._flatten_ranked_violations(ranked, 1)
+    assert [v["subject_id"] for v in top1] == ["L1"]
+
+
+def test_violation_passes_threshold_applies_to_current_only():
+    passes = SecurityTools._violation_passes
+
+    # CURRENT: strictly above the threshold survives; at/below and a
+    # non-computable loading are dropped.
+    assert passes("CURRENT", 150.0, None, 120.0) is True
+    assert passes("CURRENT", 120.0, None, 120.0) is False
+    assert passes("CURRENT", None, None, 120.0) is False
+
+    # Voltage violations have no "% over" in this sense, so the threshold never
+    # touches them (a LOW_VOLTAGE below 100 still survives).
+    assert passes("LOW_VOLTAGE", 94.7, None, 120.0) is True
+    assert passes("HIGH_VOLTAGE", 104.0, None, 120.0) is True
+
+    # No threshold: everything passes.
+    assert passes("CURRENT", 50.0, None, None) is True
+
+    # limit_type_filter keeps only the requested kinds, independently.
+    assert passes("HIGH_VOLTAGE", None, {"CURRENT"}, None) is False
+    assert passes("CURRENT", 150.0, {"CURRENT"}, None) is True
