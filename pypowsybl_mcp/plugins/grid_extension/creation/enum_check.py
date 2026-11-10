@@ -48,6 +48,7 @@ from pathlib import Path
 import pypowsybl as pp
 from pypowsybl import _pypowsybl as _pp
 
+from pypowsybl_mcp.plugins.grid_extension.creation.derivations import LimitRows
 from pypowsybl_mcp.plugins.grid_extension.creation.engine import CreationEngine
 from pypowsybl_mcp.plugins.grid_extension.creation.profiles import PROFILES
 
@@ -133,6 +134,33 @@ EXAMPLES: dict[str, Callable[[CreationEngine, object], dict]] = {
     },
 }
 
+
+def _boundary_line_limits(engine: CreationEngine, network) -> dict:
+    engine.create(
+        network,
+        "boundary_line",
+        {"id": "ENUM_BOUNDARY", "bus": "S3VL1_BBS", "r": 1.0, "x": 10.0},
+    )
+    return {"element_id": "ENUM_BOUNDARY", "permanent_limit": 500.0}
+
+
+#: (element type, field, value) -> the network and the example of a value that
+#: only exists on some elements: a limit's side THREE is a leg of a
+#: three-windings transformer, NONE the single side of a boundary line
+VALUE_EXAMPLES: dict[
+    tuple[str, str, str],
+    tuple[Callable[[], object], Callable[[CreationEngine, object], dict]],
+] = {
+    ("operational_limits", "side", "THREE"): (
+        pp.network.create_micro_grid_be_network,
+        lambda engine, network: {
+            "element_id": network.get_3_windings_transformers().index[0],
+            "permanent_limit": 500.0,
+        },
+    ),
+    ("operational_limits", "side", "NONE"): (NETWORK, _boundary_line_limits),
+}
+
 #: (element type, field) -> how to give a value that does not go top-level:
 #: the type of a limit is a column of its rows
 PLACEMENTS: dict[tuple[str, str], Callable[[str], dict]] = {
@@ -205,12 +233,15 @@ def _attempt(
     """
     profiles = PROFILES if profiles is None else profiles
     engine = CreationEngine(profiles=profiles)
-    network = NETWORK()
+    make_network, example = VALUE_EXAMPLES.get(
+        (element_type, field, value), (NETWORK, EXAMPLES[element_type])
+    )
+    network = make_network()
     try:
         # an attachment's example names its target, which wins over this id
         attributes = {
             profiles[element_type].id_field: EXAMPLE_ID,
-            **EXAMPLES[element_type](engine, network),
+            **example(engine, network),
         }
         if field is not None:
             placement = PLACEMENTS.get((element_type, field))
@@ -280,6 +311,13 @@ def java_enum(element_type: str, field: str) -> str | None:
     lenient = replace(
         profile,
         enums={name: values for name, values in profile.enums.items() if name != field},
+        # the sides of a limit are also checked against the element it goes to
+        derivations=tuple(
+            replace(item, sides={})
+            if isinstance(item, LimitRows) and item.side_field == field
+            else item
+            for item in profile.derivations
+        ),
     )
     error = _attempt(
         element_type, field, BOGUS, profiles={**PROFILES, element_type: lenient}

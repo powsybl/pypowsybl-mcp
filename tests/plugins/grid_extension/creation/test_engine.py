@@ -625,8 +625,106 @@ def test_explicit_limit_rows_take_the_side_named_once(engine, site):
     )
 
     assert list(_limits_of(site, "LINE_DC")["side"]) == ["TWO"]
-    # BOTH, the default, is one row per side
-    assert sorted(_limits_of(site, "TR")["side"]) == ["ONE", "TWO"]
+    # a transformer is rated on side ONE by default: side TWO follows the ratio
+    assert list(_limits_of(site, "TR")["side"]) == ["ONE"]
+
+
+def test_a_line_is_rated_on_both_ends_by_default(engine, site):
+    engine.create(
+        site, "operational_limits", {"element_id": "LINE_DC", "permanent_limit": 300.0}
+    )
+
+    assert sorted(_limits_of(site, "LINE_DC")["side"]) == ["ONE", "TWO"]
+
+
+def test_a_transformer_is_rated_on_side_one_and_refuses_both(engine, site):
+    # the same amps on both windings overloaded the low-voltage one
+    engine.create(
+        site, "operational_limits", {"element_id": "TR", "permanent_limit": 500.0}
+    )
+    assert list(_limits_of(site, "TR")["side"]) == ["ONE"]
+
+    with pytest.raises(CreationError, match="side 'BOTH' cannot be used .* ratio"):
+        engine.create(
+            site,
+            "operational_limits",
+            {"element_id": "TR", "permanent_limit": 500.0, "side": "BOTH"},
+        )
+    with pytest.raises(CreationError, match="side 'BOTH' cannot be used"):
+        engine.create(
+            site,
+            "operational_limits",
+            {
+                "element_id": "TR",
+                "limits": [{"side": "BOTH", "value": 500.0, "acceptable_duration": -1}],
+            },
+        )
+    with pytest.raises(CreationError, match="side 'THREE' does not exist"):
+        engine.create(
+            site,
+            "operational_limits",
+            {"element_id": "TR", "permanent_limit": 500.0, "side": "THREE"},
+        )
+
+    # side TWO in its own amps adds to side ONE rather than replacing it
+    engine.create(
+        site,
+        "operational_limits",
+        {"element_id": "TR", "permanent_limit": 1000.0, "side": "TWO"},
+    )
+    rows = _limits_of(site, "TR").set_index("side")["value"]
+    assert rows.to_dict() == {"ONE": 500.0, "TWO": 1000.0}
+
+
+def test_each_leg_of_a_three_windings_transformer_is_rated_on_its_own(engine):
+    network = pp.network.create_micro_grid_be_network()
+    leg_id = network.get_3_windings_transformers().index[0]
+
+    # no leg is derived from another: a side must be named, and BOTH is refused
+    with pytest.raises(CreationError, match="'side' is required .* one call per side"):
+        engine.create(
+            network,
+            "operational_limits",
+            {"element_id": leg_id, "permanent_limit": 50.0},
+        )
+    with pytest.raises(CreationError, match="side 'BOTH' cannot be used"):
+        engine.create(
+            network,
+            "operational_limits",
+            {"element_id": leg_id, "permanent_limit": 50.0, "side": "BOTH"},
+        )
+
+    engine.create(
+        network,
+        "operational_limits",
+        {"element_id": leg_id, "permanent_limit": 50.0, "side": "THREE"},
+    )
+    rows = _limits_of(network, leg_id)
+    third = rows[(rows["side"] == "THREE") & (rows["acceptable_duration"] == -1)]
+    assert list(third["value"]) == [50.0]
+
+
+def test_a_boundary_line_is_rated_on_its_single_side(engine, bus_breaker):
+    engine.create(
+        bus_breaker,
+        "boundary_line",
+        {"id": "BL", "bus": "B4", "r": 1.0, "x": 10.0},
+    )
+
+    engine.create(
+        bus_breaker,
+        "operational_limits",
+        {"element_id": "BL", "permanent_limit": 400.0},
+    )
+    assert list(_limits_of(bus_breaker, "BL")["side"]) == ["NONE"]
+
+    # pypowsybl refused ONE and TWO with "must be NONE"; now refused up front
+    with pytest.raises(CreationError, match="side 'ONE' does not exist .* NONE"):
+        engine.create(
+            bus_breaker,
+            "operational_limits",
+            {"element_id": "BL", "permanent_limit": 400.0, "side": "ONE"},
+        )
 
 
 def test_virtual_attributes_are_coerced_like_real_ones(engine, site):

@@ -153,7 +153,12 @@ create_network_elements(items=[
 `rated_u1` / `rated_u2` default to the nominal voltages of the two ends, which is
 what sets the ratio. `r` and `x` are in ohms **referred to side 2**, so `x` is
 roughly `usc% / 100 * rated_u2^2 / rated_s`: 1.2 Ohm for the 400 MVA, 12 %
-transformer above, whose side 2 is at 63 kV. A
+transformer above, whose side 2 is at 63 kV. Its limits rate side ONE in amps
+(1800 A at 135 kV, about the 400 MVA rating), which is what `operational_limits`
+does when no `side` is given: the overload checks derive side TWO from the ratio.
+`side='BOTH'` is refused on a transformer, as the same amps on the 63 kV winding
+would report it overloaded at a fraction of its rating; a three-windings
+transformer takes one call per leg (`side` ONE, TWO or THREE). A
 created transformer has **no tap changer** until a `ratio_tap_changer` (voltage)
 or `phase_tap_changer` (active power) is added, and until then
 `set_tap_position()` has nothing to move. Their steps are generated as a ladder

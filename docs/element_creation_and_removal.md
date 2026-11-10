@@ -367,8 +367,12 @@ rows by a derivation:
 - tap changers: `step_count` and `range_percent` (ratio) or `max_angle_degrees` (phase) generate a regular ladder,
   ±10 % or ±10° over 17 positions by default, starting on the middle step;
 - limits: `permanent_limit`, `temporary_limits` (a list of `{value, acceptable_duration}`) and `limit_type` generate
-  the rows, the permanent one with an acceptable duration of -1. `side` defaults to `BOTH`. Calling again for the same
-  element and side **replaces** its limits.
+  the rows, the permanent one with an acceptable duration of -1. The sides follow from the element the limits go to:
+  a line is rated on both ends (`BOTH`, the default), since they carry one current; a two-windings transformer on
+  side `ONE` by default, with `BOTH` refused, since one rating in amps on both windings would overload the
+  low-voltage one (the overload checks derive side `TWO` from the ratio); a three-windings transformer needs `side`
+  (`ONE`, `TWO` or `THREE`), as no leg is derived from another; and a boundary line has the single side `NONE`.
+  Calling again for the same element and side **replaces** the limits of that side.
 
 A test asserts that no virtual attribute is also a pypowsybl field, so if upstream ever provides one, the profile has
 to stop faking it.

@@ -461,3 +461,37 @@ async def test_a_pypowsybl_rejection_stops_a_batch(
     assert "bay refused" in reply["errors"][0]["problem"]
     # pypowsybl may have applied part of the refused call
     assert reply["loadflow_invalidated"]
+
+
+@pytest.mark.asyncio
+async def test_a_transformer_rated_by_default_is_not_overloaded_on_its_low_side(
+    pypowsybl_proxies, creation_tools, mock_ctx
+):
+    # side BOTH put the 400 kV rating on the 150 kV winding too: 247 % reported
+    # for a transformer loaded at 98 %
+    from pypowsybl_mcp.tools.network_tools import NetworkTools
+
+    net = pp.network.create_eurostag_tutorial_example1_network()
+    creation_tools.get_proxy("test-session").register_network("eurostag", net)
+    created = json.loads(
+        await creation_tools.create_network_element(
+            network_id="eurostag",
+            element_type="operational_limits",
+            attributes={"element_id": "NHV2_NLOAD", "permanent_limit": 1000.0},
+            ctx=mock_ctx,
+        )
+    )
+    assert created["success"] is True
+
+    report = json.loads(
+        await NetworkTools(pypowsybl_proxies).check_current_violations(
+            network_id="eurostag",
+            element_type="two_windings_transformer",
+            threshold_percent=0,
+            ctx=mock_ctx,
+        )
+    )
+
+    (violation,) = report["violations"]
+    assert violation["element_id"] == "NHV2_NLOAD"
+    assert violation["loading_percent"] == pytest.approx(97.8, abs=0.5)

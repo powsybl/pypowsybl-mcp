@@ -753,6 +753,40 @@ _register(
 # Attached to an element that already exists
 # --------------------------------------------------------------------------
 
+_TRANSFORMER_BOTH = (
+    "the windings of a transformer carry different currents, so one rating in "
+    "amps cannot apply to both. Rate side ONE: the overload checks derive side "
+    "TWO from the ratio. To rate side TWO in its own amps as well, call again "
+    "with side='TWO'"
+)
+
+#: the sides limits may be set on, by type of the element they go to
+LIMIT_SIDES = {
+    # both ends of a line carry one current: one rating applies to both
+    "line": derive.LimitSides(accepted=("ONE", "TWO", "BOTH"), default="BOTH"),
+    "two_windings_transformer": derive.LimitSides(
+        accepted=("ONE", "TWO"),
+        default="ONE",
+        refused={"BOTH": _TRANSFORMER_BOTH},
+    ),
+    "three_windings_transformer": derive.LimitSides(
+        accepted=("ONE", "TWO", "THREE"),
+        default=None,
+        no_default=(
+            "its legs are rated independently and none is derived from another, "
+            "so rate each one in its own amps, one call per side (ONE, TWO, THREE)"
+        ),
+        refused={
+            "BOTH": (
+                "its legs carry different currents and are rated independently: "
+                "rate each one in its own amps, one call per side (ONE, TWO, THREE)"
+            )
+        },
+    ),
+    # pypowsybl only knows the single side NONE for a boundary line
+    "boundary_line": derive.LimitSides(accepted=("NONE",), default="NONE"),
+}
+
 _register(
     CreationProfile(
         element_type="operational_limits",
@@ -784,10 +818,10 @@ _register(
             ),
             "limit_type": "string",
         },
-        defaults={"side": "BOTH", "limit_type": "CURRENT"},
+        defaults={"limit_type": "CURRENT"},
         units={"permanent_limit": "A", "value": "A", "acceptable_duration": "seconds"},
         enums={
-            "side": ("ONE", "TWO", "BOTH"),
+            "side": ("ONE", "TWO", "THREE", "BOTH", "NONE"),
             "limit_type": ("CURRENT", "ACTIVE_POWER", "APPARENT_POWER"),
             "type": ("CURRENT", "ACTIVE_POWER", "APPARENT_POWER"),
         },
@@ -804,16 +838,23 @@ _register(
                 unless="DEFAULT",
             ),
         ),
-        derivations=(derive.LimitRows(),),
+        derivations=(derive.LimitRows(sides=LIMIT_SIDES),),
         guidance=(
             "A branch created by this server starts with no limits, and an element "
             "without limits is invisible to check_current_violations(), to "
             "loading_percent and to the current-limit violations of a security "
             "analysis -- so rating a new branch is what makes a connection study "
-            "conclusive. The overload tools read side ONE, so keep side='BOTH'. "
-            "Calling again for the same element replaces its limits rather than "
-            "adding to them. Leave group_name unset: an explicitly named group is "
-            "not the active one and the analyses ignore it."
+            "conclusive. Leave side unset unless you mean one: a line is rated on "
+            "both ends (BOTH) by default, as its ends carry one current; a "
+            "two-windings transformer on side ONE in amps, and the overload checks "
+            "derive side TWO from the ratio (BOTH is refused, since one rating in "
+            "amps would overload the low-voltage winding); a three-windings "
+            "transformer needs one call per leg, side ONE, TWO or THREE each in "
+            "its own amps, since no leg is derived from another; a boundary line "
+            "has the single side NONE. Calling again for the same element and side "
+            "replaces the limits of that side rather than adding to them. Leave "
+            "group_name unset: an explicitly named group is not the active one and "
+            "the analyses ignore it."
         ),
         docs=("Network.create_operational_limits",),
     )

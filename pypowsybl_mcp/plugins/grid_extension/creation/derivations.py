@@ -19,9 +19,12 @@ complete picture.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from pypowsybl_mcp.plugins.grid_extension.creation.context import CreationContext
+from pypowsybl_mcp.plugins.grid_extension.creation.context import (
+    CreationContext,
+    CreationError,
+)
 
 # Position orders only have to be unique inside a voltage level, so a global
 # maximum is a safe (if generous) starting point.
@@ -260,15 +263,38 @@ class SectionModel(Derivation):
 
 
 @dataclass(frozen=True)
+class LimitSides:
+    """The sides a limit may be set on for one kind of element.
+
+    ``default`` is the side used when the call names none, ``None`` when the
+    caller has to choose; ``refused`` maps a side to the reason it is refused
+    for this kind of element, given back as the error.
+    """
+
+    accepted: tuple[str, ...]
+    default: str | None
+    #: why there is no default, said when the caller names no side
+    no_default: str = ""
+    refused: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class LimitRows(Derivation):
     """Turn a permanent rating (and optional temporary ones) into limit rows.
 
     The pypowsybl shape is one row per (side, duration): a permanent limit is a
     row with an acceptable duration of -1, a temporary one a row with its
     duration in seconds, and powsybl rejects temporary limits unless a permanent
-    one is present in the same call -- a second call *replaces* the group rather
-    than adding to it. Expressing that as rows by hand is easy to get wrong, so
-    the usual case is expressed as a rating plus a list of temporary ratings.
+    one is present in the same call -- a second call *replaces* the limits of
+    that side rather than adding to them. Expressing that as rows by hand is
+    easy to get wrong, so the usual case is expressed as a rating plus a list of
+    temporary ratings.
+
+    Which sides exist, and which one a call means when it names none, depends on
+    the element the limits go to (``sides``, keyed by its type): both ends of a
+    line carry one current, the windings of a transformer do not, and a
+    boundary line has a single side, NONE. In the pre-check of a batch the
+    element may not exist yet, so the sides are only checked at creation.
     """
 
     produces: str = "limits"
@@ -276,6 +302,7 @@ class LimitRows(Derivation):
     temporary_field: str = "temporary_limits"
     side_field: str = "side"
     type_field: str = "limit_type"
+    sides: dict[str, LimitSides] = field(default_factory=dict)
 
     def describe(self) -> str:
         return (
@@ -293,7 +320,7 @@ class LimitRows(Derivation):
         permanent = context.attributes.get(self.permanent_field)
         if permanent is None:
             return
-        sides = self._sides(context.attributes.get(self.side_field))
+        sides = self._sides(context.attributes.get(self.side_field), context)
         rows = []
         for side in sides:
             rows.append(
@@ -318,20 +345,46 @@ class LimitRows(Derivation):
                 )
         context.attributes[self.produces] = rows
 
-    @staticmethod
-    def _sides(side: str | None) -> list[str]:
-        """BOTH, the default, is not a side pypowsybl knows: one row per side."""
-        return ["ONE", "TWO"] if side in (None, "BOTH") else [side]
+    def _sides(self, side: str | None, context: CreationContext) -> list[str]:
+        """The pypowsybl sides a call (or a row) means, checked against the
+        element. BOTH is not a side pypowsybl knows: one row per end."""
+        policy = self.sides.get(context.target_type or "")
+        if policy is None:
+            # the element is not known yet (the pre-check of a batch): the
+            # sides are checked when it is created
+            return ["ONE", "TWO"] if side == "BOTH" else [side or "ONE"]
+        if side is None:
+            if policy.default is None:
+                raise CreationError(
+                    f"'{self.side_field}' is required for limits on a "
+                    f"{context.target_type}: {policy.no_default}",
+                    hint={self.side_field: list(policy.accepted)},
+                )
+            side = policy.default
+        if side in policy.refused:
+            raise CreationError(
+                f"side '{side}' cannot be used for limits on a "
+                f"{context.target_type}: {policy.refused[side]}",
+                hint={self.side_field: list(policy.accepted)},
+            )
+        if side not in policy.accepted:
+            raise CreationError(
+                f"side '{side}' does not exist on a {context.target_type}. "
+                "Accepted sides: " + ", ".join(policy.accepted),
+                hint={self.side_field: list(policy.accepted)},
+            )
+        return ["ONE", "TWO"] if side == "BOTH" else [side]
 
     def _completed(self, rows: list[dict], context: CreationContext, kind: str):
         """Explicit rows, given the side and the type the call names once.
 
-        A row without a side takes the call's ``side``; a row on BOTH sides,
-        given either way, becomes one row per side.
+        A row without a side takes the call's ``side`` (or the element's
+        default); a row on BOTH sides, given either way, becomes one row per
+        side.
         """
         completed = []
         for row in rows:
             side = row.get("side") or context.attributes.get(self.side_field)
-            for one in self._sides(side):
+            for one in self._sides(side, context):
                 completed.append({**row, "side": one, "type": row.get("type") or kind})
         return completed
