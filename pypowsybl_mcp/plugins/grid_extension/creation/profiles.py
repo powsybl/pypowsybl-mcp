@@ -745,9 +745,10 @@ _register(
 
 _TRANSFORMER_BOTH = (
     "the windings of a transformer carry different currents, so one rating in "
-    "amps cannot apply to both. Rate side ONE: the overload checks derive side "
-    "TWO from the ratio. To rate side TWO in its own amps as well, call again "
-    "with side='TWO'"
+    "amps cannot apply to both. Give the side whose winding the amps were rated "
+    "on -- side ONE is the voltage_level1_id end, which is not always the "
+    "high-voltage one -- and the overload checks derive the other side from the "
+    "ratio"
 )
 
 #: the sides limits may be set on, by type of the element they go to
@@ -840,7 +841,15 @@ _register(
             "both ends (BOTH) by default, as its ends carry one current; a "
             "two-windings transformer on side ONE in amps, and the overload checks "
             "derive side TWO from the ratio (BOTH is refused, since one rating in "
-            "amps would overload the low-voltage winding); a three-windings "
+            "amps would overload the low-voltage winding). Side ONE is the "
+            "voltage_level1_id end (bus_or_busbar_section_id_1 for a transformer "
+            "created here), which is not always the high-voltage one: on many "
+            "grids side 1 is high voltage while the ratings are given for the "
+            "low-voltage winding. Amps belong to the winding they were rated on, so "
+            "read voltage_level1_id and voltage_level2_id with "
+            "get_network_element_data(element_type='two_windings_transformer') and "
+            "give side='TWO' when the amps are those of the voltage_level2_id end. "
+            "A three-windings "
             "transformer needs one call per leg, side ONE, TWO or THREE each in "
             "its own amps, since no leg is derived from another; a boundary line "
             "has the single side NONE. A tie line is rated through the two "

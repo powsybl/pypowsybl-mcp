@@ -156,6 +156,13 @@ roughly `usc% / 100 * rated_u2^2 / rated_s`: 1.2 Ohm for the 400 MVA, 12 %
 transformer above, whose side 2 is at 63 kV. Its limits rate side ONE in amps
 (1800 A at 135 kV, about the 400 MVA rating), which is what `operational_limits`
 does when no `side` is given: the overload checks derive side TWO from the ratio.
+Side ONE is the `voltage_level1_id` end -- here `bus_or_busbar_section_id_1`,
+the 135 kV one -- but on an existing transformer it is not always the
+high-voltage end: on many grids side 1 is high voltage and the ratings are
+given for the low-voltage winding. Amps belong to the winding they were rated
+on, so read `voltage_level1_id` / `voltage_level2_id` with
+`get_network_element_data(element_type='two_windings_transformer')` first, and
+pass `side='TWO'` for amps of the `voltage_level2_id` end.
 `side='BOTH'` is refused on a transformer, as the same amps on the 63 kV winding
 would report it overloaded at a fraction of its rating; a three-windings
 transformer takes one call per leg (`side` ONE, TWO or THREE). A

@@ -377,7 +377,8 @@ rows by a derivation:
   the rows, the permanent one with an acceptable duration of -1. The sides follow from the element the limits go to:
   a line is rated on both ends (`BOTH`, the default), since they carry one current; a two-windings transformer on
   side `ONE` by default, with `BOTH` refused, since one rating in amps on both windings would overload the
-  low-voltage one (the overload checks derive side `TWO` from the ratio); a three-windings transformer needs `side`
+  low-voltage one (the overload checks derive side `TWO` from the ratio). Side `ONE` is the `voltage_level1_id` end,
+  not necessarily the high-voltage one, so a rating in amps goes on the side of the winding it was rated on; a three-windings transformer needs `side`
   (`ONE`, `TWO` or `THREE`), as no leg is derived from another; and a boundary line has the single side `NONE`.
   Calling again for the same element and side **replaces** the limits of that side.
 
