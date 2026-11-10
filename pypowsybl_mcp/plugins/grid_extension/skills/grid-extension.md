@@ -234,8 +234,7 @@ change. Opening a line is `set_line_status`, and switching busbars apart is
 ## Element types without a profile
 
 Some types -- `bus`, `busbar_section`, `switch`, `internal_connection`,
-`three_windings_transformer`, the `area*` and `dc_*` types,
-`voltage_source_converter` -- have no profile. They are marked
+`three_windings_transformer`, the `area*` types -- have no profile. They are marked
 `checked: schema only` in `describe_element_creation()` and created straight
 from the pypowsybl schema:
 
@@ -248,6 +247,12 @@ from the pypowsybl schema:
   given, so a new bus can be listed with the load that connects to it.
 
 Prefer a profiled type whenever one does the job.
+
+The detailed DC model -- `dc_node`, `dc_line`, `dc_ground`,
+`voltage_source_converter` -- is not offered at all: once one of them exists,
+every AC load flow fails until an OpenLoadFlow parameter (`acDcNetwork`) is set
+that `update_loadflow_params()` cannot reach. Model an HVDC link with two
+`vsc_converter_station` (or `lcc_converter_station`) and an `hvdc_line`.
 
 ## Undoing or retiring equipment
 

@@ -35,7 +35,11 @@ from pypowsybl_mcp.plugins.grid_extension.creation.drift import (
     load_snapshot,
     write_snapshot,
 )
-from pypowsybl_mcp.plugins.grid_extension.creation.profiles import PROFILES, UNPROFILED
+from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
+    LEFT_OUT_TYPES,
+    PROFILES,
+    UNPROFILED,
+)
 from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
     TOPOLOGY_CALLS,
     creatable_element_types,
@@ -54,7 +58,8 @@ def block() -> str:
     supported = dict(sorted(PROFILES.items()))
     schema_only = dict(sorted(UNPROFILED.items()))
     everything = set(creatable_element_types())
-    missing = sorted(everything - set(supported) - set(schema_only))
+    left_out = dict(sorted(LEFT_OUT_TYPES.items()))
+    missing = sorted(everything - set(supported) - set(schema_only) - set(left_out))
 
     lines = [
         BEGIN,
@@ -93,6 +98,21 @@ def block() -> str:
         lines.append(f"| `{name}` | {calls} | {profile.summary} |")
 
     lines += [""]
+    if left_out:
+        lines += [
+            (
+                f"**{len(left_out)} element type{'s' if len(left_out) > 1 else ''} "
+                "can be created by pypowsybl but are knowingly not offered**:"
+            ),
+            "",
+        ]
+        by_reason: dict[str, list[str]] = {}
+        for name, reason in left_out.items():
+            by_reason.setdefault(reason, []).append(name)
+        for reason, names in by_reason.items():
+            listed = ", ".join(f"`{name}`" for name in names)
+            lines.append(f"- {listed}: {reason}.")
+        lines += [""]
     if missing:
         lines += [
             (

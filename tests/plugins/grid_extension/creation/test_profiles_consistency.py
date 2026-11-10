@@ -25,6 +25,7 @@ from pypowsybl_mcp.plugins.grid_extension.creation.engine import (
     target_type_of,
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
+    LEFT_OUT_TYPES,
     PROFILES,
     UNPROFILED,
     Connection,
@@ -109,9 +110,16 @@ def test_every_schema_only_type_has_a_creation_method(name):
 
 
 def test_profiles_and_fallbacks_cover_every_creatable_type():
-    """Nothing pypowsybl can create is left out unless it has no create_* call."""
+    """Nothing pypowsybl can create is left out unless it has no create_* call,
+    or is knowingly not offered (LEFT_OUT_TYPES, which says why)."""
     assert not set(PROFILES) & set(UNPROFILED)
-    left_out = set(creatable_element_types()) - set(PROFILES) - set(UNPROFILED)
+    assert not set(LEFT_OUT_TYPES) & (set(PROFILES) | set(UNPROFILED))
+    left_out = (
+        set(creatable_element_types())
+        - set(PROFILES)
+        - set(UNPROFILED)
+        - set(LEFT_OUT_TYPES)
+    )
     assert not left_out & set(CREATE_CALLS)
 
 

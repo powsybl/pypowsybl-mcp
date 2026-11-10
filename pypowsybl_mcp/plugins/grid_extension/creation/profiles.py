@@ -1053,12 +1053,40 @@ def schema_only_profile(element_type: str) -> CreationProfile:
     )
 
 
+DETAILED_DC_REASON = (
+    "part of the detailed DC model (DC nodes and what connects to them): once "
+    "one exists, every AC load flow fails until OpenLoadFlow's acDcNetwork "
+    "parameter is set, which update_loadflow_params() cannot do, and the model "
+    "then also needs a converter controlling the DC voltage (V_DC). Model an "
+    "HVDC link with vsc_converter_station or lcc_converter_station and hvdc_line "
+    "instead"
+)
+
+
+def is_detailed_dc(element_type: str) -> bool:
+    """Whether a type belongs to the detailed DC model: the DC node itself, or
+    anything connected to one. Read from the schema, so a DC type a later
+    pypowsybl adds is caught too."""
+    if element_type == "dc_node":
+        return True
+    return any(
+        name.startswith("dc_node") for name in creation_schema(element_type).names
+    )
+
+
+#: element types pypowsybl can create that are knowingly not offered, with why
+LEFT_OUT_TYPES: dict[str, str] = {
+    name: DETAILED_DC_REASON
+    for name in creatable_element_types()
+    if name not in PROFILES and name in CREATE_CALLS and is_detailed_dc(name)
+}
+
 #: element types pypowsybl can create that have no profile, each with a profile
 #: derived from its schema; follows the installed version by construction
 UNPROFILED: dict[str, CreationProfile] = {
     name: schema_only_profile(name)
     for name in creatable_element_types()
-    if name not in PROFILES and name in CREATE_CALLS
+    if name not in PROFILES and name in CREATE_CALLS and name not in LEFT_OUT_TYPES
 }
 
 

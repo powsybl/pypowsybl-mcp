@@ -54,6 +54,7 @@ from pypowsybl_mcp.plugins.grid_extension.creation.doc_mining import (
 )
 from pypowsybl_mcp.plugins.grid_extension.creation.executors import resolve_call
 from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
+    LEFT_OUT_TYPES,
     PROFILES,
     UNPROFILED,
     Connection,
@@ -204,9 +205,11 @@ class CreationEngine:
         if profile is not None:
             return profile
 
-        # Three different reasons, each with its own message: a caller should
-        # not be told "impossible" for something that is only not wired yet.
-        if name in creatable_element_types():
+        # Different reasons, each with its own message: a caller should not be
+        # told "impossible" for something that is only not wired yet.
+        if name in LEFT_OUT_TYPES:
+            reason = f"'{element_type}' is not offered: it is {LEFT_OUT_TYPES[name]}."
+        elif name in creatable_element_types():
             reason = (
                 f"'{element_type}' has creation metadata in pypowsybl but no "
                 "Network.create_* call, so this tool does not support it yet."

@@ -206,10 +206,13 @@ class CreationTools(PyPowsyblTool):
               on it
             - Changes are in memory only: use export_network() to save them
             - Types without a profile (bus, switch, busbar_section,
-              three_windings_transformer, areas, DC devices)
+              three_windings_transformer, areas)
               are created from their pypowsybl schema only: no required
               attributes, no switching equipment; give voltage_level_id with
               bus_id or node as pypowsybl takes them
+            - The detailed DC model (dc_node, dc_line, dc_ground,
+              voltage_source_converter) is not offered: once one exists, no AC
+              load flow runs. Use vsc/lcc_converter_station and hvdc_line
 
         Related Tools:
             - describe_element_creation(): What a type needs, before calling

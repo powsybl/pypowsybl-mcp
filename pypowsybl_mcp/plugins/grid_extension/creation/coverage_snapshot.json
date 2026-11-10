@@ -316,24 +316,6 @@
       "node",
       "voltage_level_id"
     ],
-    "dc_ground": [
-      "dc_node_id",
-      "id",
-      "name",
-      "r"
-    ],
-    "dc_line": [
-      "dc_node1_id",
-      "dc_node2_id",
-      "id",
-      "name",
-      "r"
-    ],
-    "dc_node": [
-      "id",
-      "name",
-      "nominal_v"
-    ],
     "internal_connection": [
       "node1",
       "node2",
@@ -386,31 +368,14 @@
       "x1",
       "x2",
       "x3"
-    ],
-    "voltage_source_converter": [
-      "bus1_id",
-      "bus2_id",
-      "control_mode",
-      "dc_connected1",
-      "dc_connected2",
-      "dc_node1_id",
-      "dc_node2_id",
-      "id",
-      "idle_loss",
-      "name",
-      "pcc_terminal_id",
-      "resistive_loss",
-      "switching_loss",
-      "target_p",
-      "target_q",
-      "target_v_ac",
-      "target_v_dc",
-      "voltage_level_id",
-      "voltage_regulator_on"
     ]
   },
   "unsupported": [
-    "alias"
+    "alias",
+    "dc_ground",
+    "dc_line",
+    "dc_node",
+    "voltage_source_converter"
   ],
   "bays": [
     "battery",

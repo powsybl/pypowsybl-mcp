@@ -134,7 +134,7 @@ Generated from the profiles and from pypowsybl `1.15.0` by `scripts/creation_cov
 | `voltage_level` | `Network.create_voltage_levels`, `pp.network.create_voltage_level_topology` | The busbar system of a site at one nominal voltage, created with the connection points equipment attaches to. |
 | `vsc_converter_station` | `pp.network.create_vsc_converter_station_bay` | The AC end of a voltage-source HVDC link. |
 
-**12 element types have no profile and are created from their schema only**: attribute names and types are checked, the rest is left to pypowsybl, and no switching equipment is built.
+**8 element types have no profile and are created from their schema only**: attribute names and types are checked, the rest is left to pypowsybl, and no switching equipment is built.
 
 | `element_type` | pypowsybl call behind it | What it is |
 |----------------|--------------------------|------------|
@@ -143,13 +143,13 @@ Generated from the profiles and from pypowsybl `1.15.0` by `scripts/creation_cov
 | `area_voltage_levels` | `Network.create_areas_voltage_levels` | Associate voltage levels to (existing) areas. |
 | `bus` | `Network.create_buses` | Creates buses in bus-breaker voltage levels. |
 | `busbar_section` | `Network.create_busbar_sections` | Creates bus bar sections. |
-| `dc_ground` | `Network.create_dc_grounds` | Creates DC grounds. |
-| `dc_line` | `Network.create_dc_lines` | Creates DC lines. |
-| `dc_node` | `Network.create_dc_nodes` | Creates DC nodes. |
 | `internal_connection` | `Network.create_internal_connections` | Creates internal connections. |
 | `switch` | `Network.create_switches` | Creates switches. |
 | `three_windings_transformer` | `Network.create_3_windings_transformers` | Creates three-winding transformers. |
-| `voltage_source_converter` | `Network.create_voltage_source_converters` | Creates voltage source converter. |
+
+**4 element types can be created by pypowsybl but are knowingly not offered**:
+
+- `dc_ground`, `dc_line`, `dc_node`, `voltage_source_converter`: part of the detailed DC model (DC nodes and what connects to them): once one exists, every AC load flow fails until OpenLoadFlow's acDcNetwork parameter is set, which update_loadflow_params() cannot do, and the model then also needs a converter controlling the DC voltage (V_DC). Model an HVDC link with vsc_converter_station or lcc_converter_station and hvdc_line instead.
 
 **1 element type expose creation metadata but no `Network.create_*` call**, so `create_network_element` does not support them yet:
 

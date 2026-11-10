@@ -189,6 +189,12 @@ name another element (an internal connection is keyed on its voltage level, an `
 existing area), so pypowsybl is left to check ids and references. A hand-written profile always wins over the
 fallback.
 
+The types of the detailed DC model are the exception (`LEFT_OUT_TYPES`): `dc_node`, and every type with a field
+naming a DC node (`dc_line`, `dc_ground`, `voltage_source_converter`), read from the schema so a DC type a later
+pypowsybl adds is caught too. Once one of them exists, OpenLoadFlow refuses every AC load flow unless its
+`acDcNetwork` parameter is set, which `update_loadflow_params()` does not expose, so creating one would leave the
+session unable to compute. They are refused with that reason, and listed apart in the coverage tables.
+
 ---
 
 #### 5. A creation, step by step

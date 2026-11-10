@@ -1866,3 +1866,31 @@ def test_describe_documents_table_attributes(engine):
 def test_describe_an_unknown_type(engine):
     with pytest.raises(CreationError, match="No element type"):
         engine.describe("wormhole")
+
+
+@pytest.mark.parametrize(
+    "element_type", ["dc_node", "dc_line", "dc_ground", "voltage_source_converter"]
+)
+def test_the_detailed_dc_model_is_not_offered(engine, element_type):
+    # a dc_node and a dc_line were enough to make every AC load flow fail
+    # ("acDcNetwork is set to false"), with no parameter to fix it here
+    assert element_type not in engine.supported
+    with pytest.raises(CreationError, match="not offered: .*acDcNetwork"):
+        engine.profile_for(element_type)
+
+
+def test_the_dc_model_types_are_read_from_the_schema():
+    from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
+        LEFT_OUT_TYPES,
+        is_detailed_dc,
+    )
+
+    assert sorted(LEFT_OUT_TYPES) == [
+        "dc_ground",
+        "dc_line",
+        "dc_node",
+        "voltage_source_converter",
+    ]
+    # an HVDC link of the classic model is not part of it
+    assert not is_detailed_dc("hvdc_line")
+    assert not is_detailed_dc("vsc_converter_station")
