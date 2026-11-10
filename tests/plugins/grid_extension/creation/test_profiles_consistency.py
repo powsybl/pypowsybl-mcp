@@ -98,6 +98,24 @@ def test_batch_order_is_consistent_with_dependencies():
     assert order["vsc_converter_station"] < order["hvdc_line"]
 
 
+def test_schema_only_types_come_after_what_they_name():
+    from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
+        SCHEMA_ONLY_ORDERS,
+    )
+
+    # a stale name would silently fall back to the default position
+    assert set(SCHEMA_ONLY_ORDERS) <= set(UNPROFILED) | set(PROFILES)
+    order = {name: item.order for name, item in {**PROFILES, **UNPROFILED}.items()}
+    assert order["voltage_level"] < order["bus"] < order["switch"]
+    assert order["busbar_section"] < order["internal_connection"]
+    assert order["bus"] < order["load"]
+    assert order["bus"] < order["three_windings_transformer"]
+    assert order["three_windings_transformer"] < order["operational_limits"]
+    assert order["area"] < order["area_voltage_levels"]
+    # boundaries name the terminals of any equipment, tie lines included
+    assert max(order["tie_line"], order["hvdc_line"]) < order["area_boundaries"]
+
+
 @pytest.mark.parametrize("name", sorted(UNPROFILED))
 def test_every_schema_only_type_has_a_creation_method(name):
     from pypowsybl.network import Network

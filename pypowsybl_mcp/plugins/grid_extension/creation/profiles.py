@@ -1016,10 +1016,25 @@ _register(
 # Without a profile: created from the introspected schema alone
 # --------------------------------------------------------------------------
 
-#: batch position of a schema-only type: right after the voltage levels, as they
-#: are mostly topology (buses, busbar sections, switches, DC nodes) that later
-#: items connect to. Among themselves they keep the order they were given in.
+#: batch position of a schema-only type without its own in SCHEMA_ONLY_ORDERS (one
+#: a later pypowsybl adds): right after the voltage levels, as such types are
+#: mostly topology that later items connect to
 SCHEMA_ONLY_ORDER = 30
+
+#: batch position of each schema-only type, after everything it may name, so a
+#: batch can list items in any order: the buses and busbar sections of a voltage
+#: level (20), then what joins them, then equipment (40-47), and the area
+#: bookkeeping last, as its boundaries name the terminals of equipment
+SCHEMA_ONLY_ORDERS = {
+    "area": 15,
+    "bus": 25,
+    "busbar_section": 25,
+    "switch": 27,
+    "internal_connection": 27,
+    "three_windings_transformer": 45,
+    "area_voltage_levels": 55,
+    "area_boundaries": 55,
+}
 
 SCHEMA_ONLY_GUIDANCE = (
     "This element type has no profile, so only its attribute names and their "
@@ -1046,7 +1061,7 @@ def schema_only_profile(element_type: str) -> CreationProfile:
     return CreationProfile(
         element_type=element_type,
         summary=(doc[0].strip() if doc else f"Created with {call.name}()."),
-        order=SCHEMA_ONLY_ORDER,
+        order=SCHEMA_ONLY_ORDERS.get(element_type, SCHEMA_ONLY_ORDER),
         guidance=guidance,
         docs=(call.name,),
         schema_only=True,

@@ -359,7 +359,10 @@ def startup_check(
         if name not in CREATE_CALLS:
             continue
         try:
-            fallback[name] = schema_only_profile(name)
+            # keep its place in a batch: a line still comes after its buses
+            fallback[name] = replace(
+                schema_only_profile(name), order=profiles[name].order
+            )
         except Exception as error:  # noqa: BLE001 - its schema may be gone too
             problems.append(f"no schema-only fallback either: {error}")
 

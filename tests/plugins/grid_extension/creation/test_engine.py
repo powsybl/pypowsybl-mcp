@@ -1894,3 +1894,68 @@ def test_the_dc_model_types_are_read_from_the_schema():
     # an HVDC link of the classic model is not part of it
     assert not is_detailed_dc("hvdc_line")
     assert not is_detailed_dc("vsc_converter_station")
+
+
+def _ordered_batch(engine, network, items):
+    result = engine.create_many(network, items)
+    failed = [item for item in result.items if item["status"] == "failed"]
+    assert result.success, failed
+    return result
+
+
+def test_schema_only_topology_can_be_listed_in_any_order(engine, bus_breaker):
+    # all schema-only types shared one position, so a switch listed before its
+    # buses stopped the batch with the first items already applied
+    items = [
+        {
+            "element_type": "switch",
+            "id": "SW_X",
+            "voltage_level_id": "VL_X",
+            "bus1_id": "BX_A",
+            "bus2_id": "BX_B",
+            "kind": "BREAKER",
+        },
+        {"element_type": "bus", "id": "BX_B", "voltage_level_id": "VL_X"},
+        {"element_type": "bus", "id": "BX_A", "voltage_level_id": "VL_X"},
+        {
+            "element_type": "voltage_level",
+            "id": "VL_X",
+            "substation_id": "S_X",
+            "topology_kind": "BUS_BREAKER",
+            "nominal_v": 225.0,
+        },
+        {"element_type": "substation", "id": "S_X", "country": "FR"},
+    ]
+
+    _ordered_batch(engine, bus_breaker, items)
+
+    assert "SW_X" in bus_breaker.get_switches().index
+
+
+def test_area_bookkeeping_comes_after_the_equipment_it_names(engine, bus_breaker):
+    # area_boundaries ran before the line it names: "Connectable does not exist"
+    items = [
+        {
+            "element_type": "area_boundaries",
+            "id": "A9",
+            "boundary_type": "TERMINAL",
+            "element": "L_NEW",
+            "side": "ONE",
+            "ac": True,
+        },
+        {"element_type": "area_voltage_levels", "id": "A9", "voltage_level_id": "VL4"},
+        {
+            "element_type": "line",
+            "id": "L_NEW",
+            "bus1": "B4",
+            "bus2": "B5",
+            "r": 1.0,
+            "x": 10.0,
+        },
+        {"element_type": "area", "id": "A9", "area_type": "CONTROL_AREA"},
+    ]
+
+    _ordered_batch(engine, bus_breaker, items)
+
+    boundaries = bus_breaker.get_areas_boundaries().reset_index()
+    assert list(boundaries[boundaries["id"] == "A9"]["element"]) == ["L_NEW"]

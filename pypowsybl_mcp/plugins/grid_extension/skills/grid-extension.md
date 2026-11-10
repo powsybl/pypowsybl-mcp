@@ -243,8 +243,9 @@ from the pypowsybl schema:
 * **no switching equipment is built** and no connection point is resolved: give
   `voltage_level_id` with `bus_id` (bus/breaker) or `node` (node/breaker), the
   way pypowsybl takes them;
-* in a batch they are created right after the voltage levels, in the order
-  given, so a new bus can be listed with the load that connects to it.
+* in a batch each one takes its place after what it names -- buses after
+  their voltage level, switches after their buses, area boundaries after the
+  equipment they name -- so they too can be listed in any order.
 
 Prefer a profiled type whenever one does the job.
 

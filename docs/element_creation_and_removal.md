@@ -184,7 +184,8 @@ profile gives none. Mining never changes behavior: required attributes, enumerat
 Every creatable type without a hand-written profile but with a `create_*` method gets one derived from its schema
 alone (`UNPROFILED`, built by `schema_only_profile`). It uses its observed `Network.create_*` call on the main
 dataframe only (any further dataframe of the call is not accepted), a generic guidance paragraph, the first line of
-the pypowsybl docstring as summary, and batch order 30. The engine skips its network checks: the id of such a type may
+the pypowsybl docstring as summary, and its batch order from `SCHEMA_ONLY_ORDERS` (30 for a type that table does
+not know yet). The engine skips its network checks: the id of such a type may
 name another element (an internal connection is keyed on its voltage level, an `area_voltage_levels` row on an
 existing area), so pypowsybl is left to check ids and references. A hand-written profile always wins over the
 fallback.
@@ -449,12 +450,19 @@ A mistake there rejects the whole batch and the network is untouched.
 | Order | Types                                                                 |
 |-------|-----------------------------------------------------------------------|
 | 10    | substation                                                            |
+| 15    | area *(schema-only)*                                                  |
 | 20    | voltage level                                                         |
-| 30    | schema-only types (buses, busbar sections, switches, DC nodes, …)     |
-| 40    | injections                                                            |
-| 45    | lines, two-windings transformers                                      |
+| 25    | buses, busbar sections *(schema-only)*                                |
+| 27    | switches, internal connections *(schema-only)*                        |
+| 30    | a schema-only type that `SCHEMA_ONLY_ORDERS` does not know yet         |
+| 40    | injections, boundary lines                                            |
+| 45    | lines, two-windings transformers, three-windings transformers *(schema-only)* |
 | 47    | HVDC lines (after their converter stations), tie lines (after their boundary lines) |
+| 55    | area voltage levels and area boundaries *(schema-only)*, which name existing equipment |
 | 60    | limits, reactive limits, tap changers                                 |
+
+Each schema-only type has its own position, after everything it may name. A shared one would follow the caller's
+order among them, and run an area boundary before the line it names.
 
 When the pre-check rejects items, `errors` lists **all** of them at once, `items` is empty and nothing is created.
 
