@@ -797,7 +797,7 @@ _register(
             rule.NoteIfGiven(
                 "group_name",
                 "these limits went to group(s) {value}, which are not the selected "
-                "group of the element: get_overloaded_elements(), loading_percent "
+                "group of the element: check_current_violations(), loading_percent "
                 "and security analyses ignore them. Create them again without "
                 "group_name to rate the element",
                 rows="limits",
@@ -807,7 +807,7 @@ _register(
         derivations=(derive.LimitRows(),),
         guidance=(
             "A branch created by this server starts with no limits, and an element "
-            "without limits is invisible to get_overloaded_elements(), to "
+            "without limits is invisible to check_current_violations(), to "
             "loading_percent and to the current-limit violations of a security "
             "analysis -- so rating a new branch is what makes a connection study "
             "conclusive. The overload tools read side ONE, so keep side='BOTH'. "

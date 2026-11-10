@@ -107,7 +107,7 @@ Around it:
    on busbar 1. The reply says so in `notes`; couple them with
    `create_coupling_device` (below) when they should work as one node.
 3. `run_loadflow()` -- does it still converge?
-4. `get_overloaded_elements()` and `check_voltage_violations()` -- acceptable in N?
+4. `check_current_violations()` and `check_voltage_violations()` -- acceptable in N?
 5. `run_security_analysis()` -- still acceptable after an N-1?
    `set_line_status('LINE_B4_DC', False)` checks the site is not left alone on a
    single circuit.
@@ -119,7 +119,7 @@ from a comparable existing line (`get_network_element_data(element_type='line')`
 rather than inventing them -- at 400 kV, r ~ 0.03 Ohm/km and x ~ 0.3 Ohm/km.
 
 **Do not skip the limits.** A branch with no operational limits can never be
-reported as overloaded: it is invisible to `get_overloaded_elements()`, to
+reported as overloaded: it is invisible to `check_current_violations()`, to
 `loading_percent` and to the current-limit violations of a security analysis, so
 without them steps 4 and 5 conclude nothing about the new line.
 
