@@ -190,11 +190,24 @@ name another element (an internal connection is keyed on its voltage level, an `
 existing area), so pypowsybl is left to check ids and references. A hand-written profile always wins over the
 fallback.
 
-The exception is a reference pypowsybl checks only after registering the new id: a switch whose bus is not in its
-voltage level is refused, but the id stays, cannot be reused or removed, and `get_switches(all_attributes=True)` fails
-on it. `SCHEMA_ONLY_RULES` gives such a type the rule that catches it before the call (`BusesInVoltageLevel` for the
-switch). As a safety net, when pypowsybl refuses a creation yet keeps its id, the error says so: the id is taken, and
-exporting the network and loading the file again drops what was kept.
+The exceptions are the calls that leave the network broken, whether pypowsybl accepts or refuses them.
+`SCHEMA_ONLY_RULES` gives such a type the rule that catches the case before the call:
+
+- a switch whose bus is not in its voltage level is refused, but the id stays, cannot be reused or removed, and
+  `get_switches(all_attributes=True)` fails on it (`BusesInVoltageLevel`);
+- a busbar section added to a voltage level whose sections have a position (`busbarSectionPosition`, which every
+  node/breaker voltage level created here has) has none, and every later feeder bay in that voltage level fails with
+  a bare `NullPointerException`. pypowsybl 1.15 cannot give it a correct position (`create_extensions` and
+  `update_extensions` write one value into both indexes), so the section is refused there
+  (`NoSectionAmongPlacedOnes`); a voltage level whose sections have no position takes one;
+- a voltage level already in an area of the same type is refused by pypowsybl, but only after being listed in the
+  new area too (`OneAreaPerType`).
+
+`SCHEMA_ONLY_EXECUTORS` gives a type its own executor where one call does not do: `create_areas_voltage_levels` and
+`create_areas_boundaries` replace an area's whole list with the rows they get, so `AddToList` sends the new entry
+alone (which pypowsybl checks and completes with its defaults), then the entries the area had before with it. Each
+item therefore adds to the area. As a safety net, when pypowsybl refuses a creation yet keeps its id, the error says
+so: the id is taken, and exporting the network and loading the file again drops what was kept.
 
 The types of the detailed DC model are the exception (`LEFT_OUT_TYPES`): `dc_node`, and every type with a field
 naming a DC node (`dc_line`, `dc_ground`, `voltage_source_converter`), read from the schema so a DC type a later
@@ -339,6 +352,8 @@ Rules run after defaults and derivations, so they see the final values:
 | `SameSubstation`     | both ends in one substation                                       | two-windings transformer                        |
 | `BusBreakerOnly`     | refused in node/breaker topology                                  | ground                                          |
 | `BusesInVoltageLevel` | the buses named belong to the element's bus/breaker voltage level | a schema-only switch                            |
+| `NoSectionAmongPlacedOnes` | refused in a voltage level whose busbar sections have a position | a schema-only busbar section in a voltage level created here |
+| `OneAreaPerType` | the voltage level is not already in another area of the same type | a schema-only `area_voltage_levels` row |
 | `OneRegulatingTapChanger` | refused when the transformer's other tap changer already regulates, as powsybl allows only one | a regulating phase tap changer beside a regulating ratio one |
 | `WarnIfDifferent`    | not an error: a note in the reply                                 | a line between two different nominal voltages   |
 | `NoteIfGiven`        | not an error: a note when an attribute is set (on the element or a row) | limits put in a group other than `DEFAULT`, which the analyses ignore |
@@ -689,7 +704,7 @@ script reports — and the order to do it in are on a page of their own: [upgrad
   by their reverts only, and `replace_tee_point_by_voltage_level_on_line` has none.
 - **No dry run.** There is no `validate_only` mode: a call that passes every check is applied.
 - **Schema-only types** get no switching equipment, no required attributes, no accepted values, no id check, and only
-  their main dataframe. `area_boundaries`, created at order 30, comes before any line of the same batch.
+  their main dataframe, apart from the few checks and executors above.
 - **Default limits group only.** Operational limits go in the default group; a named group is not the active one.
 - **Name checks are not semantic checks** (§15): enumeration values are covered by their own checks, but a newly
   required attribute still goes unnoticed until a call fails.

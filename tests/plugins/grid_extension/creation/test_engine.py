@@ -1821,6 +1821,9 @@ def test_batch_accepts_ids_that_name_an_element_twice(engine, node_breaker):
     assert batch.success
     assert batch.created_ids == ["A1", "LINE_NEW"]
     assert set(batch.updated_ids) == {"A1", "LINE_NEW"}
+    # each row adds to the area: pypowsybl's call alone would keep only the last
+    levels = node_breaker.get_areas_voltage_levels()
+    assert sorted(levels.loc[["A1"], "voltage_level_id"]) == ["S1VL2", "S3VL1"]
 
 
 def test_batch_stops_where_the_network_refuses_and_says_so(engine, bus_breaker):
@@ -2093,3 +2096,103 @@ def test_a_refusal_that_keeps_nothing_is_left_as_is(engine, bus_breaker):
             },
         )
     assert "kept" not in str(raised.value)
+
+
+def _node_breaker_level(engine, network, level_id="VLX"):
+    """A node/breaker voltage level created by the tool: its sections have a
+    position, as create_voltage_level_topology gives them one."""
+    engine.create(
+        network,
+        "voltage_level",
+        {
+            "id": level_id,
+            "substation_id": "S1",
+            "topology_kind": "NODE_BREAKER",
+            "nominal_v": 400.0,
+        },
+    )
+    return f"{level_id}_1_1"
+
+
+def test_a_section_is_refused_where_the_others_have_a_position(engine, node_breaker):
+    # without a position, every later feeder bay in the voltage level failed
+    # with a bare java.lang.NullPointerException
+    section = _node_breaker_level(engine, node_breaker)
+    with pytest.raises(
+        CreationError,
+        match=r"'VLX' lays out its busbar sections by position.*"
+        r"aligned_buses_or_busbar_count, section_count.*sections: VLX_1_1\.",
+    ):
+        engine.create(
+            node_breaker,
+            "busbar_section",
+            {"id": "VLX_NEW", "voltage_level_id": "VLX", "node": 99},
+        )
+    assert "VLX_NEW" not in node_breaker.get_identifiables().index
+    engine.create(node_breaker, "load", {"id": "L_X", "bus": section, "p0": 5.0})
+    assert "L_X" in node_breaker.get_loads().index
+
+
+def test_a_section_is_accepted_where_no_section_has_a_position(engine, node_breaker):
+    # the sections of this grid have no position, and feeder bays work as is
+    assert node_breaker.get_extensions("busbarSectionPosition").empty
+    engine.create(
+        node_breaker,
+        "busbar_section",
+        {"id": "S1VL2_NEW", "voltage_level_id": "S1VL2", "node": 90},
+    )
+    engine.create(node_breaker, "load", {"id": "L_X", "bus": "S1VL2_BBS1", "p0": 5.0})
+    assert "L_X" in node_breaker.get_loads().index
+
+
+def test_area_entries_add_to_what_the_area_has(engine):
+    network = pp.network.create_eurostag_tutorial_example1_with_tie_lines_and_areas()
+    engine.create(
+        network, "area_voltage_levels", {"id": "Region_AB", "voltage_level_id": "VLGEN"}
+    )  # already there: nothing changes
+    engine.create(network, "area", {"id": "A_NEW", "area_type": "Market"})
+    for level in ("VLGEN", "VLHV1"):
+        engine.create(
+            network, "area_voltage_levels", {"id": "A_NEW", "voltage_level_id": level}
+        )
+    engine.create(
+        network,
+        "area_boundaries",
+        {
+            "id": "ControlArea_A",
+            "boundary_type": "TERMINAL",
+            "element": "NGEN_NHV1",
+            "side": "TWO",
+            "ac": True,
+        },
+    )
+
+    levels = network.get_areas_voltage_levels()
+    assert sorted(levels.loc[["Region_AB"], "voltage_level_id"]) == [
+        "VLGEN",
+        "VLHV1",
+        "VLHV2",
+        "VLLOAD",
+    ]
+    assert sorted(levels.loc[["A_NEW"], "voltage_level_id"]) == ["VLGEN", "VLHV1"]
+    boundaries = network.get_areas_boundaries(all_attributes=True).loc[
+        ["ControlArea_A"]
+    ]
+    assert sorted(boundaries[["boundary_type", "element"]].values.tolist()) == [
+        ["BOUNDARY_LINE", "NHV1_XNODE1"],
+        ["BOUNDARY_LINE", "NHV1_XNODE2"],
+        ["TERMINAL", "NGEN_NHV1"],
+    ]
+
+
+def test_a_voltage_level_in_an_area_of_the_same_type_is_refused_up_front(engine):
+    # pypowsybl refused it, but only after listing the level in the second area
+    network = pp.network.create_eurostag_tutorial_example1_with_tie_lines_and_areas()
+    engine.create(network, "area", {"id": "A_NEW", "area_type": "ControlArea"})
+    with pytest.raises(
+        CreationError, match="'VLGEN' is already in area 'ControlArea_A', of the same"
+    ):
+        engine.create(
+            network, "area_voltage_levels", {"id": "A_NEW", "voltage_level_id": "VLGEN"}
+        )
+    assert "A_NEW" not in network.get_areas_voltage_levels().index

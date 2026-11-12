@@ -34,6 +34,7 @@ Two kinds of entry deserve a word:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from functools import cached_property
@@ -44,6 +45,7 @@ from pypowsybl.network import Network
 from pypowsybl_mcp.plugins.grid_extension.creation import derivations as derive
 from pypowsybl_mcp.plugins.grid_extension.creation import rules as rule
 from pypowsybl_mcp.plugins.grid_extension.creation.executors import (
+    AddToList,
     DerivedCall,
     Executor,
     Unavailable,
@@ -52,6 +54,7 @@ from pypowsybl_mcp.plugins.grid_extension.creation.executors import (
 from pypowsybl_mcp.plugins.grid_extension.creation.schema import (
     BAY_CALLS,
     CREATE_CALLS,
+    CreationCall,
     ElementSchema,
     creatable_element_types,
     creation_schema,
@@ -1060,13 +1063,25 @@ SCHEMA_ONLY_GUIDANCE = (
 
 
 #: the few checks a schema-only type needs because pypowsybl would otherwise
-#: leave a half-created element behind when it refuses the call
+#: leave the network broken when it accepts or refuses the call: a switch kept
+#: half-created, a busbar section every later feeder bay fails on, a voltage
+#: level listed in two areas of one type
 SCHEMA_ONLY_RULES: dict[str, tuple[rule.Rule, ...]] = {
     "switch": (
         rule.BusesInVoltageLevel(
             level="voltage_level_id", buses=("bus1_id", "bus2_id")
         ),
     ),
+    "busbar_section": (rule.NoSectionAmongPlacedOnes(level="voltage_level_id"),),
+    "area_voltage_levels": (rule.OneAreaPerType(level="voltage_level_id"),),
+}
+
+#: the few schema-only types one plain call does not create right: the area
+#: lists are replaced whole by their call, so an entry is added to what the area
+#: already has
+SCHEMA_ONLY_EXECUTORS: dict[str, Callable[[CreationCall], Executor]] = {
+    "area_voltage_levels": AddToList,
+    "area_boundaries": AddToList,
 }
 
 
@@ -1085,6 +1100,11 @@ def schema_only_profile(element_type: str) -> CreationProfile:
         summary=(doc[0].strip() if doc else f"Created with {call.name}()."),
         order=SCHEMA_ONLY_ORDERS.get(element_type, SCHEMA_ONLY_ORDER),
         rules=SCHEMA_ONLY_RULES.get(element_type, ()),
+        special_executor=(
+            SCHEMA_ONLY_EXECUTORS[element_type](call)
+            if element_type in SCHEMA_ONLY_EXECUTORS
+            else None
+        ),
         guidance=guidance,
         docs=(call.name,),
         schema_only=True,

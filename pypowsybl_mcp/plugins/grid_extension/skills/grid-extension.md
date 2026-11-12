@@ -256,6 +256,13 @@ from the pypowsybl schema:
 * a `switch` in a bus/breaker voltage level must name two buses of that voltage
   level (`bus1_id`, `bus2_id`); any other is refused before pypowsybl sees it,
   as pypowsybl would keep a broken switch under that id;
+* a `busbar_section` cannot be added to a node/breaker voltage level created
+  here, nor to any whose sections have a position: every later feeder bay in
+  it would fail. Create the voltage level with the busbars and sections it
+  needs (`aligned_buses_or_busbar_count`, `section_count`) instead;
+* an `area_voltage_levels` or `area_boundaries` item adds one entry to the
+  area, keeping the ones it has; a voltage level belongs to at most one area
+  of each type;
 * in a batch each one takes its place after what it names -- buses after
   their voltage level, switches after their buses, area boundaries after the
   equipment they name -- so they too can be listed in any order.

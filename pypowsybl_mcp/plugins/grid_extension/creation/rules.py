@@ -352,6 +352,101 @@ class BusesInVoltageLevel(Rule):
                 )
 
 
+@dataclass(frozen=True)
+class NoSectionAmongPlacedOnes(Rule):
+    """No busbar section where the voltage level's sections have a position.
+
+    The feeder bay helpers read the position of every section of a voltage
+    level whose sections have one, and fail with a bare NullPointerException on
+    a section without: every later load, generator or line there would fail. A
+    new section cannot be given a position of its own, as pypowsybl 1.15 writes
+    the same value into its busbar and section indexes. A voltage level whose
+    sections have no position at all, as in many grid files, works without.
+    """
+
+    level: str
+
+    needs_network = True
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return (self.level,)
+
+    def describe(self) -> str:
+        return (
+            f"the voltage level '{self.level}' must not lay out its busbar sections "
+            "by position, as every node/breaker voltage level created here does"
+        )
+
+    def apply(self, context: CreationContext) -> None:
+        level = context.attributes.get(self.level)
+        if not level:
+            return
+        network = context.network
+        sections = network.get_busbar_sections(attributes=["voltage_level_id"])
+        names = sections.index[sections["voltage_level_id"] == level]
+        positions = network.get_extensions("busbarSectionPosition")
+        if not len(names) or positions.empty or not positions.index.isin(names).any():
+            return
+        raise CreationError(
+            f"'{level}' lays out its busbar sections by position (busbar and "
+            "section index), as every node/breaker voltage level created here "
+            "does, and pypowsybl cannot give a new section a position of its own: "
+            "without one, every later feeder bay in the voltage level would fail. "
+            "Create the voltage level with the busbars and sections it needs "
+            "instead (aligned_buses_or_busbar_count, section_count), or connect "
+            "the equipment to one of its existing sections: "
+            + ", ".join(list(names)[:20])
+            + "."
+        )
+
+
+@dataclass(frozen=True)
+class OneAreaPerType(Rule):
+    """A voltage level belongs to at most one area of each type.
+
+    pypowsybl refuses a second one, but only after listing the voltage level in
+    the new area, which it then belongs to twice. Checked here, before anything
+    is changed. The area is the element's own id.
+    """
+
+    level: str
+
+    needs_network = True
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return (self.level,)
+
+    def describe(self) -> str:
+        return (
+            f"'{self.level}' must not already be in another area of the same type "
+            "as this one"
+        )
+
+    def apply(self, context: CreationContext) -> None:
+        area = context.element_id
+        level = context.attributes.get(self.level)
+        if not area or not level:
+            return
+        areas = context.network.get_areas(attributes=["area_type"])
+        if area not in areas.index:
+            return
+        kind = areas.loc[area, "area_type"]
+        members = context.network.get_areas_voltage_levels()
+        holders = [
+            holder
+            for holder in members.index[members["voltage_level_id"] == level]
+            if holder != area and areas.loc[holder, "area_type"] == kind
+        ]
+        if holders:
+            raise CreationError(
+                f"Voltage level '{level}' is already in area '{holders[0]}', of the "
+                f"same type '{kind}' as '{area}': a voltage level belongs to at "
+                "most one area of each type, so put it in an area of another type."
+            )
+
+
 class BusBreakerOnly(Rule):
     """The element has no bay creation upstream, so it needs a configured bus."""
 

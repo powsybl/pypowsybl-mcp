@@ -139,8 +139,8 @@ Generated from the profiles and from pypowsybl `1.15.0` by `scripts/creation_cov
 | `element_type` | pypowsybl call behind it | What it is |
 |----------------|--------------------------|------------|
 | `area` | `Network.create_areas` | Create areas. |
-| `area_boundaries` | `Network.create_areas_boundaries` | Define boundaries of (existing) areas. |
-| `area_voltage_levels` | `Network.create_areas_voltage_levels` | Associate voltage levels to (existing) areas. |
+| `area_boundaries` | `Network.create_areas_boundaries`, `Network.get_areas_boundaries` | Define boundaries of (existing) areas. |
+| `area_voltage_levels` | `Network.create_areas_voltage_levels`, `Network.get_areas_voltage_levels` | Associate voltage levels to (existing) areas. |
 | `bus` | `Network.create_buses` | Creates buses in bus-breaker voltage levels. |
 | `busbar_section` | `Network.create_busbar_sections` | Creates bus bar sections. |
 | `internal_connection` | `Network.create_internal_connections` | Creates internal connections. |

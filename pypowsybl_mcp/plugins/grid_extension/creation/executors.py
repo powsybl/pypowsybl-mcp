@@ -294,6 +294,70 @@ class DerivedCall(Executor):
             getattr(pp.network, self.call.function)(network, **frames)
 
 
+def _main_frame(call: CreationCall) -> DerivedCall:
+    return DerivedCall(call, main_frame_only=True)
+
+
+@dataclass(frozen=True)
+class AddToList(Executor):
+    """One entry added to a list pypowsybl only takes whole.
+
+    ``create_areas_voltage_levels`` and ``create_areas_boundaries`` replace an
+    area's whole list with the rows they get, so one entry per call would leave
+    only the last one. The new entry is sent alone first, which pypowsybl
+    checks and completes with its defaults; then the entries the area had
+    before are sent back with it.
+    """
+
+    call: CreationCall
+
+    @property
+    def calls(self) -> tuple[str, ...]:
+        return (self.call.name, self.getter)
+
+    @property
+    def getter(self) -> str:
+        """``Network.get_areas_voltage_levels`` for ``create_areas_voltage_levels``."""
+        return f"{self.call.owner}.get_{self.call.function.removeprefix('create_')}"
+
+    def schema(self, element_type: str) -> ElementSchema:
+        return _main_frame(self.call).schema(element_type)
+
+    def describe(self) -> str:
+        return (
+            f"added with {self.call.name}() to the entries the element already "
+            "has, which that call would otherwise replace"
+        )
+
+    def _entries(self, network, element_type, element_id) -> list[dict]:
+        table = getattr(network, self.getter.rpartition(".")[2])(all_attributes=True)
+        schema = self.schema(element_type)
+        columns = [
+            name
+            for name in schema.names
+            if name != schema.index_name and name in table.columns
+        ]
+        return table.loc[table.index == element_id, columns].to_dict("records")
+
+    def execute(self, network, element_type, element_id, attributes):
+        before = self._entries(network, element_type, element_id)
+        _main_frame(self.call).execute(network, element_type, element_id, attributes)
+        if not before:
+            return
+        added = [
+            entry
+            for entry in self._entries(network, element_type, element_id)
+            if entry not in before
+        ]
+        index = self.schema(element_type).index_name
+        getattr(network, self.call.function)(
+            _frame(
+                [{index: element_id, **entry} for entry in before + added],
+                index=index,
+            )
+        )
+
+
 @dataclass(frozen=True)
 class Unavailable(Executor):
     """The call a profile needs, missing from the installed pypowsybl.
