@@ -2013,3 +2013,83 @@ def test_area_bookkeeping_comes_after_the_equipment_it_names(engine, bus_breaker
 
     boundaries = bus_breaker.get_areas_boundaries().reset_index()
     assert list(boundaries[boundaries["id"] == "A9"]["element"]) == ["L_NEW"]
+
+
+def test_a_switch_naming_a_bus_of_another_voltage_level_is_refused_up_front(
+    engine, bus_breaker
+):
+    # pypowsybl registered the id, then refused: the switch could not be reused,
+    # removed, nor listed by get_switches(all_attributes=True)
+    with pytest.raises(CreationError, match="'B5', which is not a bus of .*'VL4'"):
+        engine.create(
+            bus_breaker,
+            "switch",
+            {
+                "id": "SW_X",
+                "voltage_level_id": "VL4",
+                "bus1_id": "B4",
+                "bus2_id": "B5",
+                "kind": "BREAKER",
+            },
+        )
+
+    assert "SW_X" not in bus_breaker.get_identifiables().index
+    bus_breaker.get_switches(all_attributes=True)  # still readable
+
+    # the id is still free
+    engine.create(bus_breaker, "bus", {"id": "B4_BIS", "voltage_level_id": "VL4"})
+    engine.create(
+        bus_breaker,
+        "switch",
+        {
+            "id": "SW_X",
+            "voltage_level_id": "VL4",
+            "bus1_id": "B4",
+            "bus2_id": "B4_BIS",
+            "kind": "BREAKER",
+        },
+    )
+    assert "SW_X" in bus_breaker.get_switches(all_attributes=True).index
+
+
+def test_an_element_pypowsybl_keeps_after_refusing_it_is_reported(bus_breaker):
+    # without the bus check, pypowsybl's own behavior: the id stays registered
+    from dataclasses import replace
+
+    from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
+        PROFILES,
+        UNPROFILED,
+    )
+
+    unchecked = CreationEngine(
+        profiles=PROFILES,
+        unprofiled={**UNPROFILED, "switch": replace(UNPROFILED["switch"], rules=())},
+    )
+    with pytest.raises(pp.PyPowsyblError, match="kept 'SW_X' in the network"):
+        unchecked.create(
+            bus_breaker,
+            "switch",
+            {
+                "id": "SW_X",
+                "voltage_level_id": "VL4",
+                "bus1_id": "B4",
+                "bus2_id": "B5",
+                "kind": "BREAKER",
+            },
+        )
+
+
+def test_a_refusal_that_keeps_nothing_is_left_as_is(engine, bus_breaker):
+    with pytest.raises(pp.PyPowsyblError) as raised:
+        engine.create(
+            bus_breaker,
+            "switch",
+            {
+                "id": "SW_X",
+                "voltage_level_id": "VL4",
+                "bus1_id": "B4",
+                "bus2_id": "B4",
+                "kind": "BREAKER",
+            },
+        )
+    assert "kept" not in str(raised.value)

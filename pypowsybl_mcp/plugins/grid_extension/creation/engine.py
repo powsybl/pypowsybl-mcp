@@ -380,7 +380,12 @@ class CreationEngine:
         existed = profile.connection is Connection.TARGET or (
             profile.schema_only and element_id in network.get_identifiables().index
         )
-        profile.executor.execute(network, profile.element_type, element_id, payload)
+        try:
+            profile.executor.execute(network, profile.element_type, element_id, payload)
+        except pp.PyPowsyblError as error:
+            if _creates_its_id(profile) or (profile.schema_only and not existed):
+                _report_half_created(network, profile, element_id, error)
+            raise
         if profile.schema_only:
             context.notes.append(
                 f"{profile.element_type} has no profile, so only its attribute "
@@ -919,6 +924,26 @@ def _did_you_mean(name: str, candidates, cutoff: float) -> str:
     if not close:
         return ""
     return f" Did you mean {', '.join(repr(item) for item in close)}?"
+
+
+def _report_half_created(network, profile, element_id: str, error) -> None:
+    """Raise a clearer error when pypowsybl refused a creation but kept its id.
+
+    pypowsybl does not undo what it registered before refusing: such an element
+    takes its id, and may be half-built -- a switch whose bus was not found can
+    neither be removed nor listed with all its attributes. Writing the network
+    out drops it, which is the way back.
+    """
+    if element_id not in network.get_identifiables().index:
+        return
+    raise pp.PyPowsyblError(
+        f"{error} -- pypowsybl refused it but kept '{element_id}' in the network, "
+        "so the id is taken: use another one. What it kept may be half-built "
+        "(a switch whose bus was not found cannot be removed and breaks "
+        "get_switches(all_attributes=True)): if remove_network_elements() cannot "
+        "remove it, export the network with export_network() and load the file "
+        "again, which drops it"
+    ) from error
 
 
 def _creates_its_id(profile: CreationProfile) -> bool:

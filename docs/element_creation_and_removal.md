@@ -190,6 +190,12 @@ name another element (an internal connection is keyed on its voltage level, an `
 existing area), so pypowsybl is left to check ids and references. A hand-written profile always wins over the
 fallback.
 
+The exception is a reference pypowsybl checks only after registering the new id: a switch whose bus is not in its
+voltage level is refused, but the id stays, cannot be reused or removed, and `get_switches(all_attributes=True)` fails
+on it. `SCHEMA_ONLY_RULES` gives such a type the rule that catches it before the call (`BusesInVoltageLevel` for the
+switch). As a safety net, when pypowsybl refuses a creation yet keeps its id, the error says so: the id is taken, and
+exporting the network and loading the file again drops what was kept.
+
 The types of the detailed DC model are the exception (`LEFT_OUT_TYPES`): `dc_node`, and every type with a field
 naming a DC node (`dc_line`, `dc_ground`, `voltage_source_converter`), read from the schema so a DC type a later
 pypowsybl adds is caught too. Once one of them exists, OpenLoadFlow refuses every AC load flow unless its
@@ -332,6 +338,7 @@ Rules run after defaults and derivations, so they see the final values:
 | `DistinctEnds`       | the two ends of a branch are different connection points          | line, transformer                               |
 | `SameSubstation`     | both ends in one substation                                       | two-windings transformer                        |
 | `BusBreakerOnly`     | refused in node/breaker topology                                  | ground                                          |
+| `BusesInVoltageLevel` | the buses named belong to the element's bus/breaker voltage level | a schema-only switch                            |
 | `OneRegulatingTapChanger` | refused when the transformer's other tap changer already regulates, as powsybl allows only one | a regulating phase tap changer beside a regulating ratio one |
 | `WarnIfDifferent`    | not an error: a note in the reply                                 | a line between two different nominal voltages   |
 | `NoteIfGiven`        | not an error: a note when an attribute is set (on the element or a row) | limits put in a group other than `DEFAULT`, which the analyses ignore |

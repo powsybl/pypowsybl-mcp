@@ -1059,6 +1059,17 @@ SCHEMA_ONLY_GUIDANCE = (
 )
 
 
+#: the few checks a schema-only type needs because pypowsybl would otherwise
+#: leave a half-created element behind when it refuses the call
+SCHEMA_ONLY_RULES: dict[str, tuple[rule.Rule, ...]] = {
+    "switch": (
+        rule.BusesInVoltageLevel(
+            level="voltage_level_id", buses=("bus1_id", "bus2_id")
+        ),
+    ),
+}
+
+
 def schema_only_profile(element_type: str) -> CreationProfile:
     """The profile of a type that has none, derived from its schema alone."""
     call = CREATE_CALLS[element_type]
@@ -1073,6 +1084,7 @@ def schema_only_profile(element_type: str) -> CreationProfile:
         element_type=element_type,
         summary=(doc[0].strip() if doc else f"Created with {call.name}()."),
         order=SCHEMA_ONLY_ORDERS.get(element_type, SCHEMA_ONLY_ORDER),
+        rules=SCHEMA_ONLY_RULES.get(element_type, ()),
         guidance=guidance,
         docs=(call.name,),
         schema_only=True,

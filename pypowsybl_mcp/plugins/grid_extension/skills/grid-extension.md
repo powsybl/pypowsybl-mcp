@@ -253,6 +253,9 @@ from the pypowsybl schema:
 * **no switching equipment is built** and no connection point is resolved: give
   `voltage_level_id` with `bus_id` (bus/breaker) or `node` (node/breaker), the
   way pypowsybl takes them;
+* a `switch` in a bus/breaker voltage level must name two buses of that voltage
+  level (`bus1_id`, `bus2_id`); any other is refused before pypowsybl sees it,
+  as pypowsybl would keep a broken switch under that id;
 * in a batch each one takes its place after what it names -- buses after
   their voltage level, switches after their buses, area boundaries after the
   equipment they name -- so they too can be listed in any order.

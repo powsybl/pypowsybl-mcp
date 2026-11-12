@@ -298,6 +298,60 @@ class OneRegulatingTapChanger(Rule):
         )
 
 
+@dataclass(frozen=True)
+class BusesInVoltageLevel(Rule):
+    """The buses an element names must belong to its bus/breaker voltage level.
+
+    pypowsybl registers a switch's id before it looks its buses up, and keeps
+    it when a bus is not found: the id can then be neither reused nor removed,
+    and get_switches(all_attributes=True) fails. Checked here, before anything
+    is created. A voltage level that does not exist, or a node/breaker one, is
+    left to pypowsybl, which refuses those cleanly.
+    """
+
+    level: str
+    buses: tuple[str, ...]
+
+    needs_network = True
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return (self.level, *self.buses)
+
+    def describe(self) -> str:
+        return (
+            f"{', '.join(repr(bus) for bus in self.buses)} must be buses of the "
+            f"bus/breaker voltage level '{self.level}'"
+        )
+
+    def apply(self, context: CreationContext) -> None:
+        level = context.attributes.get(self.level)
+        given = [
+            (name, context.attributes[name])
+            for name in self.buses
+            if context.attributes.get(name)
+        ]
+        if not level or not given:
+            return
+        levels = context.network.get_voltage_levels(all_attributes=True)
+        if (
+            level not in levels.index
+            or levels.loc[level, "topology_kind"] != BUS_BREAKER
+        ):
+            return
+        known = list(context.network.get_bus_breaker_topology(level).buses.index)
+        for name, bus in given:
+            if bus not in known:
+                raise CreationError(
+                    f"'{name}' is '{bus}', which is not a bus of voltage level "
+                    f"'{level}': {with_article(context.element_type)} joins buses "
+                    f"of its own voltage level. Buses of '{level}': "
+                    + ", ".join(known[:20])
+                    + (f" (and {len(known) - 20} more)" if len(known) > 20 else ""),
+                    hint={name: known[:20]},
+                )
+
+
 class BusBreakerOnly(Rule):
     """The element has no bay creation upstream, so it needs a configured bus."""
 
