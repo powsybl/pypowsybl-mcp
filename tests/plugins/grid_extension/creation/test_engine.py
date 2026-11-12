@@ -980,6 +980,60 @@ def test_phase_tap_changer(engine, site):
     assert steps.iloc[-1]["alpha"] == pytest.approx(10.0)
 
 
+REGULATING = {
+    "ratio_tap_changer": {"regulating": True, "target_v": 63.0},
+    "phase_tap_changer": {
+        "regulating": True,
+        "regulation_mode": "CURRENT_LIMITER",
+        "target_value": 500.0,
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("ratio_tap_changer", "phase_tap_changer"),
+        ("phase_tap_changer", "ratio_tap_changer"),
+    ],
+)
+def test_only_one_tap_changer_of_a_transformer_regulates(engine, site, first, second):
+    # pypowsybl refused the second one but left it in the network, and every
+    # load flow then failed: "Voltage and phase control on same branch"
+    engine.create(site, first, {"element_id": "TR", **REGULATING[first]})
+
+    with pytest.raises(CreationError, match=f"already has a regulating {first}"):
+        engine.create(site, second, {"element_id": "TR", **REGULATING[second]})
+
+    second_table = (
+        site.get_phase_tap_changers()
+        if second == "phase_tap_changer"
+        else site.get_ratio_tap_changers()
+    )
+    assert "TR" not in second_table.index
+    assert pp.loadflow.run_ac(site)[0].status.name == "CONVERGED"
+
+
+def test_the_regulation_can_be_handed_over_to_the_other_tap_changer(engine, site):
+    engine.create(
+        site,
+        "ratio_tap_changer",
+        {"element_id": "TR", "regulating": True, "target_v": 63.0},
+    )
+    # a fixed phase shifter beside a regulating ratio tap changer is fine
+    engine.create(site, "phase_tap_changer", {"element_id": "TR"})
+
+    engine.create(site, "ratio_tap_changer", {"element_id": "TR", "regulating": False})
+    engine.create(
+        site,
+        "phase_tap_changer",
+        {"element_id": "TR", **REGULATING["phase_tap_changer"]},
+    )
+
+    assert not site.get_ratio_tap_changers().loc["TR", "regulating"]
+    assert site.get_phase_tap_changers().loc["TR", "regulating"]
+
+
 # ---------------------------------------------------------------------------
 # End to end
 # ---------------------------------------------------------------------------

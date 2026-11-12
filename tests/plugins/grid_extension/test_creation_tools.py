@@ -437,6 +437,8 @@ async def test_a_pypowsybl_rejection_is_reported(
 
     assert "Failed to create a load" in result
     assert "bay refused" in result
+    # pypowsybl does not undo what it applied before refusing
+    assert "may have kept part of it in the network" in result
 
 
 @pytest.mark.asyncio
@@ -461,6 +463,7 @@ async def test_a_pypowsybl_rejection_stops_a_batch(
     assert "bay refused" in reply["errors"][0]["problem"]
     # pypowsybl may have applied part of the refused call
     assert reply["loadflow_invalidated"]
+    assert "may have kept part of it in the network" in reply["message"]
 
 
 @pytest.mark.asyncio

@@ -170,7 +170,10 @@ created transformer has **no tap changer** until a `ratio_tap_changer` (voltage)
 or `phase_tap_changer` (active power) is added, and until then
 `set_tap_position()` has nothing to move. Their steps are generated as a ladder
 (+/-10% over 17 positions, or +/-10 degrees), starting on the neutral middle
-step; pass `steps` explicitly to describe them yourself.
+step; pass `steps` explicitly to describe them yourself. A transformer can have
+both, but **only one may regulate**: a regulating one is refused while the other
+regulates. To hand the regulation over, create the regulating one again with
+`regulating: false` first.
 
 ## Other equipment worth knowing
 

@@ -249,7 +249,10 @@ class CreationTools(PyPowsyblTool):
         except (pp.PyPowsyblError, ValueError, KeyError) as error:
             # pypowsybl may have applied part of the call before refusing it.
             proxy.invalidate_loadflow(network_id)
-            message = f"Failed to create {with_article(element_type)}: {error!s}"
+            message = (
+                f"Failed to create {with_article(element_type)}: {error!s}. "
+                + PARTLY_APPLIED
+            )
             logger.error(message)
             return _reply(
                 _rejected(
@@ -414,6 +417,7 @@ class CreationTools(PyPowsyblTool):
                 f"Applied {len(applied)} of {len(items)} item(s); stopped at item "
                 f"{stopped['item']} ({stopped['element_type']}): {stopped['problem']}. "
                 "The items applied before it stay in the network"
+                + (f". {PARTLY_APPLIED}" if batch.partly_applied else "")
             )
             logger.warning(message)
         return _reply(
@@ -449,6 +453,13 @@ def _reply(payload: dict) -> str:
 
 def _error(problem: str, hint: dict | None = None) -> dict:
     return {"problem": problem, "hint": hint}
+
+
+#: said when pypowsybl refused a call part-way: it does not undo what it applied
+PARTLY_APPLIED = (
+    "pypowsybl refused it part-way and may have kept part of it in the network: "
+    "check with get_network_element_data() before going on"
+)
 
 
 def _rejected(

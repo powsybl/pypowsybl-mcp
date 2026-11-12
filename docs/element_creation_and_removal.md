@@ -332,6 +332,7 @@ Rules run after defaults and derivations, so they see the final values:
 | `DistinctEnds`       | the two ends of a branch are different connection points          | line, transformer                               |
 | `SameSubstation`     | both ends in one substation                                       | two-windings transformer                        |
 | `BusBreakerOnly`     | refused in node/breaker topology                                  | ground                                          |
+| `OneRegulatingTapChanger` | refused when the transformer's other tap changer already regulates, as powsybl allows only one | a regulating phase tap changer beside a regulating ratio one |
 | `WarnIfDifferent`    | not an error: a note in the reply                                 | a line between two different nominal voltages   |
 | `NoteIfGiven`        | not an error: a note when an attribute is set (on the element or a row) | limits put in a group other than `DEFAULT`, which the analyses ignore |
 | `NoteIfMoreThan`     | not an error: a note when a count is above a limit                | a voltage level with several busbars, which pypowsybl leaves uncoupled |

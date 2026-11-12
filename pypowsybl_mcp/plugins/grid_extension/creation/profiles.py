@@ -940,6 +940,7 @@ _register(
             rule.RequiredIf(
                 "target_v", "regulating", "a regulating tap changer needs a setpoint"
             ),
+            rule.OneRegulatingTapChanger(other="phase_tap_changer"),
             rule.RowsRequired("steps", 2, "a tap changer needs at least two positions"),
         ),
         derivations=(derive.TapSteps(), derive.MiddleTap()),
@@ -998,6 +999,7 @@ _register(
                 "regulating",
                 "in A for CURRENT_LIMITER, in MW for ACTIVE_POWER_CONTROL",
             ),
+            rule.OneRegulatingTapChanger(other="ratio_tap_changer"),
             rule.RowsRequired("steps", 2, "a tap changer needs at least two positions"),
         ),
         derivations=(

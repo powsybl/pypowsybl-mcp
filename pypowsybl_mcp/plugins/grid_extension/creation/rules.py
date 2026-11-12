@@ -252,6 +252,52 @@ class SameSubstation(Rule):
             )
 
 
+@dataclass(frozen=True)
+class OneRegulatingTapChanger(Rule):
+    """powsybl lets only one tap changer of a transformer regulate.
+
+    pypowsybl checks it only after adding the tap changer, and leaves it in the
+    network when it refuses: OpenLoadFlow then fails on that transformer
+    ("Voltage and phase control on same branch is not yet supported"). Checked
+    here, before anything is created.
+    """
+
+    other: str
+
+    needs_network = True
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return ("regulating",)
+
+    def describe(self) -> str:
+        return (
+            f"'regulating' cannot be true while the {self.other} of the same "
+            "transformer regulates: only one tap changer of a transformer may"
+        )
+
+    def apply(self, context: CreationContext) -> None:
+        if not context.attributes.get("regulating"):
+            return
+        table = {
+            "phase_tap_changer": context.network.get_phase_tap_changers,
+            "ratio_tap_changer": context.network.get_ratio_tap_changers,
+        }[self.other]()
+        if context.element_id not in table.index:
+            return
+        if not bool(table.loc[context.element_id, "regulating"]):
+            return
+        raise CreationError(
+            f"'{context.element_id}' already has a regulating {self.other}, and "
+            "powsybl lets only one tap changer of a transformer regulate "
+            "(OpenLoadFlow cannot solve voltage and phase control on one branch "
+            f"either). Create this {context.element_type} with regulating=false, "
+            f"or first create the {self.other} again with regulating=false to hand "
+            "the regulation over",
+            hint={"regulating": False},
+        )
+
+
 class BusBreakerOnly(Rule):
     """The element has no bay creation upstream, so it needs a configured bus."""
 
