@@ -359,8 +359,8 @@ class NoSectionAmongPlacedOnes(Rule):
     The feeder bay helpers read the position of every section of a voltage
     level whose sections have one, and fail with a bare NullPointerException on
     a section without: every later load, generator or line there would fail. A
-    new section cannot be given a position of its own, as pypowsybl 1.15 writes
-    the same value into its busbar and section indexes. A voltage level whose
+    section created here has none, as its position is a separate extension
+    (busbarSectionPosition) this tool does not create. A voltage level whose
     sections have no position at all, as in many grid files, works without.
     """
 
@@ -391,8 +391,8 @@ class NoSectionAmongPlacedOnes(Rule):
         raise CreationError(
             f"'{level}' lays out its busbar sections by position (busbar and "
             "section index), as every node/breaker voltage level created here "
-            "does, and pypowsybl cannot give a new section a position of its own: "
-            "without one, every later feeder bay in the voltage level would fail. "
+            "does, and a section created here has none: every later feeder bay in "
+            "the voltage level would then fail. "
             "Create the voltage level with the busbars and sections it needs "
             "instead (aligned_buses_or_busbar_count, section_count), or connect "
             "the equipment to one of its existing sections: "

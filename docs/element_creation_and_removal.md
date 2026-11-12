@@ -197,9 +197,9 @@ The exceptions are the calls that leave the network broken, whether pypowsybl ac
   `get_switches(all_attributes=True)` fails on it (`BusesInVoltageLevel`);
 - a busbar section added to a voltage level whose sections have a position (`busbarSectionPosition`, which every
   node/breaker voltage level created here has) has none, and every later feeder bay in that voltage level fails with
-  a bare `NullPointerException`. pypowsybl 1.15 cannot give it a correct position (`create_extensions` and
-  `update_extensions` write one value into both indexes), so the section is refused there
-  (`NoSectionAmongPlacedOnes`); a voltage level whose sections have no position takes one;
+  a bare `NullPointerException`. The position is a separate extension, which the schema-only creation does not
+  make, so the section is refused there (`NoSectionAmongPlacedOnes`); a voltage level whose sections have no
+  position takes one;
 - a voltage level already in an area of the same type is refused by pypowsybl, but only after being listed in the
   new area too (`OneAreaPerType`).
 
