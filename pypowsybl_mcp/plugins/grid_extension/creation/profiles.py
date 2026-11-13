@@ -716,11 +716,18 @@ _register(
                 "SIDE_1_INVERTER_SIDE_2_RECTIFIER",
             )
         },
-        rules=(rule.Positive("nominal_v"),),
+        rules=(
+            rule.Positive("nominal_v"),
+            rule.FreeConverterStations(
+                "converter_station1_id", "converter_station2_id"
+            ),
+        ),
         guidance=(
             "Create the two converter stations first (vsc_converter_station or "
             "lcc_converter_station), then this link naming them. nominal_v is the DC "
-            "voltage, target_p the power ordered through the link."
+            "voltage, target_p the power ordered through the link. A converter "
+            "station ends one HVDC line only: to carry more power over an existing "
+            "link, raise its max_p with modify_network instead of adding a line."
         ),
         docs=("Network.create_hvdc_lines",),
     )

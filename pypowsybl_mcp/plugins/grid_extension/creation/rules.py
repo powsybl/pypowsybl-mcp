@@ -447,6 +447,86 @@ class OneAreaPerType(Rule):
             )
 
 
+@dataclass(frozen=True)
+class FreeConverterStations(Rule):
+    """An HVDC line joins two distinct converter stations of one kind, free of any other line.
+
+    pypowsybl accepts the same station at both ends, a VSC station facing an
+    LCC one, and a station that already ends another line, which then points
+    at the new line only: the old one keeps a station that no longer knows it.
+    """
+
+    station1: str
+    station2: str
+
+    needs_network = True
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        return (self.station1, self.station2)
+
+    def describe(self) -> str:
+        return (
+            f"'{self.station1}' and '{self.station2}' must be two distinct converter "
+            "stations of the same kind (both VSC or both LCC), neither of them "
+            "already at an end of another HVDC line"
+        )
+
+    def apply(self, context: CreationContext) -> None:
+        first = context.attributes.get(self.station1)
+        second = context.attributes.get(self.station2)
+        if not first or not second:
+            return
+        if first == second:
+            raise CreationError(
+                f"Both ends name converter station '{first}': an HVDC line joins two "
+                "distinct converter stations"
+            )
+        network = context.network
+        kinds = {
+            station: kind
+            for kind, table in (
+                ("a voltage-source (VSC)", network.get_vsc_converter_stations()),
+                ("a line-commutated (LCC)", network.get_lcc_converter_stations()),
+            )
+            for station in table.index
+            if station in (first, second)
+        }
+        if len(kinds) == 2 and kinds[first] != kinds[second]:
+            raise CreationError(
+                f"'{first}' is {kinds[first]} converter station and '{second}' "
+                f"{kinds[second]} one: an HVDC line joins two stations of the same "
+                "kind"
+            )
+        lines = network.get_hvdc_lines(
+            attributes=[self.station1, self.station2, "max_p"]
+        )
+        lines = lines[lines.index != context.element_id]
+        ends = lines[self.station1].to_numpy(), lines[self.station2].to_numpy()
+        same_pair = lines[
+            ((ends[0] == first) & (ends[1] == second))
+            | ((ends[0] == second) & (ends[1] == first))
+        ]
+        if not same_pair.empty:
+            line = same_pair.index[0]
+            raise CreationError(
+                f"HVDC line '{line}' already joins '{first}' and '{second}', with "
+                f"max_p {same_pair.loc[line, 'max_p']:g} MW. A converter station ends "
+                "one HVDC line only: to carry more power between these stations, "
+                f"raise the max_p of '{line}' with modify_network(element_type="
+                f"'hvdc_line', element_id='{line}', parameter='max_p'), or create "
+                "two new converter stations for a second link"
+            )
+        for station in (first, second):
+            used = lines.index[(ends[0] == station) | (ends[1] == station)]
+            if len(used):
+                raise CreationError(
+                    f"Converter station '{station}' already ends HVDC line "
+                    f"'{used[0]}': a converter station ends one HVDC line only. "
+                    "Create a new converter station for this link"
+                )
+
+
 class BusBreakerOnly(Rule):
     """The element has no bay creation upstream, so it needs a configured bus."""
 

@@ -378,6 +378,81 @@ def test_create_hvdc_link(engine, node_breaker):
     assert "HVDC_NEW" in node_breaker.get_hvdc_lines().index
 
 
+def _hvdc_line(line_id: str, station1: str, station2: str) -> dict:
+    return {
+        "id": line_id,
+        "converter_station1_id": station1,
+        "converter_station2_id": station2,
+        "r": 1.0,
+        "nominal_v": 400.0,
+        "max_p": 300.0,
+        "target_p": 100.0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("station1", "station2", "problem"),
+    [
+        ("VSC1", "VSC1", "Both ends name converter station 'VSC1'"),
+        ("LCC1", "VSC2", "'LCC1' is a line-commutated \\(LCC\\) converter station"),
+        ("VSC2", "VSC_A", "'VSC2' already ends HVDC line 'HVDC1'"),
+    ],
+)
+def test_an_hvdc_line_on_unfit_converter_stations_is_refused(
+    engine, node_breaker, station1, station2, problem
+):
+    # pypowsybl accepted each, and a reused station then forgot its first line
+    engine.create(
+        node_breaker,
+        "vsc_converter_station",
+        {"id": "VSC_A", "bus": "S1VL2_BBS1", "loss_factor": 1.1},
+    )
+    with pytest.raises(CreationError, match=problem):
+        engine.create(node_breaker, "hvdc_line", _hvdc_line("H", station1, station2))
+    assert "H" not in node_breaker.get_hvdc_lines().index
+
+
+@pytest.mark.parametrize(("station1", "station2"), [("VSC1", "VSC2"), ("VSC2", "VSC1")])
+def test_a_second_hvdc_line_between_the_same_stations_points_at_max_p(
+    engine, node_breaker, station1, station2
+):
+    with pytest.raises(CreationError) as refusal:
+        engine.create(node_breaker, "hvdc_line", _hvdc_line("H", station1, station2))
+    message = str(refusal.value)
+    assert "HVDC line 'HVDC1' already joins" in message
+    assert "with max_p 300 MW" in message
+    assert "raise the max_p of 'HVDC1' with modify_network" in message
+    assert "H" not in node_breaker.get_hvdc_lines().index
+
+
+def test_a_batch_refuses_two_hvdc_lines_on_one_station(engine, node_breaker):
+    stations = [
+        {
+            "element_type": "vsc_converter_station",
+            "id": name,
+            "bus": bus,
+            "loss_factor": 1.1,
+        }
+        for name, bus in (
+            ("VSC_A", "S1VL2_BBS1"),
+            ("VSC_B", "S2VL1_BBS"),
+            ("VSC_C", "S2VL1_BBS"),
+        )
+    ]
+    batch = engine.create_many(
+        node_breaker,
+        [
+            *stations,
+            {"element_type": "hvdc_line", **_hvdc_line("H1", "VSC_A", "VSC_B")},
+            {"element_type": "hvdc_line", **_hvdc_line("H2", "VSC_A", "VSC_C")},
+        ],
+    )
+
+    assert batch.stopped_at == 5
+    assert "'VSC_A' already ends HVDC line 'H1'" in batch.items[-1]["problem"]
+    assert "H2" not in node_breaker.get_hvdc_lines().index
+
+
 def test_a_non_linear_shunt_from_its_sections(engine, node_breaker):
     report = engine.create(
         node_breaker,

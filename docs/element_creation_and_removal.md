@@ -355,6 +355,7 @@ Rules run after defaults and derivations, so they see the final values:
 | `NoSectionAmongPlacedOnes` | refused in a voltage level whose busbar sections have a position | a schema-only busbar section in a voltage level created here |
 | `OneAreaPerType` | the voltage level is not already in another area of the same type | a schema-only `area_voltage_levels` row |
 | `OneRegulatingTapChanger` | refused when the transformer's other tap changer already regulates, as powsybl allows only one | a regulating phase tap changer beside a regulating ratio one |
+| `FreeConverterStations` | two distinct converter stations of one kind (VSC or LCC), neither already at an end of an HVDC line; pypowsybl accepts all three, and a reused station forgets its first line | an HVDC line; one between the stations of an existing line points at raising that line's `max_p` with `modify_network` |
 | `WarnIfDifferent`    | not an error: a note in the reply                                 | a line between two different nominal voltages   |
 | `NoteIfGiven`        | not an error: a note when an attribute is set (on the element or a row) | limits put in a group other than `DEFAULT`, which the analyses ignore |
 | `NoteIfMoreThan`     | not an error: a note when a count is above a limit                | a voltage level with several busbars, which pypowsybl leaves uncoupled |

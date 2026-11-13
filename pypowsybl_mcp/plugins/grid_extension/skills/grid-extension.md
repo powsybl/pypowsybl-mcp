@@ -191,7 +191,10 @@ regulates. To hand the regulation over, create the regulating one again with
   mode in this pypowsybl version, use `regulating: false`.
 * `hvdc_line` -- create the two `vsc_converter_station` (or
   `lcc_converter_station`) first, then the link naming them; one
-  `create_network_elements` call does all three in the right order.
+  `create_network_elements` call does all three in the right order. Each
+  station ends one HVDC line only: to carry more power between two stations
+  already linked, raise the existing line's `max_p` with `modify_network`
+  instead of adding a line.
 * `boundary_line` -- the equivalent of what lies beyond a border: `p0`/`q0` is
   the exchange at its far end. Add a generation part (`min_p`, `max_p`,
   `target_p`, optionally regulating with `target_v`) when the outside can
