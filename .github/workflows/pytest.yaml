@@ -25,3 +25,6 @@ jobs:
         run: |
           coverage run -m pytest
           coverage report
+      - name: Check the creation profiles' enum values against powsybl-core
+        run: |
+          python scripts/creation_enums.py --check

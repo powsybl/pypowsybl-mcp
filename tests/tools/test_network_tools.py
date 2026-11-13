@@ -1640,6 +1640,26 @@ async def test_modify_network_generator_target_p_success(network_tools, mock_ctx
 
 
 @pytest.mark.asyncio
+async def test_modify_network_hvdc_line_max_p_success(network_tools, mock_ctx):
+    proxy = network_tools.get_proxy("test-session")
+    mock_net = MagicMock()
+    mock_net.get_hvdc_lines.return_value.index = ["HVDC1"]
+    proxy.networks["net1"] = mock_net
+
+    result = await network_tools.modify_network(
+        element_type="hvdc_line",
+        element_id="HVDC1",
+        parameter="max_p",
+        value=600.0,
+        network_id="net1",
+        ctx=mock_ctx,
+    )
+
+    assert "Updated hvdc_line 'HVDC1' max_p to 600.0 MW in network 'net1'" in result
+    mock_net.update_hvdc_lines.assert_called_once_with(id=["HVDC1"], max_p=[600.0])
+
+
+@pytest.mark.asyncio
 async def test_modify_network_generator_target_v_success(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()

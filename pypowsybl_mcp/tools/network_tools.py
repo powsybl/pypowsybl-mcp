@@ -87,6 +87,15 @@ MODIFY_NETWORK_SPEC: dict[str, dict] = {
             "x": ("x", "reactance", "Ω"),
         },
     },
+    "hvdc_line": {
+        "getter": "get_hvdc_lines",
+        "label": "HVDC line",
+        "updater": "update_hvdc_lines",
+        "parameters": {
+            "max_p": ("max_p", "max_p", "MW"),
+            "target_p": ("target_p", "target_p", "MW"),
+        },
+    },
 }
 
 
@@ -445,7 +454,7 @@ class NetworkTools(PyPowsyblTool):
         ctx: Context = None,  # MCPServer injects this
     ) -> str:
         """
-        Modify parameters of network elements (generators, loads, lines).
+        Modify parameters of network elements (generators, loads, lines, HVDC lines).
 
         Allows dynamic adjustment of network parameters for scenario analysis, optimization,
         or corrective actions. Commonly used to test different operating conditions or
@@ -459,6 +468,7 @@ class NetworkTools(PyPowsyblTool):
                 - "generator": Generation units
                 - "load": Load/demand points
                 - "line": Transmission lines
+                - "hvdc_line": HVDC links
             element_id (str): Unique ID of the specific element to modify. Use get_network_info()
                 or query network data to find valid element IDs.
             parameter (str): Parameter to modify. Valid options depend on element_type:
@@ -474,6 +484,12 @@ class NetworkTools(PyPowsyblTool):
                 For "line":
                     - "r": Resistance (Ω)
                     - "x": Reactance (Ω)
+
+                For "hvdc_line":
+                    - "max_p": Maximum active power the link carries (MW), its
+                      transit capacity. Raise it rather than adding a second
+                      line between the same converter stations.
+                    - "target_p": Active power ordered through the link (MW)
 
             value (float): New value for the parameter (in units specified above)
             network_id (str, optional): Network to modify. If None, uses current network. Default: None.

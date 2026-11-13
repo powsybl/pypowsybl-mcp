@@ -51,6 +51,7 @@ Grid operators rarely speak in enum names. Translate before calling:
 | dangling line                              | `boundary_line` (renamed upstream in pypowsybl 1.15)       |
 | busbar, bar                                | `busbar_section`                                           |
 | node, bus, electrical node                 | `bus` (topology view: `bus_from_bus_breaker_view`)         |
+| configured bus, bus/breaker bus            | `bus_from_bus_breaker_view` (there is no `configured_bus`) |
 | HVDC link, DC link                         | `hvdc_line`                                                |
 | converter station                          | `vsc_converter_station` or `lcc_converter_station`         |
 | branch (line *or* transformer)             | `branch`, or query `line` and `two_windings_transformer` separately |

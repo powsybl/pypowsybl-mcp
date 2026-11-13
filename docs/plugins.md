@@ -86,6 +86,29 @@ MCP_DISABLED_PLUGINS=some_plugin_name python -m pypowsybl_mcp.server
 
 ---
 
+#### Plugins shipped with the server
+
+Some tools are only useful for some grid studies, so the server ships them as plugins rather than as built-in tools.
+These first-party plugins are **modules of `pypowsybl-mcp` itself**, under `pypowsybl_mcp/plugins/`, not separate
+packages: they are versioned, tested and released with the server. They still go through the very mechanism described
+above — `pypowsybl-mcp` declares their entry points in its own `pyproject.toml` — so the host never imports them by
+name and `MCP_DISABLED_PLUGINS` turns them off like any other.
+
+| Plugin                                          | Entry point      | Provides                                                                  |
+|-------------------------------------------------|------------------|---------------------------------------------------------------------------|
+| [`grid_extension`](grid_extension.md)           | `grid_extension` | Element creation and removal (`describe_element_creation`, `create_network_element(s)`, `remove_network_elements`), the `grid-extension` skill and `/admin/creation-coverage`. |
+
+**Active by default**: installing the server installs them, and it loads them at startup. A deployment that never
+builds equipment — a real-time study, say — turns the grid extension off with `MCP_DISABLED_PLUGINS=grid_extension`.
+
+To add another one, create `pypowsybl_mcp/plugins/<name>/` with the two registrars below, declare them in the
+`[project.entry-points]` tables of the root `pyproject.toml`, and put its tests under `tests/plugins/<name>/`. Entry
+points exist only for an installed project, so run `uv sync` (or `uv pip install -e .`) after declaring them.
+
+A third-party plugin, which lives outside this repository, is a separate package instead, as described next.
+
+---
+
 #### Writing your own plugin
 
 ##### 1. Scaffold the package
@@ -265,6 +288,9 @@ A few practical notes:
 - **Your tool class is instantiated once**, and that single instance serves every session and every concurrent request.
   Never cache per-request or per-session data as an attribute on `self` - anything that needs to persist belongs in the
   proxy above.
+- **Admin routes.** A plugin can add an HTTP route with `mcp.custom_route(...)` in its tool registrar. To protect
+  it with `MCP_AUTH_TOKEN` exactly like `/admin/sessions`, return `pypowsybl_mcp.admin.refuse_unauthorized(request)`
+  when it is not `None`.
 - **Namespace your tool names and entry-point keys.** If two plugins (or a plugin and the host) register the same
   tool/resource/prompt name, the first one loaded silently wins - there's no error. Prefixing your names (e.g.
   `mytools_check_health` instead of `check_health`) avoids this entirely.
