@@ -44,6 +44,11 @@ from typing import Any
 import pypowsybl as pp
 
 from pypowsybl_mcp.plugins.grid_extension.creation import rules as rule
+from pypowsybl_mcp.plugins.grid_extension.creation.angle_limits import (
+    CONSEQUENCE,
+    angle_limits_naming,
+    describe_naming,
+)
 from pypowsybl_mcp.plugins.grid_extension.creation.context import (
     NODE_BREAKER,
     CreationContext,
@@ -830,6 +835,15 @@ class TopologyEngine:
             raise CreationError(
                 f"No line '{line_id}' ('{key}') in this network. Use "
                 "get_network_element_data(element_type='line') to list them"
+            )
+        # every operation removes or rebuilds the lines it is given
+        named = angle_limits_naming(
+            network, [given[key] for key in operation.existing_lines if given.get(key)]
+        )
+        if named:
+            raise CreationError(
+                f"{operation.operation} would replace {describe_naming(named)}. "
+                + CONSEQUENCE
             )
         for key in operation.new_ids:
             new_id = given.get(key)

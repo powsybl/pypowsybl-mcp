@@ -1139,12 +1139,22 @@ def is_detailed_dc(element_type: str) -> bool:
     )
 
 
+ANGLE_LIMITS_REASON = (
+    "a limit pypowsybl can create but not remove or update: once an element it "
+    "names is removed or replaced (a removal, a cut, a tap), it points at a "
+    "removed terminal and every AC load flow fails ('Cannot access bus of removed "
+    "equipment') for the rest of the session. Elements named by a voltage angle "
+    "limit loaded with a network cannot be removed or replaced for the same reason"
+)
+
 #: element types pypowsybl can create that are knowingly not offered, with why
 LEFT_OUT_TYPES: dict[str, str] = {
     name: DETAILED_DC_REASON
     for name in creatable_element_types()
     if name not in PROFILES and name in CREATE_CALLS and is_detailed_dc(name)
 }
+if "voltage_angle_limits" in CREATE_CALLS:
+    LEFT_OUT_TYPES["voltage_angle_limits"] = ANGLE_LIMITS_REASON
 
 #: element types pypowsybl can create that have no profile, each with a profile
 #: derived from its schema; follows the installed version by construction

@@ -296,6 +296,11 @@ picks the right removal from the type it finds in the network:
   sections) is removed without `cascade`.
 * A **switch, bus or busbar section** is removed as is -- prefer removing the
   equipment itself, since deleting topology can disconnect things silently.
+* An element named by a **voltage angle limit** (one loaded with the network) is
+  never removed or replaced by a topology operation, nor a voltage level or
+  substation holding one, even with `cascade=True`: pypowsybl cannot remove the
+  limit, and every AC load flow would then fail. Say so; the network has to be
+  reloaded without the limit.
 
 Ids of different types can be mixed in one call, in any order. This is not the
 same as `set_line_status(line_id, False)`, which only *opens* a branch: an open

@@ -2010,13 +2010,24 @@ def test_the_detailed_dc_model_is_not_offered(engine, element_type):
         engine.profile_for(element_type)
 
 
+def test_voltage_angle_limits_are_not_offered(engine):
+    # pypowsybl cannot remove one, and removing an element it names makes every
+    # AC load flow fail for the rest of the session
+    assert "voltage_angle_limits" not in engine.supported
+    with pytest.raises(CreationError, match="not offered: .*not remove"):
+        engine.profile_for("voltage_angle_limits")
+
+
 def test_the_dc_model_types_are_read_from_the_schema():
     from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
+        DETAILED_DC_REASON,
         LEFT_OUT_TYPES,
         is_detailed_dc,
     )
 
-    assert sorted(LEFT_OUT_TYPES) == [
+    assert sorted(
+        name for name, reason in LEFT_OUT_TYPES.items() if reason == DETAILED_DC_REASON
+    ) == [
         "dc_ground",
         "dc_line",
         "dc_node",

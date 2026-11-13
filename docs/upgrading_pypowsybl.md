@@ -49,6 +49,11 @@ is a safety net for deployments, not a substitute for the review below.
    switches of a revert): reread them against the release notes, a fix upstream makes one redundant, not wrong.
    Since 1.16, for instance, the reverts remove their node/breaker bays themselves and the orphan cleanup finds
    nothing there; it still applies to bus/breaker voltage levels.
+   **Voltage angle limits.** pypowsybl 1.16 cannot remove or update one, so `voltage_angle_limits` is left out
+   (`ANGLE_LIMITS_REASON` in `creation/profiles.py`) and removals and topology operations refuse the elements one
+   names (`creation/angle_limits.py`). When a version can remove them, offer the type again: drop it from
+   `LEFT_OUT_TYPES`, give it a batch position after the branches it names (60 in `SCHEMA_ONLY_ORDERS`), and remove
+   the elements' limits with them instead of refusing.
 5. **Docstring mining.** It relies on pypowsybl's `- **name**: description` docstring format; if that changes, the
    descriptions vanish from `describe_element_creation` without an error. The duplicate-`target_v` workaround in
    `doc_mining.py` may no longer be needed.

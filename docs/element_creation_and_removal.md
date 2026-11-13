@@ -69,8 +69,8 @@ Every element type pypowsybl can create falls in one of three groups. The curren
 | Group           | Count (1.16.1) | What is checked                                                                 | Switching equipment |
 |-----------------|----------------|---------------------------------------------------------------------------------|---------------------|
 | **Profiled**    | 20             | Attribute names, types, required attributes, accepted values, rules; connection points are resolved and diagnosed. | Built by the bay helpers for injections and branches. |
-| **Schema only** | 14             | Attribute names and types; everything else is left to pypowsybl, whose error is returned as is. | None: the caller gives `voltage_level_id` with `bus_id` or `node`. |
-| **Unsupported** | 1 (`alias`)    | Refused: pypowsybl creates aliases with `add_aliases`, not a `create_*` call.   | —                   |
+| **Schema only** | 8              | Attribute names and types; everything else is left to pypowsybl, whose error is returned as is. | None: the caller gives `voltage_level_id` with `bus_id` or `node`. |
+| **Unsupported** | 7              | Refused: `alias` (pypowsybl creates aliases with `add_aliases`, not a `create_*` call), and the types knowingly left out with their reason — the detailed DC model, `voltage_angle_limits`. | —                   |
 
 A name that is not creatable at all is refused with a message that says why:
 
@@ -78,6 +78,8 @@ A name that is not creatable at all is refused with a message that says why:
   pypowsybl computes it from other elements or only reads it"*;
 - an unsupported type (`alias`): *"has creation metadata in pypowsybl but no Network.create_\* call, so this tool does
   not support it yet"*;
+- a type left out (`LEFT_OUT_TYPES` in `profiles.py`): *"'voltage_angle_limits' is not offered: it is a limit pypowsybl
+  can create but not remove or update: …"*, with the reason;
 - an unknown name: *"No element type 'swtich' exists. Did you mean 'switch'?"*
 
 Element-type names are the pypowsybl `ElementType` members lowercased — the same vocabulary as
@@ -528,6 +530,13 @@ cascade never deletes an id still to be processed. Each id gets one item in the 
 same call already took down (the converter stations of a removed HVDC line) is `removed`, with a message saying so,
 and an id given twice is processed once.
 
+An element named by a **voltage angle limit** is never removed, nor a voltage level or substation whose cascade would
+take one down, even with `cascade=True`: the item is `refused` and names the limit. pypowsybl (1.16) cannot remove or
+update a voltage angle limit, and `remove_elements` does not find it, so once an element it names is gone the limit
+points at a removed terminal and every AC load flow fails with *"Cannot access bus of removed equipment"* for the
+rest of the session. Such limits are not offered for creation for the same reason, but networks loaded from a file
+may carry them (`creation/angle_limits.py`).
+
 ##### The cascade gate
 
 Removing a voltage level removes far more than its id names: everything it contains, every branch with an end in it,
@@ -600,6 +609,8 @@ error:
 - two different busbars of one voltage level for a coupling device, lines that meet at a voltage level for a merge,
   and, for a tee replacement, a busbar in the voltage level the removed branch leads to;
 - the merged line id a revert needs, which pypowsybl does not require and then crashes without;
+- lines that no voltage angle limit names: every operation removes or rebuilds the lines it is given, and a limit left
+  pointing at a removed one makes every AC load flow fail (§13);
 - the ids pypowsybl derives for what it creates, when they are not given: the two line sections (`<line>_1`,
   `<line>_2`), the tee point (`<line>_VL`) and, in a bus/breaker voltage level, the bus per section of a cut
   (`<section>_BUS`) or the bus and switch of a tap (`<line>_BUS`, `<line>_SW`). On most of them pypowsybl fails, when
@@ -707,6 +718,8 @@ script reports — and the order to do it in are on a page of their own: [upgrad
 - **No dry run.** There is no `validate_only` mode: a call that passes every check is applied.
 - **Schema-only types** get no switching equipment, no required attributes, no accepted values, no id check, and only
   their main dataframe, apart from the few checks and executors above.
+- **Voltage angle limits** cannot be created, and the elements a loaded one names cannot be removed or replaced, until
+  pypowsybl can remove such a limit (§13).
 - **Default limits group only.** Operational limits go in the default group; a named group is not the active one.
 - **Name checks are not semantic checks** (§15): enumeration values are covered by their own checks, but a newly
   required attribute still goes unnoticed until a call fails.

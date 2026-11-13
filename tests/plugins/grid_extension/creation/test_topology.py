@@ -376,6 +376,36 @@ def test_refused_before_anything_changes(engine, network, name, attributes, expe
     assert raised.value.hint
 
 
+@pytest.mark.parametrize(
+    "name, attributes",
+    [("connect_voltage_level_on_line", CUT), ("create_line_on_line", TAP)],
+    ids=["cut", "tap"],
+)
+def test_a_line_named_by_a_voltage_angle_limit_is_not_replaced(
+    engine, network, name, attributes
+):
+    # pypowsybl cannot remove the limit: once the line it names is replaced,
+    # every AC load flow fails
+    network.create_voltage_angle_limits(
+        id="VAL",
+        from_element_id="LINE_S2S3",
+        from_side="ONE",
+        to_element_id="LINE_S3S4",
+        to_side="ONE",
+        high_limit=20.0,
+    )
+    before = network.get_identifiables().index.tolist()
+
+    with pytest.raises(
+        CreationError, match="'LINE_S2S3' \\(named by voltage angle limit 'VAL'\\)"
+    ) as raised:
+        engine.apply(network, name, attributes)
+
+    assert network.get_identifiables().index.tolist() == before
+    assert raised.value.hint
+    assert _converges(network)
+
+
 def test_a_bus_of_the_bus_view_is_refused(engine, network):
     with pytest.raises(CreationError, match="busbar section there"):
         engine.apply(
