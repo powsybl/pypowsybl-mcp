@@ -83,7 +83,7 @@ default: see [grid_extension.md](grid_extension.md). Turn it off with
 |----------------------------------|------------------------------------------------------------------------------------------------------------|
 | `run_loadflow`                   | Run an AC or DC load flow on the current network.                                                          |
 | `get_loadflow_params`            | Return the current load flow parameters.                                                                   |
-| `update_loadflow_params`         | Update one or more load flow parameters for the session.                                                   |
+| `update_loadflow_params`         | Update one or more load flow parameters for the session, once the session's provider has checked them.     |
 | `restore_default_loadflow_param` | Reset load flow parameters to the values in `LF_default_parameters.toml`.                                  |
 | `get_loadflow_provider_info`     | List all available load flow providers, the system default, and the provider active in the session.        |
 | `set_loadflow_provider`          | Switch the load flow provider for the current session; pass an empty string to restore the system default. |

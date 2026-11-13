@@ -41,6 +41,11 @@ from loguru import logger
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 
+from pypowsybl_mcp.plugins.grid_extension.creation.angle_limits import (
+    CONSEQUENCE,
+    angle_limits_naming,
+    describe_naming,
+)
 from pypowsybl_mcp.tools import NetworkNotFoundError, PyPowsyblTool
 from pypowsybl_mcp.utils.element_types import ELEMENT_TYPE_TO_GETTER
 
@@ -175,11 +180,43 @@ class RemovalTools(PyPowsyblTool):
         """Describe what removing some voltage levels would take down with them."""
         return _describe_cascade(self._cascade_details(network, voltage_level_ids))
 
+    def _taken_down(self, network, element_id: str, element_type: str) -> set[str]:
+        """The ids removing one element takes down: itself, and for an HVDC line
+        its converter stations, for a voltage level or a substation its cascade."""
+        if element_type == "HVDC_LINE":
+            row = network.get_hvdc_lines().loc[element_id]
+            return {
+                element_id,
+                row["converter_station1_id"],
+                row["converter_station2_id"],
+            }
+        if element_type == "VOLTAGE_LEVEL":
+            return {element_id} | set(self._cascade(network, [element_id])[0])
+        if element_type == "SUBSTATION":
+            voltage_levels = self._voltage_levels_of(network, element_id)
+            cascade = (
+                self._cascade(network, voltage_levels)[0] if voltage_levels else {}
+            )
+            return {element_id, *voltage_levels} | set(cascade)
+        return {element_id}
+
     def _remove_one(
         self, network, element_id: str, element_type: str, cascade: bool
     ) -> dict:
         """Remove a single element, returning its item of the reply."""
         kind = element_type.lower()
+
+        # Refused even with cascade=True: no confirmation makes it safe.
+        if not network.get_voltage_angle_limits().empty:
+            named = angle_limits_naming(
+                network, self._taken_down(network, element_id, element_type)
+            )
+            if named:
+                problem = (
+                    f"{kind} '{element_id}' not removed: it would take down "
+                    f"{describe_naming(named)}. {CONSEQUENCE}"
+                )
+                return _item(element_id, kind, "refused", [], problem, None, problem)
 
         def removed(methods: list[str], message: str, details: dict | None = None):
             return _item(element_id, kind, "removed", methods, message, details)
@@ -356,6 +393,10 @@ class RemovalTools(PyPowsyblTool):
               components, which usually shows up as a non-convergent loadflow
             - Removing a bus or a switch of a live topology is accepted but can
               disconnect equipment silently; prefer removing the equipment itself
+            - **An element named by a voltage angle limit is never removed**, nor
+              a voltage level or substation holding one, even with cascade=True:
+              pypowsybl cannot remove the limit, and every AC load flow would
+              then fail. The refusal names the limit
             - Changes are in-memory only: use export_network() to save them
 
         Related Tools:

@@ -121,9 +121,11 @@ class TopologyTools(PyPowsyblTool):
               position strictly between 0 and 100 %, a busbar at the line's
               nominal voltage (a line cannot change voltage), and the ids
               pypowsybl would create (line sections, tee point, bus/breaker bus
-              and switch) are free
+              and switch) are free, and no voltage angle limit names a line the
+              operation replaces (pypowsybl could not remove the limit, and
+              every AC load flow would then fail)
             - A line cut in two keeps its limits on both halves; a new line
-              tapped into another has none until operational_limits are added
+              tapped into another has none until loading_limits are added
             - Cached load-flow results are cleared: re-run run_loadflow()
 
         Related Tools:

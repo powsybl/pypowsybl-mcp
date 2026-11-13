@@ -329,7 +329,7 @@ async def test_check_voltage_violations_country_filter(network_tools, mock_ctx):
     assert {v["bus_id"] for v in data["violations"]} == {"B1", "B3"}
     assert data["violation_count"] == 2
     assert data["evaluated_buses"] == 2  # out-of-scope buses are not evaluated
-    assert data["total_buses"] == 3      # census stays full
+    assert data["total_buses"] == 3  # census stays full
     assert data["filters_applied"]["country"] == ["FR"]
     assert data["filters_applied"]["side_match"] == "any"
 
@@ -1037,7 +1037,7 @@ async def test_get_network_element_data_filter_errors(network_tools, mock_ctx):
 
 
 @pytest.mark.asyncio
-async def test_filter_lines_loading_from_operational_limits(network_tools, mock_ctx):
+async def test_filter_lines_loading_from_loading_limits(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
     # get_lines() has flows but no Imax column (real pypowsybl behavior).
@@ -1045,7 +1045,7 @@ async def test_filter_lines_loading_from_operational_limits(network_tools, mock_
         {"i1": [100.0, 50.0], "i2": [-100.0, -50.0]},
         index=["l1", "l2"],
     )
-    mock_net.get_operational_limits.return_value = pd.DataFrame(
+    mock_net.get_loading_limits.return_value = pd.DataFrame(
         {
             "element_id": ["l1", "l2"],
             "side": ["ONE", "ONE"],
@@ -1075,7 +1075,7 @@ async def test_filter_lines_loading_from_operational_limits(network_tools, mock_
 async def test_get_network_element_data_filter_temporary_limit(network_tools, mock_ctx):
     proxy = network_tools.get_proxy("test-session")
     mock_net = MagicMock()
-    mock_net.get_operational_limits.return_value = pd.DataFrame(
+    mock_net.get_loading_limits.return_value = pd.DataFrame(
         {
             "element_id": ["l1", "l1"],
             "side": ["ONE", "ONE"],
@@ -1128,7 +1128,7 @@ async def test_get_network_element_data_filter_temporary_limit_still_overloaded(
         {"i1": [220.0], "i2": [-220.0]},
         index=["l1"],
     )
-    mock_net.get_operational_limits.return_value = pd.DataFrame(
+    mock_net.get_loading_limits.return_value = pd.DataFrame(
         {
             "element_id": ["l1", "l1"],
             "side": ["ONE", "ONE"],
@@ -2487,7 +2487,7 @@ async def test_get_network_element_data_method_not_available(network_tools, mock
 
 
 @pytest.mark.asyncio
-async def test_get_network_element_data_operational_limits_failure_is_tolerated(
+async def test_get_network_element_data_loading_limits_failure_is_tolerated(
     network_tools, mock_ctx
 ):
     proxy = network_tools.get_proxy("test-session")
@@ -2495,7 +2495,7 @@ async def test_get_network_element_data_operational_limits_failure_is_tolerated(
     mock_net.get_lines.return_value = pd.DataFrame(
         {"i1": [10.0], "i2": [-10.0]}, index=["l1"]
     )
-    mock_net.get_operational_limits.side_effect = pp.PyPowsyblError("limits boom")
+    mock_net.get_loading_limits.side_effect = pp.PyPowsyblError("limits boom")
     mock_net.get_variant_ids.return_value = ["InitialState"]
     proxy.networks["net1"] = mock_net
 
@@ -2912,7 +2912,7 @@ async def test_compare_variants_outage_is_changed_not_removed(network_tools, moc
             ),
         },
     )
-    mock_net.get_operational_limits.return_value = pd.DataFrame()
+    mock_net.get_loading_limits.return_value = pd.DataFrame()
     mock_net.get_voltage_levels.return_value = pd.DataFrame(
         {"substation_id": ["S1", "S2"], "nominal_v": [400.0, 225.0]},
         index=["VL1", "VL2"],
@@ -3551,7 +3551,7 @@ def _current_network():
         },
         index=["T3"],
     )
-    net.get_operational_limits.return_value = pd.DataFrame(
+    net.get_loading_limits.return_value = pd.DataFrame(
         {
             "element_id": ["L1", "L2", "T1", "T3", "T3", "T3"],
             "side": ["ONE", "ONE", "ONE", "ONE", "TWO", "THREE"],
@@ -3820,7 +3820,7 @@ def _three_winding_network():
         },
         index=["T3W_HV", "T3W_LV"],
     )
-    net.get_operational_limits.return_value = pd.DataFrame(
+    net.get_loading_limits.return_value = pd.DataFrame(
         {
             "element_id": [
                 "T3W_HV",
@@ -3965,7 +3965,7 @@ def _coverage_gap_network():
         },
         index=["T3W_GAP", "T3W_OVER_GAP"],
     )
-    net.get_operational_limits.return_value = pd.DataFrame(
+    net.get_loading_limits.return_value = pd.DataFrame(
         {
             "element_id": [
                 "L_OVER",

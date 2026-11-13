@@ -44,6 +44,11 @@ from typing import Any
 import pypowsybl as pp
 
 from pypowsybl_mcp.plugins.grid_extension.creation import rules as rule
+from pypowsybl_mcp.plugins.grid_extension.creation.angle_limits import (
+    CONSEQUENCE,
+    angle_limits_naming,
+    describe_naming,
+)
 from pypowsybl_mcp.plugins.grid_extension.creation.context import (
     NODE_BREAKER,
     CreationContext,
@@ -369,7 +374,7 @@ OPERATIONS: dict[str, TopologyOperation] = {
                 "The line is cut at position_percent (50 by default) into line1_id and "
                 "line2_id, joined at a fictitious voltage level (the tee point, "
                 "'<line>_VL' by default), and new_line_id runs from there to the busbar. "
-                "The new line has no limits: rate it with operational_limits. "
+                "The new line has no limits: rate it with loading_limits. "
                 "replace_tee_point_by_voltage_level_on_line turns the tee into a real "
                 "connection at the busbar; revert_create_line_on_line undoes it."
             ),
@@ -831,6 +836,15 @@ class TopologyEngine:
                 f"No line '{line_id}' ('{key}') in this network. Use "
                 "get_network_element_data(element_type='line') to list them"
             )
+        # every operation removes or rebuilds the lines it is given
+        named = angle_limits_naming(
+            network, [given[key] for key in operation.existing_lines if given.get(key)]
+        )
+        if named:
+            raise CreationError(
+                f"{operation.operation} would replace {describe_naming(named)}. "
+                + CONSEQUENCE
+            )
         for key in operation.new_ids:
             new_id = given.get(key)
             if new_id is not None and new_id in identifiables.index:
@@ -871,13 +885,13 @@ class TopologyEngine:
         created_ids, removed_ids = changes.created_ids, changes.removed_ids
 
         notes = []
-        limits = network.get_operational_limits()
+        limits = network.get_loading_limits()
         for line_id in created_ids:
             if after[line_id] == "LINE" and line_id not in limits.index:
                 notes.append(
                     f"line '{line_id}' has no operational limits, so it can never be "
                     "reported as overloaded: rate it with "
-                    "create_network_element('operational_limits', ...)"
+                    "create_network_element('loading_limits', ...)"
                 )
         emptied = [i for i in removed_ids if i in containers]
         if emptied:

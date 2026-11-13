@@ -2066,9 +2066,7 @@ class NetworkTools(PyPowsyblTool):
             and record.get("provider") == proxy.lf_provider
         )
         # Certain "no flows present": every load-flow state column in the table is NaN.
-        present_state = [
-            c for c in LOADFLOW_STATE_COLUMNS if c in elements_df.columns
-        ]
+        present_state = [c for c in LOADFLOW_STATE_COLUMNS if c in elements_df.columns]
         no_flows = bool(present_state) and all(
             elements_df[c].isna().all() for c in present_state
         )
@@ -2349,7 +2347,7 @@ class NetworkTools(PyPowsyblTool):
             )
 
             # get_lines() returns i1/i2 (current in A) but not Imax. Imax is in
-            # get_operational_limits(). We materialise the full ampacity set
+            # get_loading_limits(). We materialise the full ampacity set
             # (permanent_limit1/2/3, temporary_limit1/2/3) so loading_percent and
             # loading_percent_temporary resolve, and a leaf can compare against a
             # per-row rating. Triggered structurally — any branch table carries an
@@ -2361,9 +2359,9 @@ class NetworkTools(PyPowsyblTool):
             if "i1" in elements_df.columns or "current_limits" in attach_tokens:
                 limits_df = None
                 try:
-                    limits_df = network.get_operational_limits()
+                    limits_df = network.get_loading_limits()
                 except (pp.PyPowsyblError, ValueError, KeyError) as e:
-                    logger.debug(f"get_operational_limits failed: {e}")
+                    logger.debug(f"get_loading_limits failed: {e}")
                 elements_df = attach_full_current_limits(elements_df, limits_df)
 
             # Transformer tables do not carry their tap-changer details. Join the

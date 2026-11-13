@@ -545,3 +545,67 @@ async def test_bus_view_bus_is_not_an_element_to_remove(
     result = await removal_tools.remove_network_elements(["VL1_0"], ctx=mock_ctx)
 
     assert _item(result, "VL1_0")["status"] == "not_found"
+
+
+def _angle_limit(network):
+    """A voltage angle limit between LINE_S2S3 and LINE_S3S4, as a network loaded
+    from a file may carry one: pypowsybl cannot remove it afterwards."""
+    network.create_voltage_angle_limits(
+        id="VAL",
+        from_element_id="LINE_S2S3",
+        from_side="ONE",
+        to_element_id="LINE_S3S4",
+        to_side="ONE",
+        high_limit=20.0,
+    )
+
+
+def _converges(network) -> bool:
+    return (
+        pp.loadflow.run_ac(network)[0].status == pp.loadflow.ComponentStatus.CONVERGED
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "element_id, taken_down",
+    [
+        ("LINE_S2S3", "'LINE_S2S3'"),
+        # a voltage level, or a substation, takes the line down with it
+        ("S4VL1", "'LINE_S3S4'"),
+        ("S4", "'LINE_S3S4'"),
+    ],
+)
+async def test_an_element_named_by_a_voltage_angle_limit_is_never_removed(
+    removal_tools, mock_ctx, node_breaker_network, element_id, taken_down
+):
+    _angle_limit(node_breaker_network)
+    before = node_breaker_network.get_identifiables().index.tolist()
+
+    result = await removal_tools.remove_network_elements(
+        [element_id], cascade=True, network_id="nb", ctx=mock_ctx
+    )
+
+    item = _item(result, element_id)
+    assert item["status"] == "refused"
+    assert f"{taken_down} (named by voltage angle limit 'VAL')" in item["problem"]
+    assert "Cannot access bus of removed equipment" in item["problem"]
+    assert node_breaker_network.get_identifiables().index.tolist() == before
+    assert _converges(node_breaker_network)
+
+
+@pytest.mark.asyncio
+async def test_an_element_no_voltage_angle_limit_names_is_still_removed(
+    removal_tools, mock_ctx, node_breaker_network
+):
+    _angle_limit(node_breaker_network)
+
+    result = json.loads(
+        await removal_tools.remove_network_elements(
+            ["LD1"], network_id="nb", ctx=mock_ctx
+        )
+    )
+
+    assert result["success"]
+    assert "LD1" not in node_breaker_network.get_loads().index
+    assert _converges(node_breaker_network)

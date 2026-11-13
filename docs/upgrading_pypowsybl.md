@@ -1,7 +1,7 @@
 ### Upgrading pypowsybl
 
-`pypowsybl-mcp` pins one exact pypowsybl version (`pypowsybl==1.15.0` in `pyproject.toml`), and pypowsybl bundles one
-exact powsybl-core version (7.2.1 for pypowsybl 1.15.0; `python -c "import pypowsybl; pypowsybl.print_version()"`
+`pypowsybl-mcp` pins one exact pypowsybl version (`pypowsybl==1.16.1` in `pyproject.toml`), and pypowsybl bundles one
+exact powsybl-core version (7.3.0 for pypowsybl 1.16.1; `python -c "import pypowsybl; pypowsybl.print_version()"`
 lists them). Moving to another version is a deliberate change. This page says what checks itself, what still needs
 a person, and in which order to do it.
 
@@ -47,6 +47,13 @@ is a safety net for deployments, not a substitute for the review below.
    in `creation/topology.py`, or exclude it in `schema._topology_calls` with the reason. The checks of each operation
    encode what pypowsybl did not check on 1.15 (a position over 100 %, a busbar at another voltage, the orphan
    switches of a revert): reread them against the release notes, a fix upstream makes one redundant, not wrong.
+   Since 1.16, for instance, the reverts remove their node/breaker bays themselves and the orphan cleanup finds
+   nothing there; it still applies to bus/breaker voltage levels.
+   **Voltage angle limits.** pypowsybl 1.16 cannot remove or update one, so `voltage_angle_limits` is left out
+   (`ANGLE_LIMITS_REASON` in `creation/profiles.py`) and removals and topology operations refuse the elements one
+   names (`creation/angle_limits.py`). When a version can remove them, offer the type again: drop it from
+   `LEFT_OUT_TYPES`, give it a batch position after the branches it names (60 in `SCHEMA_ONLY_ORDERS`), and remove
+   the elements' limits with them instead of refusing.
 5. **Docstring mining.** It relies on pypowsybl's `- **name**: description` docstring format; if that changes, the
    descriptions vanish from `describe_element_creation` without an error. The duplicate-`target_v` workaround in
    `doc_mining.py` may no longer be needed.
@@ -97,7 +104,7 @@ would make the startup check compare pypowsybl with itself.
 Generated text follows by itself (the coverage tables of [grid_extension.md](grid_extension.md) and the snapshot,
 through step 5). These are written by hand and should be reread:
 
-- the counts of [element_creation_and_removal.md](element_creation_and_removal.md) §3, its 1.15 examples (§4, §15)
+- the counts of [element_creation_and_removal.md](element_creation_and_removal.md) §3, its version-specific examples (§4, §15)
   and its `LEFT_OUT` list (§15);
 - the workaround comments in `profiles.py` (no `OFF` mode for an SVC, no `FIXED_TAP` mode for a phase shifter);
 - the version limits in the `grid-extension` skill (`pypowsybl_mcp/plugins/grid_extension/skills/grid-extension.md`);

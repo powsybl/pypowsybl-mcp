@@ -120,7 +120,9 @@ async def test_a_cut_and_its_revert(tools, mock_ctx, network):
 
     assert merged["success"]
     assert merged["created_ids"] == ["LINE_S2S3"]
-    assert len(merged["switches"]["orphans_removed"]) == 4
+    # since pypowsybl 1.16 the revert removes the bays itself: no orphans left
+    assert merged["switches"]["removed"] == 4
+    assert merged["switches"]["orphans_removed"] == []
     assert "LINE_S2S3" in network.get_lines().index
 
 

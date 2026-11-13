@@ -599,10 +599,10 @@ def test_a_tie_line_comes_after_its_boundary_lines_in_a_batch(engine, node_break
 # ---------------------------------------------------------------------------
 
 
-def test_operational_limits_make_a_branch_overloadable(engine, site):
+def test_loading_limits_make_a_branch_overloadable(engine, site):
     report = engine.create(
         site,
-        "operational_limits",
+        "loading_limits",
         {
             "element_id": "LINE_DC",
             "permanent_limit": 300.0,
@@ -610,8 +610,8 @@ def test_operational_limits_make_a_branch_overloadable(engine, site):
         },
     )
 
-    assert "set operational_limits on line 'LINE_DC'" in str(report)
-    limits = site.get_operational_limits()
+    assert "set loading_limits on line 'LINE_DC'" in str(report)
+    limits = site.get_loading_limits()
     rows = limits[limits.index.get_level_values("element_id") == "LINE_DC"]
     # Permanent and temporary, on both sides, in the group the analyses read.
     assert len(rows) == 4
@@ -619,17 +619,17 @@ def test_operational_limits_make_a_branch_overloadable(engine, site):
 
 
 def _limits_of(network, element_id):
-    limits = network.get_operational_limits(
+    limits = network.get_loading_limits(
         all_attributes=True, show_inactive_sets=True
     ).reset_index()
     return limits[limits["element_id"] == element_id]
 
 
-def test_operational_limits_go_in_the_group_named_once(engine, site):
+def test_loading_limits_go_in_the_group_named_once(engine, site):
     # given once for the call, the group used to be dropped for DEFAULT
     engine.create(
         site,
-        "operational_limits",
+        "loading_limits",
         {"element_id": "LINE_DC", "permanent_limit": 300.0, "group_name": "WINTER"},
     )
 
@@ -650,13 +650,13 @@ def test_operational_limits_go_in_the_group_named_once(engine, site):
 def test_limits_in_a_named_group_come_with_a_note(engine, site, attributes):
     """The analyses only read the selected group, which a named one is not."""
     report = engine.create(
-        site, "operational_limits", {"element_id": "LINE_DC", **attributes}
+        site, "loading_limits", {"element_id": "LINE_DC", **attributes}
     )
 
     (note,) = [note for note in report.notes if "selected group" in note]
     assert "group(s) WINTER" in note
     assert "without group_name" in note
-    selected = site.get_operational_limits().reset_index()
+    selected = site.get_loading_limits().reset_index()
     assert "LINE_DC" not in set(selected["element_id"])
 
 
@@ -666,16 +666,17 @@ def test_limits_in_the_default_group_need_no_note(engine, site, group):
     if group:
         attributes["group_name"] = group
 
-    report = engine.create(site, "operational_limits", attributes)
+    report = engine.create(site, "loading_limits", attributes)
 
     assert not [note for note in report.notes if "selected group" in note]
 
 
 def test_messages_put_the_right_article_before_a_type(engine):
     assert with_article("load") == "a load"
-    assert with_article("operational_limits") == "an operational_limits"
+    assert with_article("loading_limits") == "a loading_limits"
+    assert with_article("area") == "an area"
     assert with_article("integer") == "an integer"
-    rules = engine.describe("operational_limits")["rules"]
+    rules = engine.describe("loading_limits")["rules"]
     assert "'limits' needs at least 1 entry" in rules
     assert any("'group_name' is set to anything but 'DEFAULT'" in r for r in rules)
 
@@ -683,7 +684,7 @@ def test_messages_put_the_right_article_before_a_type(engine):
 def test_explicit_limit_rows_take_the_side_named_once(engine, site):
     engine.create(
         site,
-        "operational_limits",
+        "loading_limits",
         {
             "element_id": "LINE_DC",
             "side": "TWO",
@@ -692,7 +693,7 @@ def test_explicit_limit_rows_take_the_side_named_once(engine, site):
     )
     engine.create(
         site,
-        "operational_limits",
+        "loading_limits",
         {
             "element_id": "TR",
             "limits": [{"value": 500.0, "acceptable_duration": -1}],
@@ -706,7 +707,7 @@ def test_explicit_limit_rows_take_the_side_named_once(engine, site):
 
 def test_a_line_is_rated_on_both_ends_by_default(engine, site):
     engine.create(
-        site, "operational_limits", {"element_id": "LINE_DC", "permanent_limit": 300.0}
+        site, "loading_limits", {"element_id": "LINE_DC", "permanent_limit": 300.0}
     )
 
     assert sorted(_limits_of(site, "LINE_DC")["side"]) == ["ONE", "TWO"]
@@ -715,20 +716,20 @@ def test_a_line_is_rated_on_both_ends_by_default(engine, site):
 def test_a_transformer_is_rated_on_side_one_and_refuses_both(engine, site):
     # the same amps on both windings overloaded the low-voltage one
     engine.create(
-        site, "operational_limits", {"element_id": "TR", "permanent_limit": 500.0}
+        site, "loading_limits", {"element_id": "TR", "permanent_limit": 500.0}
     )
     assert list(_limits_of(site, "TR")["side"]) == ["ONE"]
 
     with pytest.raises(CreationError, match="side 'BOTH' cannot be used .* ratio"):
         engine.create(
             site,
-            "operational_limits",
+            "loading_limits",
             {"element_id": "TR", "permanent_limit": 500.0, "side": "BOTH"},
         )
     with pytest.raises(CreationError, match="side 'BOTH' cannot be used"):
         engine.create(
             site,
-            "operational_limits",
+            "loading_limits",
             {
                 "element_id": "TR",
                 "limits": [{"side": "BOTH", "value": 500.0, "acceptable_duration": -1}],
@@ -737,14 +738,14 @@ def test_a_transformer_is_rated_on_side_one_and_refuses_both(engine, site):
     with pytest.raises(CreationError, match="side 'THREE' does not exist"):
         engine.create(
             site,
-            "operational_limits",
+            "loading_limits",
             {"element_id": "TR", "permanent_limit": 500.0, "side": "THREE"},
         )
 
     # side TWO in its own amps adds to side ONE rather than replacing it
     engine.create(
         site,
-        "operational_limits",
+        "loading_limits",
         {"element_id": "TR", "permanent_limit": 1000.0, "side": "TWO"},
     )
     rows = _limits_of(site, "TR").set_index("side")["value"]
@@ -759,19 +760,19 @@ def test_each_leg_of_a_three_windings_transformer_is_rated_on_its_own(engine):
     with pytest.raises(CreationError, match="'side' is required .* one call per side"):
         engine.create(
             network,
-            "operational_limits",
+            "loading_limits",
             {"element_id": leg_id, "permanent_limit": 50.0},
         )
     with pytest.raises(CreationError, match="side 'BOTH' cannot be used"):
         engine.create(
             network,
-            "operational_limits",
+            "loading_limits",
             {"element_id": leg_id, "permanent_limit": 50.0, "side": "BOTH"},
         )
 
     engine.create(
         network,
-        "operational_limits",
+        "loading_limits",
         {"element_id": leg_id, "permanent_limit": 50.0, "side": "THREE"},
     )
     rows = _limits_of(network, leg_id)
@@ -788,7 +789,7 @@ def test_a_boundary_line_is_rated_on_its_single_side(engine, bus_breaker):
 
     engine.create(
         bus_breaker,
-        "operational_limits",
+        "loading_limits",
         {"element_id": "BL", "permanent_limit": 400.0},
     )
     assert list(_limits_of(bus_breaker, "BL")["side"]) == ["NONE"]
@@ -797,7 +798,7 @@ def test_a_boundary_line_is_rated_on_its_single_side(engine, bus_breaker):
     with pytest.raises(CreationError, match="side 'ONE' does not exist .* NONE"):
         engine.create(
             bus_breaker,
-            "operational_limits",
+            "loading_limits",
             {"element_id": "BL", "permanent_limit": 400.0, "side": "ONE"},
         )
 
@@ -806,12 +807,12 @@ def test_virtual_attributes_are_coerced_like_real_ones(engine, site):
     # a numeric string reached the rules uncoerced and crashed them
     engine.create(
         site,
-        "operational_limits",
+        "loading_limits",
         {"element_id": "LINE_DC", "permanent_limit": "300"},
     )
     engine.create(site, "ratio_tap_changer", {"element_id": "TR", "step_count": "5"})
 
-    limits = site.get_operational_limits()
+    limits = site.get_loading_limits()
     rows = limits[limits.index.get_level_values("element_id") == "LINE_DC"]
     assert set(rows["value"]) == {300.0}
     assert site.get_ratio_tap_changers().loc["TR", "high_tap"] == 4
@@ -821,7 +822,7 @@ def test_a_virtual_attribute_of_the_wrong_type_is_refused(engine, site):
     with pytest.raises(CreationError, match="'permanent_limit' .* must be a number"):
         engine.create(
             site,
-            "operational_limits",
+            "loading_limits",
             {"element_id": "LINE_DC", "permanent_limit": "a lot"},
         )
 
@@ -846,7 +847,7 @@ def test_temporary_limits_are_checked_row_by_row(engine, site, temporary, messag
     with pytest.raises(CreationError, match=message):
         engine.create(
             site,
-            "operational_limits",
+            "loading_limits",
             {
                 "element_id": "LINE_DC",
                 "permanent_limit": 300.0,
@@ -862,7 +863,7 @@ def test_batch_checks_virtual_tables_before_creating_anything(engine, site):
             [
                 {"element_type": "substation", "id": "S_NEW"},
                 {
-                    "element_type": "operational_limits",
+                    "element_type": "loading_limits",
                     "element_id": "LINE_DC",
                     "permanent_limit": 300.0,
                     "temporary_limits": [{"value": 400.0}],
@@ -910,14 +911,14 @@ def test_limits_are_refused_on_a_tie_line_and_go_to_its_boundary_lines(engine):
     with pytest.raises(CreationError, match="cannot be attached to a tie_line"):
         engine.create(
             network,
-            "operational_limits",
+            "loading_limits",
             {"element_id": "NHV1_NHV2_1", "permanent_limit": 700.0},
         )
 
     for boundary_line in ("NHV1_XNODE1", "XNODE1_NHV2"):
         engine.create(
             network,
-            "operational_limits",
+            "loading_limits",
             {"element_id": boundary_line, "permanent_limit": 700.0},
         )
     assert sorted(_limits_of(network, "NHV1_NHV2_1")["side"]) == ["ONE", "TWO"]
@@ -1118,9 +1119,7 @@ def test_datacenter_connection_converges(engine, site):
     engine.create(
         site, "load", {"id": "DC", "bus": "VL_B_1_1", "p0": 100.0, "q0": 20.0}
     )
-    engine.create(
-        site, "operational_limits", {"id": "LINE_DC", "permanent_limit": 300.0}
-    )
+    engine.create(site, "loading_limits", {"id": "LINE_DC", "permanent_limit": 300.0})
 
     results = pp.loadflow.run_ac(site)
 
@@ -1453,7 +1452,7 @@ def test_different_nominal_voltages_are_noted_not_refused(engine, bus_breaker):
 def test_attachment_to_the_wrong_element_type(engine, bus_breaker):
     with pytest.raises(CreationError) as error:
         engine.create(
-            bus_breaker, "operational_limits", {"id": "B2-L", "permanent_limit": 100.0}
+            bus_breaker, "loading_limits", {"id": "B2-L", "permanent_limit": 100.0}
         )
 
     assert "cannot be attached to a load" in str(error.value)
@@ -1611,7 +1610,7 @@ def test_batch_is_ordered_by_dependency(engine, bus_breaker):
         bus_breaker,
         [
             {
-                "element_type": "operational_limits",
+                "element_type": "loading_limits",
                 "element_id": "LINE_DC",
                 "permanent_limit": 800.0,
             },
@@ -1645,12 +1644,12 @@ def test_batch_is_ordered_by_dependency(engine, bus_breaker):
         "voltage_level",
         "load",
         "line",
-        "operational_limits",
+        "loading_limits",
     ]
     assert batch.created_ids == ["SUB_DC", "VL_DC", "DATACENTER", "LINE_DC"]
     assert batch.updated_ids == ["LINE_DC"]
     assert "DATACENTER" in bus_breaker.get_loads().index
-    assert len(bus_breaker.get_operational_limits().loc[["LINE_DC"]]) == 2
+    assert len(bus_breaker.get_loading_limits().loc[["LINE_DC"]]) == 2
 
 
 def test_batch_checks_every_item_before_creating_anything(engine, bus_breaker):
@@ -1867,7 +1866,7 @@ def test_batch_accepts_ids_that_name_an_element_twice(engine, node_breaker):
         node_breaker,
         [
             {
-                "element_type": "operational_limits",
+                "element_type": "loading_limits",
                 "element_id": "LINE_NEW",
                 "permanent_limit": 800.0,
             },
@@ -2011,16 +2010,28 @@ def test_the_detailed_dc_model_is_not_offered(engine, element_type):
         engine.profile_for(element_type)
 
 
+def test_voltage_angle_limits_are_not_offered(engine):
+    # pypowsybl cannot remove one, and removing an element it names makes every
+    # AC load flow fail for the rest of the session
+    assert "voltage_angle_limits" not in engine.supported
+    with pytest.raises(CreationError, match="not offered: .*not remove"):
+        engine.profile_for("voltage_angle_limits")
+
+
 def test_the_dc_model_types_are_read_from_the_schema():
     from pypowsybl_mcp.plugins.grid_extension.creation.profiles import (
+        DETAILED_DC_REASON,
         LEFT_OUT_TYPES,
         is_detailed_dc,
     )
 
-    assert sorted(LEFT_OUT_TYPES) == [
+    assert sorted(
+        name for name, reason in LEFT_OUT_TYPES.items() if reason == DETAILED_DC_REASON
+    ) == [
         "dc_ground",
         "dc_line",
         "dc_node",
+        "dc_switch",
         "voltage_source_converter",
     ]
     # an HVDC link of the classic model is not part of it

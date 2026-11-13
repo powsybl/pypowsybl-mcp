@@ -140,11 +140,12 @@ def test_a_substation_inserted_on_a_line_and_removed_again(engine, network):
 
     assert merged.created_ids == ("LINE_S2S3",)
     assert _lines(network)["LINE_S2S3"] == ("S2VL1", "S3VL1")
-    # pypowsybl leaves the bays of the two halves at S4VL1: they are removed
-    assert len(merged.orphan_switches_removed) == 4
+    # since pypowsybl 1.16 the revert removes the bays of the two halves at
+    # S4VL1 itself: the orphan cleanup finds nothing left
+    assert merged.orphan_switches_removed == ()
     assert len(network.get_switches()) == switches
     assert not dangling_switches(network, "S4VL1")
-    assert "left with nothing behind them" in merged.message
+    assert "left with nothing behind them" not in merged.message
     assert _converges(network)
 
 
@@ -161,7 +162,7 @@ def test_the_impedance_is_split_at_the_position(engine, network):
 
 
 def test_a_line_cut_in_two_keeps_its_limits(engine, network):
-    network.create_operational_limits(
+    network.create_loading_limits(
         pd.DataFrame.from_records(
             index="element_id",
             data=[
@@ -181,7 +182,7 @@ def test_a_line_cut_in_two_keeps_its_limits(engine, network):
     cut = engine.apply(network, "connect_voltage_level_on_line", CUT)
 
     assert not cut.notes
-    limited = set(network.get_operational_limits().index.get_level_values(0))
+    limited = set(network.get_loading_limits().index.get_level_values(0))
     assert {"LINE_S2S3_1", "LINE_S2S3_2"} <= limited
 
 
@@ -204,7 +205,8 @@ def test_a_tap_and_its_revert(engine, network):
     untap = engine.apply(network, "revert_create_line_on_line", UNTAP)
 
     assert set(untap.removed_ids) == set(tap.created_ids)
-    assert len(untap.orphan_switches_removed) == 2
+    # since pypowsybl 1.16 the revert removes the tapped line's bay itself
+    assert untap.orphan_switches_removed == ()
     assert len(network.get_switches()) == switches
 
 
@@ -372,6 +374,36 @@ def test_refused_before_anything_changes(engine, network, name, attributes, expe
 
     assert network.get_identifiables().index.tolist() == before
     assert raised.value.hint
+
+
+@pytest.mark.parametrize(
+    "name, attributes",
+    [("connect_voltage_level_on_line", CUT), ("create_line_on_line", TAP)],
+    ids=["cut", "tap"],
+)
+def test_a_line_named_by_a_voltage_angle_limit_is_not_replaced(
+    engine, network, name, attributes
+):
+    # pypowsybl cannot remove the limit: once the line it names is replaced,
+    # every AC load flow fails
+    network.create_voltage_angle_limits(
+        id="VAL",
+        from_element_id="LINE_S2S3",
+        from_side="ONE",
+        to_element_id="LINE_S3S4",
+        to_side="ONE",
+        high_limit=20.0,
+    )
+    before = network.get_identifiables().index.tolist()
+
+    with pytest.raises(
+        CreationError, match="'LINE_S2S3' \\(named by voltage angle limit 'VAL'\\)"
+    ) as raised:
+        engine.apply(network, name, attributes)
+
+    assert network.get_identifiables().index.tolist() == before
+    assert raised.value.hint
+    assert _converges(network)
 
 
 def test_a_bus_of_the_bus_view_is_refused(engine, network):

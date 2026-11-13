@@ -66,18 +66,20 @@ When `network_id` is omitted, every tool works on the session's current network.
 Every element type pypowsybl can create falls in one of three groups. The current lists are generated in
 [grid_extension.md](grid_extension.md#coverage-of-the-pypowsybl-creation-api).
 
-| Group           | Count (1.15.0) | What is checked                                                                 | Switching equipment |
+| Group           | Count (1.16.1) | What is checked                                                                 | Switching equipment |
 |-----------------|----------------|---------------------------------------------------------------------------------|---------------------|
 | **Profiled**    | 20             | Attribute names, types, required attributes, accepted values, rules; connection points are resolved and diagnosed. | Built by the bay helpers for injections and branches. |
-| **Schema only** | 12             | Attribute names and types; everything else is left to pypowsybl, whose error is returned as is. | None: the caller gives `voltage_level_id` with `bus_id` or `node`. |
-| **Unsupported** | 1 (`alias`)    | Refused: pypowsybl creates aliases with `add_aliases`, not a `create_*` call.   | —                   |
+| **Schema only** | 8              | Attribute names and types; everything else is left to pypowsybl, whose error is returned as is. | None: the caller gives `voltage_level_id` with `bus_id` or `node`. |
+| **Unsupported** | 7              | Refused: `alias` (pypowsybl creates aliases with `add_aliases`, not a `create_*` call), and the types knowingly left out with their reason — the detailed DC model, `voltage_angle_limits`. | —                   |
 
 A name that is not creatable at all is refused with a message that says why:
 
-- a computed or read-only type (`branch`, `injection`, `selected_operational_limits`, …): *"cannot be created:
+- a computed or read-only type (`branch`, `injection`, `selected_loading_limits`, …): *"cannot be created:
   pypowsybl computes it from other elements or only reads it"*;
 - an unsupported type (`alias`): *"has creation metadata in pypowsybl but no Network.create_\* call, so this tool does
   not support it yet"*;
+- a type left out (`LEFT_OUT_TYPES` in `profiles.py`): *"'voltage_angle_limits' is not offered: it is a limit pypowsybl
+  can create but not remove or update: …"*, with the reason;
 - an unknown name: *"No element type 'swtich' exists. Did you mean 'switch'?"*
 
 Element-type names are the pypowsybl `ElementType` members lowercased — the same vocabulary as
@@ -176,7 +178,7 @@ profile instead (§15).
 pypowsybl documents its creation attributes in a regular `- **name**: description` format. `doc_mining.py` parses the
 docstrings of a profile's `docs` calls **at runtime**, so the descriptions shown by `describe_element_creation` always
 come from the installed version. When a name is documented twice, the first description wins (pypowsybl 1.15
-documents the shunt deadband as a second `target_v`). A unit stated in a description ("in MW") is used when the
+and 1.16 document the shunt deadband as a second `target_v`). A unit stated in a description ("in MW") is used when the
 profile gives none. Mining never changes behavior: required attributes, enumerations and rules stay hand-written.
 
 ##### Schema-only profiles
@@ -387,7 +389,7 @@ Some calls take a table rather than a single row. The profile names the attribut
 | `phase_tap_changer`               | `steps`         | `{alpha, rho, r, x, g, b}`                            |
 | `shunt_compensator` (non-linear)  | `sections`      | `{b, g}` per section, `b` cumulative up to that section |
 | `reactive_capability_curve_point` | `points`        | `{p, min_q, max_q}`, at least two                     |
-| `operational_limits`              | `limits`        | one row per (side, duration)                          |
+| `loading_limits`              | `limits`        | one row per (side, duration)                          |
 
 Rows are checked like top-level attributes: column names (with "did you mean"), types and accepted values. For
 attachments, every row must give the same columns, since the rows become one list per column.
@@ -528,6 +530,13 @@ cascade never deletes an id still to be processed. Each id gets one item in the 
 same call already took down (the converter stations of a removed HVDC line) is `removed`, with a message saying so,
 and an id given twice is processed once.
 
+An element named by a **voltage angle limit** is never removed, nor a voltage level or substation whose cascade would
+take one down, even with `cascade=True`: the item is `refused` and names the limit. pypowsybl (1.16) cannot remove or
+update a voltage angle limit, and `remove_elements` does not find it, so once an element it names is gone the limit
+points at a removed terminal and every AC load flow fails with *"Cannot access bus of removed equipment"* for the
+rest of the session. Such limits are not offered for creation for the same reason, but networks loaded from a file
+may carry them (`creation/angle_limits.py`).
+
 ##### The cascade gate
 
 Removing a voltage level removes far more than its id names: everything it contains, every branch with an end in it,
@@ -600,6 +609,8 @@ error:
 - two different busbars of one voltage level for a coupling device, lines that meet at a voltage level for a merge,
   and, for a tee replacement, a busbar in the voltage level the removed branch leads to;
 - the merged line id a revert needs, which pypowsybl does not require and then crashes without;
+- lines that no voltage angle limit names: every operation removes or rebuilds the lines it is given, and a limit left
+  pointing at a removed one makes every AC load flow fail (§13);
 - the ids pypowsybl derives for what it creates, when they are not given: the two line sections (`<line>_1`,
   `<line>_2`), the tee point (`<line>_VL`) and, in a bus/breaker voltage level, the bus per section of a cut
   (`<section>_BUS`) or the bus and switch of a tap (`<line>_BUS`, `<line>_SW`). On most of them pypowsybl fails, when
@@ -610,9 +621,10 @@ Every refusal carries the operation's descriptor as its hint, like a creation's 
 After the call, the reply is computed by comparing the network's identifiables before and after: the elements created
 and removed, the switches built and removed. Two things are added to what pypowsybl does:
 
-- **Orphan switches.** pypowsybl's reverts leave the bays that connected the merged lines in place, with nothing behind
-  them. In node/breaker voltage levels, the engine removes the switches that the operation left ending at an empty
-  node — the breaker, then the disconnector behind it — so a cut and its revert give back the same switch count. In
+- **Orphan switches.** Up to pypowsybl 1.15, the reverts left the bays that connected the merged lines in place, with
+  nothing behind them. Since 1.16 pypowsybl removes them itself in node/breaker voltage levels; the engine still
+  removes any switch the operation leaves ending at an empty node — the breaker, then the disconnector behind it — so
+  a cut and its revert give back the same switch count whatever the version. In
   bus/breaker voltage levels, each removed line ended at a bus pypowsybl created for it, joined by one switch to the
   busbar; that switch is removed too. pypowsybl cannot remove a bus (`remove_elements` refuses even an empty one), so
   the bus stays, empty and cut off, and a note names it: a later cut or tap that would create the same id is refused
@@ -655,7 +667,7 @@ and compares the installed version with the snapshot:
   creation, with an `ERROR` log naming the problem; a topology operation likewise is no longer offered;
 - a version change, or a coverage that moved, is logged as a `WARNING` with the types that changed group and the
   number whose attributes changed;
-- otherwise, one `INFO` line: "Creation profiles verified against pypowsybl 1.15.0".
+- otherwise, one `INFO` line: "Creation profiles verified against pypowsybl 1.16.1".
 
 The report is served on `GET /admin/creation-coverage`, protected by `MCP_AUTH_TOKEN` (see
 [monitoring.md](monitoring.md)).
@@ -684,7 +696,7 @@ Both also run without anyone remembering to:
 `scripts/creation_coverage.py --write` stays a manual step: the snapshot records the coverage someone reviewed, and
 rewriting it at startup would make the startup check compare pypowsybl with itself.
 
-A value reviewed and deliberately not offered is recorded in `LEFT_OUT`, with its reason: on 1.15, the `VOLTAGE` and
+A value reviewed and deliberately not offered is recorded in `LEFT_OUT`, with its reason: on 1.16, the `VOLTAGE` and
 `VOLTAGE_ANGLE` limit types (pypowsybl refuses them on a branch) and the `UNDEFINED` feeder direction (a new bay is
 always placed). `WORKAROUNDS` records the values the pinned version lacks — no `OFF` mode for an SVC and no
 `FIXED_TAP` mode for a phase shifter, so both profiles use `regulating: false` — and the script says when upstream
@@ -706,6 +718,8 @@ script reports — and the order to do it in are on a page of their own: [upgrad
 - **No dry run.** There is no `validate_only` mode: a call that passes every check is applied.
 - **Schema-only types** get no switching equipment, no required attributes, no accepted values, no id check, and only
   their main dataframe, apart from the few checks and executors above.
+- **Voltage angle limits** cannot be created, and the elements a loaded one names cannot be removed or replaced, until
+  pypowsybl can remove such a limit (§13).
 - **Default limits group only.** Operational limits go in the default group; a named group is not the active one.
 - **Name checks are not semantic checks** (§15): enumeration values are covered by their own checks, but a newly
   required attribute still goes unnoticed until a call fails.
