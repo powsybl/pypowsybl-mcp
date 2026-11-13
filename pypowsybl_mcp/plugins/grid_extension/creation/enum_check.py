@@ -103,7 +103,7 @@ EXAMPLES: dict[str, Callable[[CreationEngine, object], dict]] = {
         "x": 5.0,
     },
     "load": lambda engine, network: {"bus": "S1VL2_BBS1", "p0": 10.0},
-    "operational_limits": lambda engine, network: {
+    "loading_limits": lambda engine, network: {
         "element_id": "LINE_S2S3",
         "permanent_limit": 500.0,
     },
@@ -151,20 +151,20 @@ VALUE_EXAMPLES: dict[
     tuple[str, str, str],
     tuple[Callable[[], object], Callable[[CreationEngine, object], dict]],
 ] = {
-    ("operational_limits", "side", "THREE"): (
+    ("loading_limits", "side", "THREE"): (
         pp.network.create_micro_grid_be_network,
         lambda engine, network: {
             "element_id": network.get_3_windings_transformers().index[0],
             "permanent_limit": 500.0,
         },
     ),
-    ("operational_limits", "side", "NONE"): (NETWORK, _boundary_line_limits),
+    ("loading_limits", "side", "NONE"): (NETWORK, _boundary_line_limits),
 }
 
 #: (element type, field) -> how to give a value that does not go top-level:
 #: the type of a limit is a column of its rows
 PLACEMENTS: dict[tuple[str, str], Callable[[str], dict]] = {
-    ("operational_limits", "type"): lambda value: {
+    ("loading_limits", "type"): lambda value: {
         "limits": [
             {"side": "ONE", "type": value, "value": 500.0, "acceptable_duration": -1}
         ]
@@ -174,7 +174,7 @@ PLACEMENTS: dict[tuple[str, str], Callable[[str], dict]] = {
 #: values a profile offers that are the server's own, not pypowsybl's
 SERVER_ONLY: dict[tuple[str, str], frozenset[str]] = {
     # expanded into one row per side by the LimitRows derivation
-    ("operational_limits", "side"): frozenset({"BOTH"}),
+    ("loading_limits", "side"): frozenset({"BOTH"}),
 }
 
 #: values pypowsybl has that the server knowingly does not offer, with why
@@ -188,8 +188,8 @@ _UNDEFINED_DIRECTION = {
     "always placed on top or at the bottom of its busbar (BOTTOM by default)",
 }
 LEFT_OUT: dict[tuple[str, str], dict[str, str]] = {
-    ("operational_limits", "type"): _VOLTAGE_LIMITS,
-    ("operational_limits", "limit_type"): _VOLTAGE_LIMITS,
+    ("loading_limits", "type"): _VOLTAGE_LIMITS,
+    ("loading_limits", "limit_type"): _VOLTAGE_LIMITS,
     # the feeder direction of every bay-created type, and of each branch end
     **{
         (element_type, name): _UNDEFINED_DIRECTION

@@ -16,7 +16,7 @@ BUS_BREAKER = "BUS_BREAKER"
 
 
 def with_article(word: str) -> str:
-    """'a load', 'an operational_limits': the indefinite article a message needs."""
+    """'a load', 'an area': the indefinite article a message needs."""
     return f"{'an' if word[:1].lower() in 'aeiou' else 'a'} {word}"
 
 

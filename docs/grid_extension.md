@@ -107,7 +107,7 @@ snapshot at startup and disables any profile or topology operation that no longe
 
 <!-- begin generated creation coverage -->
 
-Generated from the profiles and from pypowsybl `1.15.0` by `scripts/creation_coverage.py`.
+Generated from the profiles and from pypowsybl `1.16.1` by `scripts/creation_coverage.py`.
 
 **20 element types have a profile**: required attributes, units, accepted values and rules are checked, and injections and branches are created with their switching equipment.
 
@@ -121,8 +121,8 @@ Generated from the profiles and from pypowsybl `1.15.0` by `scripts/creation_cov
 | `lcc_converter_station` | `pp.network.create_lcc_converter_station_bay` | The AC end of a line-commutated HVDC link. |
 | `line` | `pp.network.create_line_bays` | An AC line between two connection points, with a bay at each end. |
 | `load` | `pp.network.create_load_bay` | A consumption point: a datacenter, a factory, an extra demand. |
+| `loading_limits` | `Network.create_loading_limits` | The current (or power) ratings of a branch, without which it can never be overloaded. |
 | `minmax_reactive_limits` | `Network.create_minmax_reactive_limits` | A constant reactive capability range for a generator, battery or converter. |
-| `operational_limits` | `Network.create_operational_limits` | The current (or power) ratings of a branch, without which it can never be overloaded. |
 | `phase_tap_changer` | `Network.create_phase_tap_changers` | Active-power control on a two-windings transformer (phase shifter). |
 | `ratio_tap_changer` | `Network.create_ratio_tap_changers` | Voltage regulation on a two-windings transformer (on-load tap changer). |
 | `reactive_capability_curve_point` | `Network.create_curve_reactive_limits` | A reactive capability curve Q(P), as a list of points. |
@@ -134,7 +134,7 @@ Generated from the profiles and from pypowsybl `1.15.0` by `scripts/creation_cov
 | `voltage_level` | `Network.create_voltage_levels`, `pp.network.create_voltage_level_topology` | The busbar system of a site at one nominal voltage, created with the connection points equipment attaches to. |
 | `vsc_converter_station` | `pp.network.create_vsc_converter_station_bay` | The AC end of a voltage-source HVDC link. |
 
-**8 element types have no profile and are created from their schema only**: attribute names and types are checked, the rest is left to pypowsybl, and no switching equipment is built.
+**9 element types have no profile and are created from their schema only**: attribute names and types are checked, the rest is left to pypowsybl, and no switching equipment is built.
 
 | `element_type` | pypowsybl call behind it | What it is |
 |----------------|--------------------------|------------|
@@ -146,10 +146,11 @@ Generated from the profiles and from pypowsybl `1.15.0` by `scripts/creation_cov
 | `internal_connection` | `Network.create_internal_connections` | Creates internal connections. |
 | `switch` | `Network.create_switches` | Creates switches. |
 | `three_windings_transformer` | `Network.create_3_windings_transformers` | Creates three-winding transformers. |
+| `voltage_angle_limits` | `Network.create_voltage_angle_limits` | Creates voltage angle limits. |
 
-**4 element types can be created by pypowsybl but are knowingly not offered**:
+**5 element types can be created by pypowsybl but are knowingly not offered**:
 
-- `dc_ground`, `dc_line`, `dc_node`, `voltage_source_converter`: part of the detailed DC model (DC nodes and what connects to them): once one exists, every AC load flow fails until OpenLoadFlow's acDcNetwork parameter is set, which update_loadflow_params() cannot do, and the model then also needs a converter controlling the DC voltage (V_DC). Model an HVDC link with vsc_converter_station or lcc_converter_station and hvdc_line instead.
+- `dc_ground`, `dc_line`, `dc_node`, `dc_switch`, `voltage_source_converter`: part of the detailed DC model (DC nodes and what connects to them): once one exists, every AC load flow fails until OpenLoadFlow's acDcNetwork parameter is set, which update_loadflow_params() cannot do, and the model then also needs a converter controlling the DC voltage (V_DC). Model an HVDC link with vsc_converter_station or lcc_converter_station and hvdc_line instead.
 
 **1 element type expose creation metadata but no `Network.create_*` call**, so `create_network_element` does not support them yet:
 

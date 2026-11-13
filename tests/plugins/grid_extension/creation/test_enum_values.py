@@ -175,7 +175,7 @@ def test_compare_leaves_out_what_was_reviewed():
     # BOTH is the server's own; OFF is worked around until upstream has it
     assert not any(
         enum_check.compare(
-            "operational_limits",
+            "loading_limits",
             "side",
             ("ONE", "TWO", "BOTH"),
             {"ONE": False, "TWO": False},

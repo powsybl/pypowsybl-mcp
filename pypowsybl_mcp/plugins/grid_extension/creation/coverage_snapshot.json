@@ -1,5 +1,5 @@
 {
-  "pypowsybl_version": "1.15.0",
+  "pypowsybl_version": "1.16.1",
   "profiled": {
     "battery": [
       "bus_id",
@@ -128,12 +128,7 @@
       "type",
       "voltage_level_id"
     ],
-    "minmax_reactive_limits": [
-      "id",
-      "max_q",
-      "min_q"
-    ],
-    "operational_limits": [
+    "loading_limits": [
       "acceptable_duration",
       "element_id",
       "fictitious",
@@ -142,6 +137,11 @@
       "side",
       "type",
       "value"
+    ],
+    "minmax_reactive_limits": [
+      "id",
+      "max_q",
+      "min_q"
     ],
     "phase_tap_changer": [
       "alpha",
@@ -368,6 +368,15 @@
       "x1",
       "x2",
       "x3"
+    ],
+    "voltage_angle_limits": [
+      "from_element_id",
+      "from_side",
+      "high_limit",
+      "id",
+      "low_limit",
+      "to_element_id",
+      "to_side"
     ]
   },
   "unsupported": [
@@ -375,6 +384,7 @@
     "dc_ground",
     "dc_line",
     "dc_node",
+    "dc_switch",
     "voltage_source_converter"
   ],
   "bays": [

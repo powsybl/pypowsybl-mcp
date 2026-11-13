@@ -85,7 +85,7 @@ DATACENTER_SITE = [
         "x": 5.0,
     },
     {
-        "element_type": "operational_limits",
+        "element_type": "loading_limits",
         "element_id": "LINE_B4_DC",
         "permanent_limit": 800.0,
     },
@@ -118,7 +118,7 @@ async def test_describe_lists_the_element_types(creation_tools, mock_ctx):
 
     assert listing["success"]
     names = [item["element_type"] for item in listing["element_types"]]
-    assert {"load", "generator", "line", "operational_limits"} <= set(names)
+    assert {"load", "generator", "line", "loading_limits"} <= set(names)
     assert "create_network_elements" in listing["usage"]
 
 
@@ -156,7 +156,7 @@ async def test_an_attachment_says_it_cannot_be_removed_on_its_own(
     """Its id is the line's: removing it would remove the line."""
     reply = json.loads(
         await creation_tools.create_network_element(
-            "operational_limits",
+            "loading_limits",
             {"element_id": "L1-2-1", "permanent_limit": 500.0},
             ctx=mock_ctx,
         )
@@ -250,10 +250,10 @@ async def test_create_a_whole_site_in_one_call(creation_tools, mock_ctx, network
     assert "created substation 'SUB_DC'" in result
     assert "connection points: VL_DC_1_1" in result
     assert "created load 'DATACENTER'" in result
-    assert "set operational_limits on line 'LINE_B4_DC'" in result
+    assert "set loading_limits on line 'LINE_B4_DC'" in result
     assert "Run run_loadflow()" in result
     assert "DATACENTER" in network.get_loads().index
-    assert len(network.get_operational_limits().loc[["LINE_B4_DC"]]) == 2
+    assert len(network.get_loading_limits().loc[["LINE_B4_DC"]]) == 2
 
 
 @pytest.mark.asyncio
@@ -326,7 +326,7 @@ async def test_limits_update_the_branch_rather_than_create_an_element(
     creation_tools, mock_ctx, network
 ):
     result = await creation_tools.create_network_element(
-        "operational_limits",
+        "loading_limits",
         {"element_id": "L1-2-1", "permanent_limit": 500.0},
         ctx=mock_ctx,
     )
@@ -341,14 +341,14 @@ async def test_limits_update_the_branch_rather_than_create_an_element(
 @pytest.mark.asyncio
 async def test_a_rejection_reads_an_before_a_vowel(creation_tools, mock_ctx, network):
     result = await creation_tools.create_network_element(
-        "operational_limits",
-        {"element_id": "L1-2-1", "permanent_limit": "a lot"},
+        "area",
+        {"id": "A1", "area_type": "ControlArea", "interchange_target": "a lot"},
         ctx=mock_ctx,
     )
 
     assert json.loads(result)["message"] == (
-        "Failed to create an operational_limits: 'permanent_limit' of an "
-        "operational_limits must be a number, got 'a lot'"
+        "Failed to create an area: 'interchange_target' of an "
+        "area must be a number, got 'a lot'"
     )
 
 
@@ -479,7 +479,7 @@ async def test_a_transformer_rated_by_default_is_not_overloaded_on_its_low_side(
     created = json.loads(
         await creation_tools.create_network_element(
             network_id="eurostag",
-            element_type="operational_limits",
+            element_type="loading_limits",
             attributes={"element_id": "NHV2_NLOAD", "permanent_limit": 1000.0},
             ctx=mock_ctx,
         )

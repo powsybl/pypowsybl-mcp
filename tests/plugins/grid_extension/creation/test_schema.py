@@ -69,7 +69,7 @@ def test_plain_modification_schema():
 
 
 def test_index_of_an_attachment_is_the_target():
-    assert creation_schema("operational_limits").index_name == "element_id"
+    assert creation_schema("loading_limits").index_name == "element_id"
 
 
 def test_unknown_element_type():
@@ -99,7 +99,7 @@ def test_docstring_mining_extracts_descriptions_and_units():
 
 
 def test_docstring_mining_keeps_the_first_description_of_a_name():
-    """pypowsybl 1.15 documents the shunt deadband as a second target_v."""
+    """pypowsybl (1.15, 1.16) documents the shunt deadband as a second target_v."""
     import pypowsybl as pp
 
     docs = attribute_docs((pp.network.create_shunt_compensator_bay,))

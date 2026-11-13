@@ -72,7 +72,7 @@ You never pass a `node` number, a `voltage_level_id` or a feeder position for an
 injection: the bay that attaches it is built for the topology of the hosting
 voltage level, and the engine fills those in. Passing them is an error.
 
-Attachments -- `operational_limits`, `minmax_reactive_limits`,
+Attachments -- `loading_limits`, `minmax_reactive_limits`,
 `reactive_capability_curve_point`, `ratio_tap_changer`, `phase_tap_changer` --
 are addressed by the id of the element they attach to, as `element_id`.
 
@@ -89,7 +89,7 @@ create_network_elements(items=[
    "bus_or_busbar_section_id": "VL_DC_1_1", "p0": 300.0, "q0": 60.0},
   {"element_type": "line", "id": "LINE_B4_DC", "bus_or_busbar_section_id_1": "B4",
    "bus_or_busbar_section_id_2": "VL_DC_1_1", "r": 0.5, "x": 5.0},
-  {"element_type": "operational_limits", "element_id": "LINE_B4_DC",
+  {"element_type": "loading_limits", "element_id": "LINE_B4_DC",
    "permanent_limit": 800.0}
 ])
 ```
@@ -143,7 +143,7 @@ create_network_elements(items=[
    "bus_or_busbar_section_id": "VL_63_1_1", "p0": 100.0, "q0": 20.0},
   {"element_type": "line", "id": "LINE_B4_DC", "bus_or_busbar_section_id_1": "B4",
    "bus_or_busbar_section_id_2": "VL_135_1_1", "r": 0.5, "x": 5.0},
-  {"element_type": "operational_limits", "element_id": "TR_DC",
+  {"element_type": "loading_limits", "element_id": "TR_DC",
    "permanent_limit": 1800.0},
   {"element_type": "ratio_tap_changer", "element_id": "TR_DC",
    "regulating": true, "target_v": 63.0}
@@ -154,7 +154,7 @@ create_network_elements(items=[
 what sets the ratio. `r` and `x` are in ohms **referred to side 2**, so `x` is
 roughly `usc% / 100 * rated_u2^2 / rated_s`: 1.2 Ohm for the 400 MVA, 12 %
 transformer above, whose side 2 is at 63 kV. Its limits rate side ONE in amps
-(1800 A at 135 kV, about the 400 MVA rating), which is what `operational_limits`
+(1800 A at 135 kV, about the 400 MVA rating), which is what `loading_limits`
 does when no `side` is given: the overload checks derive side TWO from the ratio.
 Side ONE is the `voltage_level1_id` end -- here `bus_or_busbar_section_id_1`,
 the 135 kV one -- but on an existing transformer it is not always the
@@ -224,7 +224,7 @@ modify_network_topology("connect_voltage_level_on_line",
 * A **tee connection** -- a new line tapped from a point along the existing
   one, without a substation there -- is `create_line_on_line`, with the new
   line's `new_line_id`, `new_line_r` and `new_line_x`. The tapped line has **no
-  limits**: rate it with `operational_limits`. A tee can later become a real
+  limits**: rate it with `loading_limits`. A tee can later become a real
   connection with `replace_tee_point_by_voltage_level_on_line`.
 * `create_coupling_device` couples two busbars of one voltage level, with a
   breaker and its disconnectors. A new voltage level with N busbars needs N-1

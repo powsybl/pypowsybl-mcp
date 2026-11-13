@@ -446,7 +446,7 @@ _register(
         managed=BAY_MANAGED,
         defaults={"regulation_mode": "VOLTAGE", "regulating": True},
         units={"b_min": "S", "b_max": "S", "target_v": "kV", "target_q": "MVAr"},
-        # pypowsybl 1.15 has no OFF mode: a device that should not act is
+        # pypowsybl (up to 1.16) has no OFF mode: a device that should not act is
         # created with regulating=False.
         enums={
             "regulation_mode": ("VOLTAGE", "REACTIVE_POWER"),
@@ -639,7 +639,7 @@ _register(
             "r and x are totals in ohms, not per km. Copy them from a comparable "
             "existing line rather than inventing values; orders of magnitude at "
             "400 kV are r ~ 0.03 Ohm/km and x ~ 0.3 Ohm/km. A new line has no "
-            "current limits until operational_limits are created for it, and "
+            "current limits until loading_limits are created for it, and "
             "without limits it can never be reported as overloaded."
         ),
         docs=("pp.network.create_line_bays", "Network.create_lines"),
@@ -790,7 +790,7 @@ LIMIT_SIDES = {
 
 _register(
     CreationProfile(
-        element_type="operational_limits",
+        element_type="loading_limits",
         summary="The current (or power) ratings of a branch, without which it can never be overloaded.",
         connection=Connection.TARGET,
         # a tie line is rated through the boundary lines it joins: pypowsybl
@@ -871,7 +871,7 @@ _register(
             "group_name unset: an explicitly named group is not the active one and "
             "the analyses ignore it."
         ),
-        docs=("Network.create_operational_limits",),
+        docs=("Network.create_loading_limits",),
     )
 )
 
@@ -997,7 +997,7 @@ _register(
             "target_deadband": 0.0,
             "regulated_side": "ONE",
         },
-        # pypowsybl 1.15 has no FIXED_TAP mode: a phase shifter that should stay
+        # pypowsybl (up to 1.16) has no FIXED_TAP mode: a phase shifter that should stay
         # put is created with regulating=False.
         enums={
             "regulation_mode": ("CURRENT_LIMITER", "ACTIVE_POWER_CONTROL"),

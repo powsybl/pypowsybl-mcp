@@ -46,7 +46,7 @@ CHEAT_SHEET = """
     two_windings_transformer:
                      id, bus_or_busbar_section_id_1, bus_or_busbar_section_id_2, r, x,
                      [rated_u1, rated_u2, rated_s] -- both ends in the same substation
-    operational_limits:
+    loading_limits:
                      element_id, permanent_limit, [side, limit_type, temporary_limits]
 """
 
@@ -83,7 +83,7 @@ class CreationTools(PyPowsyblTool):
         Args:
             element_type (str, optional): Element type to describe, named like the
                 pypowsybl ElementType lowercased ("load", "two_windings_transformer",
-                "operational_limits"), the same vocabulary as
+                "loading_limits"), the same vocabulary as
                 get_network_element_data(). Default: None, which lists every
                 creatable type with a one-line summary; types marked
                 "checked: schema only" have no profile (see
@@ -196,12 +196,12 @@ class CreationTools(PyPowsyblTool):
             create_network_element("load",
                 {"id": "DATACENTER", "bus_or_busbar_section_id": "VL_DC_1_1",
                  "p0": 300.0, "q0": 60.0})
-            create_network_element("operational_limits",
+            create_network_element("loading_limits",
                 {"element_id": "LINE_B4_DC", "permanent_limit": 800.0})
 
         Notes:
             - Cached load-flow results are cleared on success: re-run run_loadflow()
-            - A branch created without operational_limits can never be reported as
+            - A branch created without loading_limits can never be reported as
               overloaded, and a transformer has no tap changer until one is created
               on it
             - Changes are in memory only: use export_network() to save them
@@ -341,7 +341,7 @@ class CreationTools(PyPowsyblTool):
               {"element_type": "line", "id": "LINE_B4_DC",
                "bus_or_busbar_section_id_1": "B4",
                "bus_or_busbar_section_id_2": "VL_DC_1_1", "r": 0.5, "x": 5.0},
-              {"element_type": "operational_limits", "element_id": "LINE_B4_DC",
+              {"element_type": "loading_limits", "element_id": "LINE_B4_DC",
                "permanent_limit": 800.0},
             ])
 

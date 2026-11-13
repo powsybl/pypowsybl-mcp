@@ -123,7 +123,7 @@ class TopologyTools(PyPowsyblTool):
               pypowsybl would create (line sections, tee point, bus/breaker bus
               and switch) are free
             - A line cut in two keeps its limits on both halves; a new line
-              tapped into another has none until operational_limits are added
+              tapped into another has none until loading_limits are added
             - Cached load-flow results are cleared: re-run run_loadflow()
 
         Related Tools:

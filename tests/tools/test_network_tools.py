@@ -2912,7 +2912,7 @@ async def test_compare_variants_outage_is_changed_not_removed(network_tools, moc
             ),
         },
     )
-    mock_net.get_operational_limits.return_value = pd.DataFrame()
+    mock_net.get_loading_limits.return_value = pd.DataFrame()
     mock_net.get_voltage_levels.return_value = pd.DataFrame(
         {"substation_id": ["S1", "S2"], "nominal_v": [400.0, 225.0]},
         index=["VL1", "VL2"],
@@ -3551,7 +3551,7 @@ def _current_network():
         },
         index=["T3"],
     )
-    net.get_operational_limits.return_value = pd.DataFrame(
+    net.get_loading_limits.return_value = pd.DataFrame(
         {
             "element_id": ["L1", "L2", "T1", "T3", "T3", "T3"],
             "side": ["ONE", "ONE", "ONE", "ONE", "TWO", "THREE"],
@@ -3820,7 +3820,7 @@ def _three_winding_network():
         },
         index=["T3W_HV", "T3W_LV"],
     )
-    net.get_operational_limits.return_value = pd.DataFrame(
+    net.get_loading_limits.return_value = pd.DataFrame(
         {
             "element_id": [
                 "T3W_HV",
@@ -3965,7 +3965,7 @@ def _coverage_gap_network():
         },
         index=["T3W_GAP", "T3W_OVER_GAP"],
     )
-    net.get_operational_limits.return_value = pd.DataFrame(
+    net.get_loading_limits.return_value = pd.DataFrame(
         {
             "element_id": [
                 "L_OVER",
