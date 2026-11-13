@@ -2066,9 +2066,7 @@ class NetworkTools(PyPowsyblTool):
             and record.get("provider") == proxy.lf_provider
         )
         # Certain "no flows present": every load-flow state column in the table is NaN.
-        present_state = [
-            c for c in LOADFLOW_STATE_COLUMNS if c in elements_df.columns
-        ]
+        present_state = [c for c in LOADFLOW_STATE_COLUMNS if c in elements_df.columns]
         no_flows = bool(present_state) and all(
             elements_df[c].isna().all() for c in present_state
         )

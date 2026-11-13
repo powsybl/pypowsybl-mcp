@@ -95,7 +95,9 @@ LOADFLOW_STATE_COLUMNS = (
 )
 
 # The full set of fields whose value is only meaningful after a load flow.
-LOADFLOW_DEPENDENT_FIELDS = frozenset(DERIVED_METRICS) | frozenset(LOADFLOW_STATE_COLUMNS)
+LOADFLOW_DEPENDENT_FIELDS = frozenset(DERIVED_METRICS) | frozenset(
+    LOADFLOW_STATE_COLUMNS
+)
 
 # Lines and transformers have two terminals (side 1 and side 2).
 TWO_SIDED_TYPES = ("line", "hvdc_line", "two_windings_transformer")

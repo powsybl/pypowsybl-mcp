@@ -863,9 +863,12 @@ def test_scope_filter_band_higher_side_inclusive():
     assert scope.passes(["VL1"], nominal_v=400.0) is True
     assert scope.passes(["VL2"], nominal_v=225.0) is False
     # inclusive bound
-    assert AssetScopeFilter(_geo_network(), min_nominal_voltage=225).passes(
-        ["VL2"], nominal_v=225.0
-    ) is True
+    assert (
+        AssetScopeFilter(_geo_network(), min_nominal_voltage=225).passes(
+            ["VL2"], nominal_v=225.0
+        )
+        is True
+    )
 
 
 def test_scope_filter_band_nan_excluded_when_active():
@@ -875,7 +878,7 @@ def test_scope_filter_band_nan_excluded_when_active():
 
 def test_scope_filter_band_resolves_from_vl_when_no_nominal_passed():
     scope = AssetScopeFilter(_geo_network(), min_nominal_voltage=300)
-    assert scope.passes(["VL1"]) is True   # VL1 -> 400 kV
+    assert scope.passes(["VL1"]) is True  # VL1 -> 400 kV
     assert scope.passes(["VL2"]) is False  # VL2 -> 225 kV
 
 
@@ -906,8 +909,8 @@ def test_scope_filter_region_ignorable_on_network_without_regioncvg():
 
 def test_scope_filter_dimensions_are_anded():
     scope = AssetScopeFilter(_geo_network(), country="FR", min_nominal_voltage=300)
-    assert scope.passes(["VL1"], nominal_v=400.0) is True       # FR and >=300
-    assert scope.passes(["VL2"], nominal_v=225.0) is False      # ES, fails both
+    assert scope.passes(["VL1"], nominal_v=400.0) is True  # FR and >=300
+    assert scope.passes(["VL2"], nominal_v=225.0) is False  # ES, fails both
 
 
 def test_scope_filter_unresolvable_side_contributes_nothing():

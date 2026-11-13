@@ -329,7 +329,7 @@ async def test_check_voltage_violations_country_filter(network_tools, mock_ctx):
     assert {v["bus_id"] for v in data["violations"]} == {"B1", "B3"}
     assert data["violation_count"] == 2
     assert data["evaluated_buses"] == 2  # out-of-scope buses are not evaluated
-    assert data["total_buses"] == 3      # census stays full
+    assert data["total_buses"] == 3  # census stays full
     assert data["filters_applied"]["country"] == ["FR"]
     assert data["filters_applied"]["side_match"] == "any"
 
