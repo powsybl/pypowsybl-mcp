@@ -49,6 +49,7 @@ from pypowsybl_mcp.utils.download_utils import (
     download_file_endpoint,
 )
 from pypowsybl_mcp.utils.instrumentation import instrument_tool_calls
+from pypowsybl_mcp.utils.logging_setup import setup_file_logging
 from pypowsybl_mcp.utils.session_registry import SESSIONS
 from pypowsybl_mcp.utils.stateful_sessions import require_stateful_session
 
@@ -170,6 +171,7 @@ instrument_tool_calls(mcp, SESSIONS)
 
 def main():
     """Check the configuration, register the tools and run the server."""
+    setup_file_logging()
     # Sessions read the default load flow configuration on their first tool
     # call; refuse to start rather than let every session fail then.
     try:

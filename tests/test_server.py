@@ -159,6 +159,7 @@ def test_main_refuses_to_start_with_an_invalid_lf_config(bad_lf_config):
 
     with (
         patch("pypowsybl_mcp.server.logger") as mock_logger,
+        patch("pypowsybl_mcp.server.setup_file_logging"),
         patch("pypowsybl_mcp.server.register_tools") as mock_register,
         patch("pypowsybl_mcp.server.mcp") as mock_mcp,
         pytest.raises(SystemExit) as exc_info,
@@ -179,11 +180,13 @@ def test_main_runs_the_server_with_a_valid_lf_config(monkeypatch):
     monkeypatch.setenv("MCP_PORT", "8123")
 
     with (
+        patch("pypowsybl_mcp.server.setup_file_logging") as mock_file_logging,
         patch("pypowsybl_mcp.server.register_tools") as mock_register,
         patch("pypowsybl_mcp.server.mcp") as mock_mcp,
     ):
         main()
 
+    mock_file_logging.assert_called_once_with()
     mock_register.assert_called_once_with(mock_mcp)
     mock_mcp.run.assert_called_once_with(
         transport="streamable-http", host="0.0.0.0", port=8123
@@ -204,6 +207,9 @@ def test_running_the_module_checks_the_lf_config(tmp_path):
         "import pypowsybl_mcp.proxy as proxy\n"
         "MCPServer.run = lambda self, **kwargs: sys.exit(0)\n"
         "proxy.LF_DEFAULT_PARAMETERS_PATH = Path(sys.argv[1])\n"
+        # Keep the run out of the LOG_DIR set in a developer's .env.
+        "import pypowsybl_mcp.utils.logging_setup as logging_setup\n"
+        "logging_setup.setup_file_logging = lambda: None\n"
         "runpy.run_module('pypowsybl_mcp.server', run_name='__main__')\n"
     )
 
