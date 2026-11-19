@@ -17,6 +17,12 @@ turn.
 - `30+` MCP tools grouped by domain: I/O, network management, visualization, load flow, security analysis,
   sensitivity analysis, session management, and code export.
 - Load networks from local files or remote URLs, or create standard IEEE test networks directly from the MCP client.
+  A load can take importer parameters and post-processors (e.g. `EntsoeCategory`, which gives each generator of a CGMES
+  file its ENTSO-E category) and a CGMES boundary set, either one the server provides or one downloaded from a URL;
+  `get_import_options` lists what a format accepts.
+- Read the IIDM extensions a network carries (`list_network_extensions`, `get_network_extension_data`), or join them
+  onto an element table: `attach=["load_detail"]` gives each load its fixed and variable part, and
+  `attach=["entsoe_category"]` each generator its ENTSO-E category.
 - Inspect and modify network elements, open/close switches, manage variants, and compare alternative operating states.
 - Extend a grid from the MCP client with one generic, introspection-driven tool: substations, voltage levels,
   loads, generators, batteries, shunts, SVCs, lines, transformers, HVDC links, limits and tap changers — the

@@ -46,6 +46,13 @@ from pypowsybl_mcp.utils.element_types import (
     element_type_enum,
     element_type_hint,
 )
+from pypowsybl_mcp.utils.extension_data import (
+    EXTENSION_ATTACH_ALIASES,
+    EXTENSION_TOKEN_PREFIX,
+    attach_extension,
+    is_extension_token,
+    parse_extension_tokens,
+)
 from pypowsybl_mcp.utils.pagination import (
     DEFAULT_PAGINATION_LIMIT,
     MAX_PAGINATION_LIMIT,
@@ -2162,7 +2169,16 @@ class NetworkTools(PyPowsyblTool):
                     country for country-level filters. Absent on networks without it.
                   - "voltage_limits" → low_voltage_limit, high_voltage_limit (kV) on
                     bus rows (network-declared only; not a voltage-violation check).
-                Unknown token → friendly error.
+                  - "load_detail" → fixed_p0, variable_p0, fixed_q0, variable_q0 on
+                    load rows: the fixed and variable (thermosensitive) part of
+                    each load, from the "detail" extension.
+                  - "entsoe_category" → entsoe_category_code on generator rows
+                    (ENTSO-E category, e.g. nuclear, PV, offshore wind), set when a
+                    CGMES file is loaded with the EntsoeCategory post-processor.
+                  - "extension:<name>" → the columns of any IIDM extension, named
+                    <name>_<column> (list_network_extensions lists those present).
+                Elements without the extension get null. Unknown token → friendly
+                error.
             main_component (str, optional): Component scope — "both" (default,
                 intersect), "connected", "synchronous", or "none" (every element,
                 islanded included). Terminals resolved through converter stations
@@ -2210,12 +2226,25 @@ class NetworkTools(PyPowsyblTool):
                 main_component
             )
             attach_tokens = set(attach or [])
-            unknown_attach = attach_tokens - _SUPPORTED_ATTACH_TOKENS
+            unknown_attach = {
+                t
+                for t in attach_tokens - _SUPPORTED_ATTACH_TOKENS
+                if not is_extension_token(t)
+            }
             if unknown_attach:
+                supported = sorted(_SUPPORTED_ATTACH_TOKENS) + sorted(
+                    EXTENSION_ATTACH_ALIASES
+                )
                 raise ValueError(
                     f"Unknown attach token(s): {', '.join(sorted(unknown_attach))}. "
-                    f"Supported: {', '.join(sorted(_SUPPORTED_ATTACH_TOKENS))}"
+                    f"Supported: {', '.join(supported)}, "
+                    f"{EXTENSION_TOKEN_PREFIX}<extension name>"
                 )
+            extension_joins = (
+                parse_extension_tokens(attach_tokens, element_type)
+                if element_type is not None
+                else []
+            )
         except ValueError as e:
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
@@ -2393,6 +2422,9 @@ class NetworkTools(PyPowsyblTool):
                 )
             if "voltage_limits" in attach_tokens:
                 elements_df = attach_voltage_limits(elements_df, network, element_type)
+            # IIDM extensions (load_detail, entsoe_category, extension:<name>).
+            for join in extension_joins:
+                elements_df = attach_extension(elements_df, network, join)
 
             total_elements = len(elements_df)
             logger.debug(

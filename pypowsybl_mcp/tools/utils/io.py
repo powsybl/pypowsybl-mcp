@@ -5,6 +5,7 @@
 #  SPDX-License-Identifier: MPL-2.0
 import asyncio
 import os
+import shutil
 import tempfile
 import urllib.request
 from urllib.parse import urlparse
@@ -16,6 +17,12 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 
 from pypowsybl_mcp.tools import PyPowsyblTool
+from pypowsybl_mcp.tools.utils.import_options import (
+    build_load_arguments,
+    describe_import_options,
+    explain_load_error,
+    resolve_boundary_set,
+)
 from pypowsybl_mcp.utils import DOWNLOAD_BASE_URL, DOWNLOAD_LINK_EXPIRY_SECONDS
 from pypowsybl_mcp.utils.download_utils import generate_download_link
 from pypowsybl_mcp.utils.user_session_management import get_session_id
@@ -36,6 +43,21 @@ def _read_file_bytes(path: str) -> bytes:
         return f.read()
 
 
+def _file_name_of(url: str, fallback: str) -> str:
+    """The file name a URL ends with, or `fallback` when its path has none."""
+    return os.path.basename(urlparse(url).path) or fallback
+
+
+def _remove_tree(path: str) -> None:
+    """Remove a temporary directory, logging (not raising) what cannot be."""
+    if not path or not os.path.isdir(path):
+        return
+    try:
+        shutil.rmtree(path)
+    except OSError as cleanup_err:
+        logger.warning(f"Could not remove temp directory {path}: {cleanup_err}")
+
+
 class Status:
     SUCCESS = "success"
     ERROR = "error"
@@ -47,6 +69,10 @@ class IOTools(PyPowsyblTool):
         url: str,
         network_id: str,
         set_as_current: bool = True,
+        parameters: dict | None = None,
+        post_processors: list[str] | None = None,
+        boundary_set: str | None = None,
+        boundary_url: str | None = None,
         ctx: Context = None,  # MCPServer injects this
     ) -> dict:
         """
@@ -65,11 +91,26 @@ class IOTools(PyPowsyblTool):
             network_id (str): Unique identifier for the loaded network.
             set_as_current (bool, optional): If True, sets as the active network. Default: True.
 
+        Import options (all optional; see get_import_options for what a format accepts):
+            parameters (dict, optional): Importer parameters by full name, e.g.
+                {"iidm.import.cgmes.naming-strategy": "cgmes"}. Values may be
+                strings, booleans, numbers or lists. An unknown name is an error.
+            post_processors (list[str], optional): Post-processors to run, CGMES
+                ones (e.g. "EntsoeCategory", which tags each generator with its
+                ENTSO-E category, read back with the entsoe_category attach token)
+                and generic ones (e.g. "geoJsonImporter") alike.
+            boundary_set (str, optional): Name of a CGMES boundary set the server
+                provides (listed by get_import_options).
+            boundary_url (str, optional): URL of a CGMES boundary set (.zip or
+                .xml) to download. Exclusive with boundary_set. Without either,
+                the boundary files may also sit in the CGMES archive itself.
+
         Supported Formats:
             Same as load_network_from_file: XIIDM, UCTE, MATPOWER, PSS/E, RAW, CGMES
 
         Returns:
-            dict: Contains status (success or error) and associated message with network details or error message.
+            dict: status (success or error) and a message; on success also
+            source_format (the format PowSyBl recognized) and the options applied.
 
         Example:
             load_network_from_url(
@@ -101,63 +142,84 @@ class IOTools(PyPowsyblTool):
         logger.debug(f"Loading network from URL {url} as '{network_id}'")
         proxy = self.get_proxy(get_session_id(ctx))
 
+        # A unique temporary directory, so concurrent downloads never collide
+        # on the same file name; removed with everything in it once loaded.
+        tmp_dir = tempfile.mkdtemp()
         try:
-            # Create a unique temporary directory so concurrent downloads never
-            # collide on the same file name inside a shared temp dir
-            tmp_dir = tempfile.mkdtemp()
+            boundary_location, boundary = await self._boundary_location(
+                boundary_set, boundary_url, tmp_dir
+            )
+            load_args = build_load_arguments(
+                parameters, post_processors, boundary_location, boundary
+            )
 
-            # Extract file name from URL (the URL is expected to be correctly
-            # formatted); fall back to a generic name if the URL path has none
-            # (e.g. it ends in "/")
-            file_name = os.path.basename(urlparse(url).path) or "downloaded_network"
+            # The importer is chosen from the file name, so it is kept as in the
+            # URL (the URL is expected to be correctly formatted).
+            tmp_path = os.path.join(tmp_dir, _file_name_of(url, "downloaded_network"))
+            # Download and save the remote file (blocking I/O off the event loop)
+            await asyncio.to_thread(_download_to_file, url, tmp_path)
 
-            # Create the full path of the temporary file inside the temporary directory
-            tmp_path = os.path.join(tmp_dir, file_name)
-
-            try:
-                # Download and save the remote file (blocking I/O off the event loop)
-                await asyncio.to_thread(_download_to_file, url, tmp_path)
-
-                # Load the network from the temporary file
-                network = pp.network.load(tmp_path)
-            finally:
-                # Clean up the temp file and its containing directory
-                if tmp_path and os.path.exists(tmp_path):
-                    try:
-                        os.unlink(tmp_path)
-                    except OSError as cleanup_err:
-                        logger.warning(
-                            f"Could not remove temp file {tmp_path}: {cleanup_err}"
-                        )
-                if os.path.isdir(tmp_dir):
-                    try:
-                        os.rmdir(tmp_dir)
-                    except OSError as cleanup_err:
-                        logger.warning(
-                            f"Could not remove temp directory {tmp_dir}: {cleanup_err}"
-                        )
-
-            # Register the loaded network
+            network = pp.network.load(
+                tmp_path,
+                parameters=load_args.parameters or None,
+                post_processors=load_args.post_processors or None,
+            )
             proxy.register_network(network_id, network, set_as_current)
-
-            buses = network.get_buses()
-            return {
-                "status": Status.SUCCESS,
-                "message": f"Successfully loaded network '{network_id}' from {url} with {len(buses)} buses",
-            }
+            return self._loaded(network_id, network, url, load_args)
 
         except (pp.PyPowsyblError, OSError, ValueError) as e:
-            logger.error(f"Failed to load network from URL: {e}")
+            message = explain_load_error(e, bool(boundary_set or boundary_url))
+            logger.error(f"Failed to load network from URL: {message}")
             return {
                 "status": Status.ERROR,
-                "message": f"Failed to load network from URL: {e!s}",
+                "message": f"Failed to load network from URL: {message}",
             }
+        finally:
+            _remove_tree(tmp_dir)
+
+    async def _boundary_location(
+        self, boundary_set: str | None, boundary_url: str | None, tmp_dir: str
+    ) -> tuple[str | None, str | None]:
+        """The server path of the requested CGMES boundary set, and its label.
+
+        A downloaded set gets its own directory: PowSyBl reads a boundary
+        location that is a directory or an archive, not a lone XML file.
+        """
+        if boundary_set and boundary_url:
+            raise ValueError("Pass boundary_set or boundary_url, not both")
+        if boundary_set:
+            return resolve_boundary_set(boundary_set), f"boundary_set '{boundary_set}'"
+        if boundary_url:
+            boundary_dir = os.path.join(tmp_dir, "boundary")
+            os.makedirs(boundary_dir)
+            file_name = _file_name_of(boundary_url, "boundary.zip")
+            boundary_path = os.path.join(boundary_dir, file_name)
+            await asyncio.to_thread(_download_to_file, boundary_url, boundary_path)
+            return boundary_dir, f"boundary_url ({file_name})"
+        return None, None
+
+    @staticmethod
+    def _loaded(network_id: str, network, source: str, load_args) -> dict:
+        """The answer of a successful load."""
+        buses = network.get_buses()
+        result = {
+            "status": Status.SUCCESS,
+            "message": f"Successfully loaded network '{network_id}' from {source} with {len(buses)} buses",
+            "network_id": network_id,
+            "source_format": network.source_format,
+        }
+        result.update(load_args.summary())
+        return result
 
     async def load_network_from_file(
         self,
         path: str,
         network_id: str,
         set_as_current: bool = True,
+        parameters: dict | None = None,
+        post_processors: list[str] | None = None,
+        boundary_set: str | None = None,
+        boundary_url: str | None = None,
         ctx: Context = None,
     ) -> dict:
         """
@@ -174,11 +236,26 @@ class IOTools(PyPowsyblTool):
             network_id (str): Unique identifier for the loaded network.
             set_as_current (bool, optional): If True, sets as the active network. Default: True.
 
+        Import options (all optional; see get_import_options for what a format accepts):
+            parameters (dict, optional): Importer parameters by full name, e.g.
+                {"iidm.import.cgmes.naming-strategy": "cgmes"}. Values may be
+                strings, booleans, numbers or lists. An unknown name is an error.
+            post_processors (list[str], optional): Post-processors to run, CGMES
+                ones (e.g. "EntsoeCategory", which tags each generator with its
+                ENTSO-E category, read back with the entsoe_category attach token)
+                and generic ones (e.g. "geoJsonImporter") alike.
+            boundary_set (str, optional): Name of a CGMES boundary set the server
+                provides (listed by get_import_options).
+            boundary_url (str, optional): URL of a CGMES boundary set (.zip or
+                .xml) to download. Exclusive with boundary_set. Without either,
+                the boundary files may also sit in the CGMES archive itself.
+
         Supported Formats:
             XIIDM, UCTE, MATPOWER, PSS/E, RAW, CGMES
 
         Returns:
-            dict: Contains status (success or error) and associated message with network details or error message.
+            dict: status (success or error) and a message; on success also
+            source_format (the format PowSyBl recognized) and the options applied.
 
         Example:
             load_network_from_file(
@@ -191,31 +268,68 @@ class IOTools(PyPowsyblTool):
         logger.debug(f"Loading network from file {path} as '{network_id}'")
         proxy = self.get_proxy(get_session_id(ctx))
 
-        try:
-            if not os.path.exists(path):
-                return {
-                    "status": Status.ERROR,
-                    "message": f"Error: File not found at path: {path}",
-                }
-
-            # Load the network from the file
-            network = pp.network.load(path)
-
-            # Register the loaded network
-            proxy.register_network(network_id, network, set_as_current)
-
-            buses = network.get_buses()
-            return {
-                "status": Status.SUCCESS,
-                "message": f"Successfully loaded network '{network_id}' from {path} with {len(buses)} buses",
-            }
-
-        except (pp.PyPowsyblError, OSError, ValueError) as e:
-            logger.error(f"Failed to load network from file: {e}")
+        if not os.path.exists(path):
             return {
                 "status": Status.ERROR,
-                "message": f"Failed to load network from file: {e!s}",
+                "message": f"Error: File not found at path: {path}",
             }
+
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            boundary_location, boundary = await self._boundary_location(
+                boundary_set, boundary_url, tmp_dir
+            )
+            load_args = build_load_arguments(
+                parameters, post_processors, boundary_location, boundary
+            )
+            network = pp.network.load(
+                path,
+                parameters=load_args.parameters or None,
+                post_processors=load_args.post_processors or None,
+            )
+            proxy.register_network(network_id, network, set_as_current)
+            return self._loaded(network_id, network, path, load_args)
+
+        except (pp.PyPowsyblError, OSError, ValueError) as e:
+            message = explain_load_error(e, bool(boundary_set or boundary_url))
+            logger.error(f"Failed to load network from file: {message}")
+            return {
+                "status": Status.ERROR,
+                "message": f"Failed to load network from file: {message}",
+            }
+        finally:
+            _remove_tree(tmp_dir)
+
+    async def get_import_options(self, format: str | None = None) -> dict:
+        """List the options a network can be loaded with.
+
+        Use it before load_network_from_url / load_network_from_file when the
+        file needs more than a plain load: a CGMES boundary set, a post-processor
+        such as EntsoeCategory (ENTSO-E category of each generator), or an
+        importer parameter.
+
+        Args:
+            format (str, optional): An import format (e.g. "CGMES", "XIIDM",
+                "UCTE"; case-insensitive) to also list that importer's
+                parameters. None = only the format-independent lists.
+
+        Returns:
+            dict: status, plus
+              - formats: the import formats this server reads;
+              - file_extensions: the file extensions those formats are read from;
+              - post_processors: {"cgmes": [...], "generic": [...]};
+              - boundary_sets: names of the CGMES boundary sets the server
+                provides, for the boundary_set argument (may be empty);
+              - default_boundary_set: whether a CGMES load given no boundary set
+                still finds one at PowSyBl's default location;
+              - with a format, parameters: [{name, description, type, default,
+                possible_values}] (the boundary location is not listed: it is
+                set with boundary_set / boundary_url).
+        """
+        try:
+            return {"status": Status.SUCCESS, **describe_import_options(format)}
+        except (pp.PyPowsyblError, ValueError) as e:
+            return {"status": Status.ERROR, "message": str(e)}
 
     async def export_network(
         self,

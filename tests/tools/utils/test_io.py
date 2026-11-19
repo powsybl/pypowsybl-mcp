@@ -92,10 +92,8 @@ async def test_load_network_from_url_success(io_tools, mock_ctx):
         patch("builtins.open", mock_open()),
         patch("pypowsybl.network.load") as mock_load,
         patch("tempfile.mkdtemp", return_value="/tmp/fake-dir"),
-        patch("os.unlink") as mock_unlink,
-        patch("os.path.exists", return_value=True),
         patch("os.path.isdir", return_value=True),
-        patch("os.rmdir") as mock_rmdir,
+        patch("shutil.rmtree") as mock_rmtree,
     ):
         mock_network = MagicMock()
         mock_network.get_buses.return_value = ["bus1"]
@@ -109,8 +107,14 @@ async def test_load_network_from_url_success(io_tools, mock_ctx):
         assert "Successfully loaded network 'net_url'" in result["message"]
         mock_load.assert_called_once()
         mock_urlopen.assert_called_once_with("http://example.com/test.xiidm")
-        mock_unlink.assert_called_once()
-        mock_rmdir.assert_called_once_with("/tmp/fake-dir")
+        # Loaded from the downloaded file, named as in the URL, with no option
+        assert mock_load.call_args.args == ("/tmp/fake-dir/test.xiidm",)
+        assert mock_load.call_args.kwargs == {
+            "parameters": None,
+            "post_processors": None,
+        }
+        # The temp directory goes, with the file in it
+        mock_rmtree.assert_called_once_with("/tmp/fake-dir")
 
         proxy = io_tools.get_proxy("test-session")
         assert proxy.networks["net_url"] == mock_network
@@ -122,7 +126,7 @@ async def test_load_network_from_url_failure(io_tools, mock_ctx):
         patch("urllib.request.urlopen", side_effect=OSError("Download failed")),
         patch("tempfile.mkdtemp", return_value="/tmp/fake-dir"),
         patch("os.path.isdir", return_value=True),
-        patch("os.rmdir") as mock_rmdir,
+        patch("shutil.rmtree") as mock_rmtree,
     ):
         result = await io_tools.load_network_from_url(
             url="http://example.com/test.xiidm", network_id="net_url", ctx=mock_ctx
@@ -131,7 +135,7 @@ async def test_load_network_from_url_failure(io_tools, mock_ctx):
         assert "Failed to load network from URL: Download failed" in result["message"]
         # The temp directory must still be cleaned up even though the download
         # itself failed (before, cleanup only ran on the success/load path).
-        mock_rmdir.assert_called_once_with("/tmp/fake-dir")
+        mock_rmtree.assert_called_once_with("/tmp/fake-dir")
 
 
 @pytest.mark.asyncio
@@ -144,10 +148,8 @@ async def test_load_network_from_url_https(io_tools, mock_ctx):
         patch("builtins.open", mock_open()),
         patch("pypowsybl.network.load") as mock_load,
         patch("tempfile.mkdtemp", return_value="/tmp/fake-dir"),
-        patch("os.unlink"),
-        patch("os.path.exists", return_value=True),
         patch("os.path.isdir", return_value=True),
-        patch("os.rmdir"),
+        patch("shutil.rmtree"),
     ):
         mock_network = MagicMock()
         mock_network.get_buses.return_value = ["bus1"]
@@ -259,10 +261,8 @@ async def test_load_network_from_url_uses_unique_temp_dir(io_tools, mock_ctx):
         patch("pypowsybl.network.load") as mock_load,
         patch("tempfile.mkdtemp", return_value=fake_dir) as mock_mkdtemp,
         patch("tempfile.gettempdir") as mock_gettempdir,
-        patch("os.unlink"),
-        patch("os.path.exists", return_value=True),
         patch("os.path.isdir", return_value=True),
-        patch("os.rmdir") as mock_rmdir,
+        patch("shutil.rmtree") as mock_rmtree,
     ):
         mock_network = MagicMock()
         mock_network.get_buses.return_value = ["bus1"]
@@ -277,8 +277,12 @@ async def test_load_network_from_url_uses_unique_temp_dir(io_tools, mock_ctx):
         # Build the expected path with os.path.join too, rather than a hardcoded
         # "/"-joined string: os.path.join uses "\" on Windows, so a literal
         # "fake_dir/network.xiidm" would mismatch the real call there.
-        mock_load.assert_called_once_with(os.path.join(fake_dir, "network.xiidm"))
-        mock_rmdir.assert_called_once_with(fake_dir)
+        mock_load.assert_called_once_with(
+            os.path.join(fake_dir, "network.xiidm"),
+            parameters=None,
+            post_processors=None,
+        )
+        mock_rmtree.assert_called_once_with(fake_dir)
 
 
 @pytest.mark.asyncio
@@ -297,10 +301,8 @@ async def test_load_network_from_url_empty_basename_fallback(io_tools, mock_ctx)
         patch("builtins.open", mock_open()),
         patch("pypowsybl.network.load") as mock_load,
         patch("tempfile.mkdtemp", return_value=fake_dir),
-        patch("os.unlink"),
-        patch("os.path.exists", return_value=True),
         patch("os.path.isdir", return_value=True),
-        patch("os.rmdir"),
+        patch("shutil.rmtree"),
     ):
         mock_network = MagicMock()
         mock_network.get_buses.return_value = ["bus1"]
@@ -311,7 +313,11 @@ async def test_load_network_from_url_empty_basename_fallback(io_tools, mock_ctx)
         )
 
         assert result["status"] == "success"
-        mock_load.assert_called_once_with(os.path.join(fake_dir, "downloaded_network"))
+        mock_load.assert_called_once_with(
+            os.path.join(fake_dir, "downloaded_network"),
+            parameters=None,
+            post_processors=None,
+        )
 
 
 @pytest.mark.asyncio
