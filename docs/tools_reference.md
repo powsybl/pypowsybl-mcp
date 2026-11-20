@@ -10,7 +10,25 @@ This document lists all MCP tools exposed by the PyPowsybl MCP server, grouped b
 |--------------------------|----------------------------------------------------------------------------------------------------------------|
 | `load_network_from_file` | Load a power network from a local file path (XIIDM, Matpower, CGMES, …).                                       |
 | `load_network_from_url`  | Download and load a network from a remote URL (SSL verification is configured globally with `MCP_VERIFY_SSL`). |
+| `get_import_options`     | List the import formats, post-processors, server boundary sets and, for one format, its importer parameters.  |
 | `export_network`         | Export the current (or a named) network to a file; returns a temporary download link.                          |
+
+Both loading tools take the same import options:
+
+| Argument          | Description                                                                                                       |
+|-------------------|-------------------------------------------------------------------------------------------------------------------|
+| `parameters`      | Importer parameters by full name, e.g. `{"iidm.import.cgmes.naming-strategy": "cgmes"}`. An unknown name is refused: PowSyBl itself would ignore it silently and load the file without the option. |
+| `post_processors` | Post-processors to run, CGMES ones (`EntsoeCategory`, `cgmesDLImport`, …) and generic ones (`geoJsonImporter`, …) in one list. |
+| `boundary_set`    | Name of a CGMES boundary set the server provides (a directory or `.zip` in `CGMES_BOUNDARY_SETS_DIR`, see the [Configuration Reference](configuration.md)). |
+| `boundary_url`    | URL of a CGMES boundary set (`.zip` or `.xml`) to download. Exclusive with `boundary_set`.                         |
+
+`get_import_options` also says, as `default_boundary_set`, whether a CGMES load given no boundary set still finds one
+at PowSyBl's default location (never the path itself), so a client can tell beforehand that a model depending on a
+boundary set it does not ship would fail. `iidm.import.cgmes.boundary-location` cannot be passed as a parameter: it is
+a path on the server's disk. Without a
+boundary option, the boundary profiles can also sit in the CGMES archive itself, and the PowSyBl default location
+applies otherwise. A CGMES load that fails for want of a boundary set says so. On success, the answer also gives the
+`source_format` PowSyBl recognized and the options applied.
 
 ---
 
@@ -36,9 +54,22 @@ This document lists all MCP tools exposed by the PyPowsybl MCP server, grouped b
 | `check_voltage_violations`           | List buses whose voltage is outside acceptable bounds (N state).            |
 | `check_current_violations`           | List branches loaded above a threshold in the N state (line + 2WT, worst first). |
 
+`get_network_element_data`'s `attach` tokens: `current_limits`, `geotags`, `voltage_limits`, and three that read IIDM
+extensions — `load_detail` (fixed and variable part of each load: `fixed_p0`, `variable_p0`, `fixed_q0`,
+`variable_q0`), `entsoe_category` (`entsoe_category_code` of each generator, set by the `EntsoeCategory` CGMES
+post-processor) and `extension:<name>` (any extension, columns named `<name>_<column>`). The joined columns can be used
+in `conditions`; an element without the extension gets null.
+
 `get_network_element_data`, `check_voltage_violations`, `check_current_violations`, `compare_variants` and
 `run_security_analysis` also take `return_as="artifact_json"` / `"artifact_csv"` to hand a large table over
 as a file instead of inlining it — see [Returning a big result as a file](#returning-a-big-result-as-a-file).
+
+##### Network extensions (IIDM)
+
+| Tool                         | Description                                                                                     |
+|------------------------------|-------------------------------------------------------------------------------------------------|
+| `list_network_extensions`    | List the IIDM extensions the network carries (`detail`, `entsoeCategory`, …), with their counts and columns. |
+| `get_network_extension_data` | Read one extension as a table indexed by element id; filter on `ids`, paginate, or return it as a file. |
 
 ##### Network modification
 
