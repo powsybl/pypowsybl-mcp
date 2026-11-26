@@ -11,6 +11,7 @@ a boundary set defines them - exactly the case the boundary options are for.
 """
 
 import re
+import shutil
 import zipfile
 from unittest.mock import MagicMock
 
@@ -26,8 +27,10 @@ from pypowsybl_mcp.tools.utils.import_options import (
     default_boundary_set_available,
     describe_import_options,
     explain_load_error,
+    import_format_of,
     list_boundary_sets,
     resolve_boundary_set,
+    ships_boundary,
 )
 from pypowsybl_mcp.tools.utils.io import IOTools
 
@@ -340,3 +343,135 @@ def test_default_boundary_set_as_an_archive(tmp_path, monkeypatch):
     archive.write_bytes(b"")
     _with_default_location(monkeypatch, str(archive))
     assert default_boundary_set_available() is True
+
+
+def test_default_boundary_set_ignores_files_powsybl_does_not_read(
+    tmp_path, monkeypatch
+):
+    location = tmp_path / "boundary"
+    location.mkdir()
+    (location / "README.md").write_text("Put the ENTSO-E boundary set here.")
+    _with_default_location(monkeypatch, str(location))
+    assert default_boundary_set_available() is False
+
+    (location / "EQBD.xml").write_text("<rdf:RDF/>")
+    assert default_boundary_set_available() is True
+
+
+# --- what PowSyBl ignores ----------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def cgmes_with_boundary(tmp_path_factory, cgmes_files):
+    """The CGMES zip with the boundary profiles in it, under names that do not
+    say "BD": PowSyBl tells a boundary file by its header profile."""
+    cgmes_zip, boundary_zip = cgmes_files
+    path = tmp_path_factory.mktemp("cgmes_bd") / "micro_be_with_bd.zip"
+    shutil.copy(cgmes_zip, path)
+    with zipfile.ZipFile(boundary_zip) as src, zipfile.ZipFile(path, "a") as dst:
+        for i, name in enumerate(src.namelist()):
+            dst.writestr(f"ENTSOE_{i}.xml", src.read(name))
+    return path
+
+
+def test_ships_boundary(cgmes_files, cgmes_with_boundary, tmp_path):
+    cgmes_zip, boundary_zip = cgmes_files
+    assert ships_boundary(str(cgmes_with_boundary)) is True
+    assert ships_boundary(str(boundary_zip)) is True
+    assert ships_boundary(str(cgmes_zip)) is False
+    # A directory of profiles, and paths that are not CGMES at all
+    with zipfile.ZipFile(cgmes_with_boundary) as archive:
+        archive.extractall(tmp_path / "profiles")
+    assert ships_boundary(str(tmp_path / "profiles")) is True
+    assert ships_boundary(str(tmp_path / "missing.zip")) is False
+
+
+@pytest.mark.asyncio
+async def test_boundary_set_ignored_when_the_archive_ships_its_own(
+    io_tools, cgmes_with_boundary, boundary_sets_dir
+):
+    result = await io_tools.load_network_from_file(
+        str(cgmes_with_boundary), "be", boundary_set="BDS_test.zip", ctx=_Ctx()
+    )
+    assert result["status"] == "success", result
+    assert result["import_format"] == "CGMES"
+    # Not reported as applied: PowSyBl read the archive's boundary instead
+    assert "boundary" not in result
+    assert "ships its own boundary profiles" in " ".join(result["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_boundary_set_used_is_reported_without_warning(
+    io_tools, cgmes_files, boundary_sets_dir
+):
+    cgmes_zip, _ = cgmes_files
+    result = await io_tools.load_network_from_file(
+        str(cgmes_zip), "be", boundary_set="BDS_test.zip", ctx=_Ctx()
+    )
+    assert result["status"] == "success", result
+    assert result["boundary"] == "boundary_set 'BDS_test.zip'"
+    assert "warnings" not in result
+
+
+@pytest.mark.asyncio
+async def test_boundary_url_without_extension(io_tools, cgmes_files, tmp_path):
+    """A URL such as .../download?id=42 saves a file PowSyBl would skip."""
+    cgmes_zip, boundary_zip = cgmes_files
+    served = tmp_path / "download"
+    shutil.copy(boundary_zip, served)
+    result = await io_tools.load_network_from_url(
+        cgmes_zip.as_uri(), "be", boundary_url=served.as_uri(), ctx=_Ctx()
+    )
+    assert result["status"] == "success", result
+    assert result["boundary"] == "boundary_url (download.zip)"
+
+
+@pytest.mark.asyncio
+async def test_options_of_another_format_are_reported_as_ignored(
+    io_tools, cgmes_files, boundary_sets_dir, tmp_path
+):
+    # An XIIDM file whose network came from IEEE-CDF: source_format says
+    # IEEE-CDF, yet the XIIDM importer is the one that reads it.
+    path = tmp_path / "ieee14.xiidm"
+    pp.network.create_ieee14().save(str(path))
+    result = await io_tools.load_network_from_file(
+        str(path),
+        "ieee14",
+        parameters={
+            "iidm.import.cgmes.naming-strategy": "cgmes",
+            "iidm.import.xml.with-automation-systems": False,
+        },
+        post_processors=["EntsoeCategory"],
+        boundary_set="BDS_test.zip",
+        ctx=_Ctx(),
+    )
+    assert result["status"] == "success", result
+    assert result["source_format"] == "IEEE-CDF"
+    assert result["import_format"] == "XIIDM"
+    assert "boundary" not in result
+    warnings = " ".join(result["warnings"])
+    assert "iidm.import.cgmes.naming-strategy" in warnings
+    assert "iidm.import.xml.with-automation-systems" not in warnings
+    assert "EntsoeCategory" in warnings
+    assert "boundary_set 'BDS_test.zip' not used" in warnings
+
+
+@pytest.mark.asyncio
+async def test_matching_options_give_no_warning(io_tools, tmp_path):
+    path = tmp_path / "ieee14.jiidm"
+    pp.network.create_ieee14().save(str(path), format="JIIDM")
+    result = await io_tools.load_network_from_file(
+        str(path),
+        "ieee14",
+        parameters={"iidm.import.xml.with-automation-systems": False},
+        ctx=_Ctx(),
+    )
+    assert result["status"] == "success", result
+    assert result["import_format"] == "JIIDM"
+    assert "warnings" not in result
+
+
+def test_import_format_without_a_report():
+    network = MagicMock(source_format="UCTE")
+    assert import_format_of(network, None) == "UCTE"
+    assert import_format_of(MagicMock(source_format="unknown"), "{}") is None

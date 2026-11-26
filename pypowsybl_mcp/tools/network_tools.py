@@ -2174,9 +2174,13 @@ class NetworkTools(PyPowsyblTool):
                     each load, from the "detail" extension.
                   - "entsoe_category" → entsoe_category_code on generator rows
                     (ENTSO-E category, e.g. nuclear, PV, offshore wind), set when a
-                    CGMES file is loaded with the EntsoeCategory post-processor.
+                    CGMES file is loaded with the EntsoeCategory post-processor, on
+                    the generating units whose CGMES type maps to a category.
                   - "extension:<name>" → the columns of any IIDM extension, named
                     <name>_<column> (list_network_extensions lists those present).
+                    An extension not keyed by element id (cgmesMetadataModels) or
+                    with several rows per element (linePosition) is refused: read
+                    it with get_network_extension_data.
                 Elements without the extension get null. Unknown token → friendly
                 error.
             main_component (str, optional): Component scope — "both" (default,

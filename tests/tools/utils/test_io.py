@@ -5,7 +5,7 @@
 #  SPDX-License-Identifier: MPL-2.0
 
 import os
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import ANY, MagicMock, mock_open, patch
 
 import pypowsybl as pp
 import pytest
@@ -108,10 +108,13 @@ async def test_load_network_from_url_success(io_tools, mock_ctx):
         mock_load.assert_called_once()
         mock_urlopen.assert_called_once_with("http://example.com/test.xiidm")
         # Loaded from the downloaded file, named as in the URL, with no option
-        assert mock_load.call_args.args == ("/tmp/fake-dir/test.xiidm",)
+        assert mock_load.call_args.args == (
+            os.path.join("/tmp/fake-dir", "test.xiidm"),
+        )
         assert mock_load.call_args.kwargs == {
             "parameters": None,
             "post_processors": None,
+            "report_node": ANY,
         }
         # The temp directory goes, with the file in it
         mock_rmtree.assert_called_once_with("/tmp/fake-dir")
@@ -281,6 +284,7 @@ async def test_load_network_from_url_uses_unique_temp_dir(io_tools, mock_ctx):
             os.path.join(fake_dir, "network.xiidm"),
             parameters=None,
             post_processors=None,
+            report_node=ANY,
         )
         mock_rmtree.assert_called_once_with(fake_dir)
 
@@ -317,6 +321,7 @@ async def test_load_network_from_url_empty_basename_fallback(io_tools, mock_ctx)
             os.path.join(fake_dir, "downloaded_network"),
             parameters=None,
             post_processors=None,
+            report_node=ANY,
         )
 
 
@@ -412,3 +417,25 @@ async def test_export_network_invalid_filename(io_tools, mock_ctx):
 
     assert result["status"] == "error"
     assert "Failed to export network: Invalid or unsafe filename" in result["message"]
+
+
+@pytest.mark.parametrize(
+    ("name", "data", "xml_too", "expected"),
+    [
+        # A zip saved under an extensionless URL name gets .zip ...
+        ("download", b"PK\x03\x04rest", False, "download.zip"),
+        ("download", b"PK\x03\x04rest", True, "download.zip"),
+        # ... once only, whatever the case
+        ("BD.ZIP", b"PK\x03\x04rest", True, "BD.ZIP"),
+        # An XML document gets .xml where asked (a boundary download) ...
+        ("download", b"\xef\xbb\xbf  <?xml version", True, "download.xml"),
+        ("EQBD.xml", b"<?xml version", True, "EQBD.xml"),
+        # ... and is left alone otherwise (a network file: XIIDM, CGMES, ...)
+        ("download", b"<?xml version", False, "download"),
+        ("grid.uct", b"##C 2007.05.01", True, "grid.uct"),
+    ],
+)
+def test_downloaded_file_is_named_after_its_content(name, data, xml_too, expected):
+    from pypowsybl_mcp.tools.utils.io import _name_for_content
+
+    assert _name_for_content(name, data, xml_too) == expected

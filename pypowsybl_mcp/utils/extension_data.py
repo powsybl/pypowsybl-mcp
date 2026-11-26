@@ -5,8 +5,8 @@
 #  SPDX-License-Identifier: MPL-2.0
 """Read IIDM extensions: the data a network file carries beside the core model.
 
-An extension is a table indexed by element id (e.g. `detail` gives each load its
-fixed / variable part, `entsoeCategory` each generator its ENTSO-E category).
+Most extensions are tables indexed by element id (e.g. `detail` gives each load its
+fixed / variable part, `entsoeCategory` the ENTSO-E category of a generator).
 This module reads them and joins them onto an element table, for the `attach`
 argument of get_network_element_data and for the extension tools.
 """
@@ -36,8 +36,9 @@ class ExtensionAlias:
 EXTENSION_ATTACH_ALIASES = {
     # Fixed / variable (thermosensitive, "affine") part of each load, in MW / MVar.
     "load_detail": ExtensionAlias("detail", "load"),
-    # ENTSO-E category code of each generator (nuclear, PV, offshore wind...), as
-    # set by the EntsoeCategory import post-processor.
+    # ENTSO-E category code of a generator (nuclear, PV, offshore wind...), as set
+    # by the EntsoeCategory import post-processor on the generating units whose
+    # CGMES type maps to a category.
     "entsoe_category": ExtensionAlias(
         "entsoeCategory", "generator", {"code": "entsoe_category_code"}
     ),
@@ -121,6 +122,21 @@ def read_extension(network, name: str) -> pd.DataFrame:
     return frame
 
 
+def _keyed_by_element_id(ext: pd.DataFrame, network) -> bool:
+    """Whether the rows of an extension table are keyed by network element ids.
+
+    Every extension table names its index `id`, whatever it holds: only the
+    values tell an element extension from a network-level one. The network
+    itself is left out, as a CGMES network takes the id of one of its models.
+    An empty table has nothing to tell and passes.
+    """
+    if ext.empty:
+        return True
+    identifiables = network.get_identifiables()
+    elements = identifiables.index[identifiables["type"] != "NETWORK"]
+    return bool(ext.index.isin(elements).any())
+
+
 def attach_extension(elements_df: pd.DataFrame, network, join: ExtensionJoin):
     """Join one extension's columns onto an element table, by element id.
 
@@ -131,9 +147,17 @@ def attach_extension(elements_df: pd.DataFrame, network, join: ExtensionJoin):
     if elements_df is None:
         return elements_df
     ext = read_extension(network, join.extension)
-    if ext.index.nlevels > 1:
+    if ext.index.nlevels > 1 or not _keyed_by_element_id(ext, network):
+        # e.g. cgmesMetadataModels, keyed by model URN: joined by element id it
+        # would quietly give all-null columns.
         raise ValueError(
             f"Extension '{join.extension}' is not indexed by element id; read it "
+            "with get_network_extension_data"
+        )
+    if not ext.index.is_unique:
+        # e.g. linePosition, one row per point of a line.
+        raise ValueError(
+            f"Extension '{join.extension}' has several rows per element; read it "
             "with get_network_extension_data"
         )
     out = elements_df.copy()

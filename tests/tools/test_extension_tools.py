@@ -201,3 +201,41 @@ async def test_attach_extension_errors(tools, ctx):
         )
     )
     assert "extension:<extension name>" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_attach_refuses_an_extension_not_keyed_by_element(proxies, ctx):
+    """cgmesMetadataModels is keyed by model URN: joined by element id it would
+    give all-null columns without a word."""
+    network = pp.network.create_micro_grid_be_network()
+    assert len(network.get_extensions("cgmesMetadataModels"))
+    network_tools = NetworkTools(proxies)
+    network_tools.get_proxy("extensions").register_network("be", network, True)
+    result = json.loads(
+        await network_tools.get_network_element_data(
+            element_type="generator",
+            attach=["extension:cgmesMetadataModels"],
+            ctx=ctx,
+        )
+    )
+    assert "not indexed by element id" in result["error"]
+
+
+def test_attach_refuses_an_extension_with_several_rows_per_element():
+    """linePosition holds one row per point of a line (pypowsybl cannot create
+    it on a test network, so the network is a stand-in)."""
+    import pandas as pd
+
+    from pypowsybl_mcp.utils.extension_data import ExtensionJoin, attach_extension
+
+    network = MagicMock()
+    network.get_extensions.return_value = pd.DataFrame(
+        {"num": [0, 1], "latitude": [48.0, 48.1], "longitude": [2.0, 2.1]},
+        index=pd.Index(["L1", "L1"], name="id"),
+    )
+    network.get_identifiables.return_value = pd.DataFrame(
+        {"type": ["LINE"]}, index=pd.Index(["L1"], name="id")
+    )
+    lines = pd.DataFrame({"r": [0.1]}, index=pd.Index(["L1"], name="id"))
+    with pytest.raises(ValueError, match="several rows per element"):
+        attach_extension(lines, network, ExtensionJoin("linePosition", prefix="x_"))

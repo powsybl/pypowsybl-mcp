@@ -21,7 +21,10 @@ from pypowsybl_mcp.tools.utils.import_options import (
     build_load_arguments,
     describe_import_options,
     explain_load_error,
+    import_format_of,
+    load_warnings,
     resolve_boundary_set,
+    ships_boundary,
 )
 from pypowsybl_mcp.utils import DOWNLOAD_BASE_URL, DOWNLOAD_LINK_EXPIRY_SECONDS
 from pypowsybl_mcp.utils.download_utils import generate_download_link
@@ -33,9 +36,41 @@ def register_io_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
     io_tools.register_tools_with_mcp(mcp)
 
 
-def _download_to_file(url: str, dest_path: str) -> None:
-    with urllib.request.urlopen(url) as response, open(dest_path, "wb") as tmp_file:
-        tmp_file.write(response.read())
+_ZIP_MAGIC = b"PK\x03\x04"
+
+
+def _name_for_content(name: str, data: bytes, xml_too: bool) -> str:
+    """`name`, with the extension its content calls for when it lacks it.
+
+    PowSyBl picks how to read a file from its extension, so a URL such as
+    `.../download?id=42` would save a zip it ignores: a zip gets `.zip` and,
+    with `xml_too`, an XML document `.xml`.
+    """
+    lower = name.lower()
+    if data[:4] == _ZIP_MAGIC:
+        return name if lower.endswith(".zip") else f"{name}.zip"
+    if xml_too and not lower.endswith((".xml", ".zip")):
+        head = data[:64].lstrip(b"\xef\xbb\xbf \t\r\n")
+        if head[:1] == b"<":
+            return f"{name}.xml"
+    return name
+
+
+def _download_to_dir(
+    url: str, dest_dir: str, fallback_name: str, xml_too: bool = False
+) -> str:
+    """Download `url` into `dest_dir` and return the path of the saved file.
+
+    The file is named as in the URL (the importer is chosen from that name),
+    or `fallback_name`, plus the extension its content calls for if missing.
+    """
+    with urllib.request.urlopen(url) as response:
+        data = response.read()
+    name = _name_for_content(_file_name_of(url, fallback_name), data, xml_too)
+    dest_path = os.path.join(dest_dir, name)
+    with open(dest_path, "wb") as tmp_file:
+        tmp_file.write(data)
+    return dest_path
 
 
 def _read_file_bytes(path: str) -> bytes:
@@ -96,21 +131,29 @@ class IOTools(PyPowsyblTool):
                 {"iidm.import.cgmes.naming-strategy": "cgmes"}. Values may be
                 strings, booleans, numbers or lists. An unknown name is an error.
             post_processors (list[str], optional): Post-processors to run, CGMES
-                ones (e.g. "EntsoeCategory", which tags each generator with its
-                ENTSO-E category, read back with the entsoe_category attach token)
-                and generic ones (e.g. "geoJsonImporter") alike.
+                ones (e.g. "EntsoeCategory", which tags the generating units whose
+                CGMES type maps to an ENTSO-E category - possibly none - read back
+                with the entsoe_category attach token) and generic ones (e.g.
+                "geoJsonImporter") alike.
             boundary_set (str, optional): Name of a CGMES boundary set the server
                 provides (listed by get_import_options).
-            boundary_url (str, optional): URL of a CGMES boundary set (.zip or
-                .xml) to download. Exclusive with boundary_set. Without either,
-                the boundary files may also sit in the CGMES archive itself.
+            boundary_url (str, optional): URL of a CGMES boundary set to download:
+                a .zip, or a single .xml only for a CGMES 3 boundary (EQBD alone);
+                a CGMES 2.4.15 boundary needs both EQBD and TPBD, so a .zip.
+                Exclusive with boundary_set. Without either, the boundary files
+                may also sit in the CGMES archive itself, and PowSyBl then uses
+                those, not the boundary set given.
 
         Supported Formats:
             Same as load_network_from_file: XIIDM, UCTE, MATPOWER, PSS/E, RAW, CGMES
 
         Returns:
             dict: status (success or error) and a message; on success also
-            source_format (the format PowSyBl recognized) and the options applied.
+            import_format (the importer that read the file), source_format (the
+            format the network first came from: an IIDM file keeps its origin's),
+            the options applied and, if any, warnings listing those PowSyBl
+            ignored (a parameter of another format, a boundary set the file
+            does not use).
 
         Example:
             load_network_from_url(
@@ -121,7 +164,7 @@ class IOTools(PyPowsyblTool):
             → "Successfully loaded network 'remote_network' from https://example.com/grids/ieee14.xiidm with 14 buses"
 
         Workflow:
-                1. Downloads file from URL to temporary directory
+            1. Downloads file from URL to temporary directory
             2. Loads network from temporary file
             3. Registers network in server
             4. Cleans up temporary file
@@ -131,7 +174,8 @@ class IOTools(PyPowsyblTool):
             - Temporary files are automatically deleted after loading
             - Download size is not limited - be cautious with very large files
             - Network connection must be available
-            - Filename is extracted from URL path for proper format detection
+            - Filename is extracted from URL path for proper format detection;
+              a zip whose URL has no .zip extension gets one
 
         Common Errors:
             - URLError: URL is unreachable or invalid
@@ -153,19 +197,14 @@ class IOTools(PyPowsyblTool):
                 parameters, post_processors, boundary_location, boundary
             )
 
-            # The importer is chosen from the file name, so it is kept as in the
-            # URL (the URL is expected to be correctly formatted).
-            tmp_path = os.path.join(tmp_dir, _file_name_of(url, "downloaded_network"))
-            # Download and save the remote file (blocking I/O off the event loop)
-            await asyncio.to_thread(_download_to_file, url, tmp_path)
-
-            network = pp.network.load(
-                tmp_path,
-                parameters=load_args.parameters or None,
-                post_processors=load_args.post_processors or None,
+            # Download and save the remote file (blocking I/O off the event loop),
+            # named as in the URL since the importer is chosen from the name.
+            tmp_path = await asyncio.to_thread(
+                _download_to_dir, url, tmp_dir, "downloaded_network"
             )
+            network, report = self._load(tmp_path, load_args)
             proxy.register_network(network_id, network, set_as_current)
-            return self._loaded(network_id, network, url, load_args)
+            return self._loaded(network_id, network, url, load_args, tmp_path, report)
 
         except (pp.PyPowsyblError, OSError, ValueError) as e:
             message = explain_load_error(e, bool(boundary_set or boundary_url))
@@ -192,23 +231,54 @@ class IOTools(PyPowsyblTool):
         if boundary_url:
             boundary_dir = os.path.join(tmp_dir, "boundary")
             os.makedirs(boundary_dir)
-            file_name = _file_name_of(boundary_url, "boundary.zip")
-            boundary_path = os.path.join(boundary_dir, file_name)
-            await asyncio.to_thread(_download_to_file, boundary_url, boundary_path)
-            return boundary_dir, f"boundary_url ({file_name})"
+            # PowSyBl only reads the .zip and .xml files of the directory: a URL
+            # with no such extension gets the one its content calls for.
+            boundary_path = await asyncio.to_thread(
+                _download_to_dir, boundary_url, boundary_dir, "boundary", True
+            )
+            return boundary_dir, f"boundary_url ({os.path.basename(boundary_path)})"
         return None, None
 
     @staticmethod
-    def _loaded(network_id: str, network, source: str, load_args) -> dict:
-        """The answer of a successful load."""
+    def _load(path: str, load_args):
+        """Load `path`, with the report telling which importer read it."""
+        report = pp.report.ReportNode()
+        network = pp.network.load(
+            path,
+            parameters=load_args.parameters or None,
+            post_processors=load_args.post_processors or None,
+            report_node=report,
+        )
+        return network, report
+
+    @staticmethod
+    def _loaded(
+        network_id: str, network, source: str, load_args, path: str, report
+    ) -> dict:
+        """The answer of a successful load, with what PowSyBl ignored."""
         buses = network.get_buses()
+        try:
+            report_json = report.to_json()
+        except (pp.PyPowsyblError, AttributeError) as e:
+            logger.debug(f"Could not read the load report: {e}")
+            report_json = None
+        import_format = import_format_of(network, report_json)
+        warnings, boundary_used = load_warnings(
+            load_args,
+            import_format,
+            bool(load_args.boundary) and ships_boundary(path),
+        )
         result = {
             "status": Status.SUCCESS,
             "message": f"Successfully loaded network '{network_id}' from {source} with {len(buses)} buses",
             "network_id": network_id,
             "source_format": network.source_format,
         }
-        result.update(load_args.summary())
+        if import_format:
+            result["import_format"] = import_format
+        result.update(load_args.summary(boundary_used))
+        if warnings:
+            result["warnings"] = warnings
         return result
 
     async def load_network_from_file(
@@ -241,21 +311,29 @@ class IOTools(PyPowsyblTool):
                 {"iidm.import.cgmes.naming-strategy": "cgmes"}. Values may be
                 strings, booleans, numbers or lists. An unknown name is an error.
             post_processors (list[str], optional): Post-processors to run, CGMES
-                ones (e.g. "EntsoeCategory", which tags each generator with its
-                ENTSO-E category, read back with the entsoe_category attach token)
-                and generic ones (e.g. "geoJsonImporter") alike.
+                ones (e.g. "EntsoeCategory", which tags the generating units whose
+                CGMES type maps to an ENTSO-E category - possibly none - read back
+                with the entsoe_category attach token) and generic ones (e.g.
+                "geoJsonImporter") alike.
             boundary_set (str, optional): Name of a CGMES boundary set the server
                 provides (listed by get_import_options).
-            boundary_url (str, optional): URL of a CGMES boundary set (.zip or
-                .xml) to download. Exclusive with boundary_set. Without either,
-                the boundary files may also sit in the CGMES archive itself.
+            boundary_url (str, optional): URL of a CGMES boundary set to download:
+                a .zip, or a single .xml only for a CGMES 3 boundary (EQBD alone);
+                a CGMES 2.4.15 boundary needs both EQBD and TPBD, so a .zip.
+                Exclusive with boundary_set. Without either, the boundary files
+                may also sit in the CGMES archive itself, and PowSyBl then uses
+                those, not the boundary set given.
 
         Supported Formats:
             XIIDM, UCTE, MATPOWER, PSS/E, RAW, CGMES
 
         Returns:
             dict: status (success or error) and a message; on success also
-            source_format (the format PowSyBl recognized) and the options applied.
+            import_format (the importer that read the file), source_format (the
+            format the network first came from: an IIDM file keeps its origin's),
+            the options applied and, if any, warnings listing those PowSyBl
+            ignored (a parameter of another format, a boundary set the file
+            does not use).
 
         Example:
             load_network_from_file(
@@ -282,13 +360,9 @@ class IOTools(PyPowsyblTool):
             load_args = build_load_arguments(
                 parameters, post_processors, boundary_location, boundary
             )
-            network = pp.network.load(
-                path,
-                parameters=load_args.parameters or None,
-                post_processors=load_args.post_processors or None,
-            )
+            network, report = self._load(path, load_args)
             proxy.register_network(network_id, network, set_as_current)
-            return self._loaded(network_id, network, path, load_args)
+            return self._loaded(network_id, network, path, load_args, path, report)
 
         except (pp.PyPowsyblError, OSError, ValueError) as e:
             message = explain_load_error(e, bool(boundary_set or boundary_url))
@@ -305,8 +379,8 @@ class IOTools(PyPowsyblTool):
 
         Use it before load_network_from_url / load_network_from_file when the
         file needs more than a plain load: a CGMES boundary set, a post-processor
-        such as EntsoeCategory (ENTSO-E category of each generator), or an
-        importer parameter.
+        such as EntsoeCategory (ENTSO-E category of the generating units whose
+        CGMES type maps to one), or an importer parameter.
 
         Args:
             format (str, optional): An import format (e.g. "CGMES", "XIIDM",

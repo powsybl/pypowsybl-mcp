@@ -46,8 +46,9 @@ class ExtensionTools(PyPowsyblTool):
         added by an import post-processor, for example:
           - "detail": fixed and variable (thermosensitive) part of each load
             (fixed_p0, variable_p0, fixed_q0, variable_q0);
-          - "entsoeCategory": ENTSO-E category code of each generator, set when
-            a CGMES file is loaded with the EntsoeCategory post-processor;
+          - "entsoeCategory": ENTSO-E category code of a generator, set when a
+            CGMES file is loaded with the EntsoeCategory post-processor, on the
+            generating units whose CGMES type maps to a category;
           - positions, short-circuit data, observability, ...
 
         Args:

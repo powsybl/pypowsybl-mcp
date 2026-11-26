@@ -6,22 +6,26 @@
 """Import options of the network loading tools.
 
 PowSyBl reads a grid file with importer parameters (e.g. the CGMES boundary set
-location) and post-processors (e.g. the `EntsoeCategory` one, which tags each
-generator with its ENTSO-E category). This module turns what a client asks for
-into the `parameters` / `post_processors` arguments of `pypowsybl.network.load`,
-and describes the options a client may choose from.
+location) and post-processors (e.g. the `EntsoeCategory` one, which tags the
+generating units whose CGMES type maps to an ENTSO-E category). This module
+turns what a client asks for into the `parameters` / `post_processors` arguments
+of `pypowsybl.network.load`, and describes the options a client may choose from.
 
 Two rules hold whatever the client sends:
 
 - PowSyBl silently ignores an unknown parameter name, so the names are checked
   here: a misspelled option must fail loudly instead of loading the file without
-  it.
+  it. A known name that belongs to another format is ignored just as silently;
+  the format is only known once the file is read, so that case is reported as a
+  warning after the load (`load_warnings`).
 - `iidm.import.cgmes.boundary-location` is a path on the server's disk. A client
   never sets it directly; it names a boundary set the server provides
   (`CGMES_BOUNDARY_SETS_DIR`) or a URL the server downloads it from.
 """
 
+import json
 import os
+import zipfile
 from dataclasses import dataclass, field
 from functools import cache, lru_cache
 
@@ -49,10 +53,18 @@ class LoadArguments:
     # for the answer: the location itself is a server path, never echoed.
     boundary: str | None = None
 
-    def summary(self) -> dict:
-        """The options as reported back to the client."""
+    def client_parameters(self) -> dict[str, str]:
+        """The importer parameters the client named (not those set for it)."""
         hidden = (BOUNDARY_LOCATION_PARAMETER, CGMES_POST_PROCESSORS_PARAMETER)
-        shown = {k: v for k, v in self.parameters.items() if k not in hidden}
+        return {k: v for k, v in self.parameters.items() if k not in hidden}
+
+    def summary(self, boundary_used: bool = True) -> dict:
+        """The options as reported back to the client.
+
+        `boundary_used` False leaves the boundary out: PowSyBl did not read it
+        (the file ships its own boundary profiles, or is not CGMES).
+        """
+        shown = self.client_parameters()
         post_processors = _as_list(
             self.parameters.get(CGMES_POST_PROCESSORS_PARAMETER)
         ) + list(self.post_processors)
@@ -61,7 +73,7 @@ class LoadArguments:
             out["parameters"] = shown
         if post_processors:
             out["post_processors"] = post_processors
-        if self.boundary:
+        if self.boundary and boundary_used:
             out["boundary"] = self.boundary
         return out
 
@@ -229,6 +241,144 @@ def explain_load_error(error: Exception, boundary_given: bool) -> str:
     return message
 
 
+# What the IIDM importers report the format they read as, and the IIDM format
+# name it stands for.
+_IIDM_REPORT_PREFIX = "core.iidm.serde."
+_IIDM_IMPORTED_NETWORK_KEY = "core.iidm.serde.importedNetwork"
+_IIDM_FORMATS = {"XML": "XIIDM", "JSON": "JIIDM", "BIN": "BIIDM"}
+
+
+def _report_nodes(node: dict):
+    yield node
+    for child in node.get("children", []) or []:
+        yield from _report_nodes(child)
+
+
+def import_format_of(network, report_json: str | None) -> str | None:
+    """The import format that read `network`, or None when it cannot be told.
+
+    `network.source_format` is not enough: an IIDM file keeps the format the
+    network first came from (an XIIDM saved from a CGMES load says CGMES). The
+    IIDM importers leave their mark in the load report; any other importer
+    sets `source_format` to its own name.
+    """
+    try:
+        root = json.loads(report_json or "{}").get("reportRoot") or {}
+    except (TypeError, ValueError):
+        root = {}
+    iidm = False
+    for node in _report_nodes(root):
+        key = str(node.get("messageKey") or "")
+        if key == _IIDM_IMPORTED_NETWORK_KEY:
+            fmt = ((node.get("values") or {}).get("format") or {}).get("value")
+            return _IIDM_FORMATS.get(str(fmt).upper(), "XIIDM")
+        iidm = iidm or key.startswith(_IIDM_REPORT_PREFIX)
+    if iidm:
+        return "XIIDM"
+    source_format = getattr(network, "source_format", None)
+    return source_format if source_format in import_formats() else None
+
+
+# The header profiles of the CGMES boundary files, EQBD and TPBD, in CGMES
+# 2.4.15 (".../EquipmentBoundary/3/1") and CGMES 3 (".../EquipmentBoundary-EU/3.0")
+# alike. The header sits at the top of the file.
+_BOUNDARY_PROFILE_MARKERS = (b"EquipmentBoundary", b"TopologyBoundary")
+_HEADER_BYTES = 64 * 1024
+
+
+def _is_boundary_profile(head: bytes) -> bool:
+    return any(marker in head for marker in _BOUNDARY_PROFILE_MARKERS)
+
+
+def _file_is_boundary_profile(path: str) -> bool:
+    with open(path, "rb") as f:
+        return _is_boundary_profile(f.read(_HEADER_BYTES))
+
+
+def ships_boundary(path: str) -> bool:
+    """Whether the CGMES model at `path` carries its own boundary profiles.
+
+    PowSyBl then reads those and ignores the boundary set it is given. It tells
+    a boundary file by the profile its header declares, not by its name (one may
+    well be named `..._EQ.xml`), so the same test is made here.
+    """
+    try:
+        if os.path.isdir(path):
+            return any(
+                _file_is_boundary_profile(os.path.join(path, name))
+                for name in os.listdir(path)
+                if name.lower().endswith(".xml")
+                and os.path.isfile(os.path.join(path, name))
+            )
+        if zipfile.is_zipfile(path):
+            with zipfile.ZipFile(path) as archive:
+                for info in archive.infolist():
+                    if info.is_dir() or not info.filename.lower().endswith(".xml"):
+                        continue
+                    with archive.open(info) as entry:
+                        if _is_boundary_profile(entry.read(_HEADER_BYTES)):
+                            return True
+            return False
+        if path.lower().endswith(".xml"):
+            return _file_is_boundary_profile(path)
+    except (OSError, zipfile.BadZipFile) as e:
+        logger.debug(f"Could not look for boundary profiles in {path}: {e}")
+    return False
+
+
+def load_warnings(
+    load_args: LoadArguments, import_format: str | None, ships_own_boundary: bool
+) -> tuple[list[str], bool]:
+    """What PowSyBl silently ignored in a successful load, and whether it used
+    the boundary set it was given.
+
+    A parameter of another format, a CGMES post-processor or a boundary set on
+    a non-CGMES file, and a boundary set given for a CGMES model that ships its
+    own boundary profiles are all dropped without a word from PowSyBl.
+    """
+    warnings: list[str] = []
+    if import_format is None or import_format not in import_formats():
+        return warnings, bool(load_args.boundary)
+
+    try:
+        accepted = set(_format_parameters(import_format).index)
+    except pp.PyPowsyblError as e:  # pragma: no cover - depends on the build
+        logger.debug(f"No import parameters for format {import_format}: {e}")
+        accepted = set()
+    ignored = [name for name in load_args.client_parameters() if name not in accepted]
+    if ignored:
+        warnings.append(
+            f"Ignored by the {import_format} importer, which does not take them: "
+            f"{', '.join(ignored)}."
+        )
+
+    is_cgmes = import_format == "CGMES"
+    cgmes_post_processors = _as_list(
+        load_args.parameters.get(CGMES_POST_PROCESSORS_PARAMETER)
+    )
+    if cgmes_post_processors and not is_cgmes:
+        warnings.append(
+            f"CGMES post-processor(s) not run on a {import_format} file: "
+            f"{', '.join(cgmes_post_processors)}."
+        )
+
+    boundary_used = bool(load_args.boundary)
+    if load_args.boundary:
+        if not is_cgmes:
+            boundary_used = False
+            warnings.append(
+                f"{load_args.boundary} not used: a boundary set only applies to a "
+                f"CGMES file, not to a {import_format} one."
+            )
+        elif ships_own_boundary:
+            boundary_used = False
+            warnings.append(
+                f"{load_args.boundary} not used: the CGMES model ships its own "
+                "boundary profiles, which PowSyBl reads instead."
+            )
+    return warnings, boundary_used
+
+
 def boundary_sets_dir() -> str | None:
     path = os.environ.get(BOUNDARY_SETS_DIR_ENV, "").strip()
     return path or None
@@ -276,7 +426,8 @@ def default_boundary_set_available() -> bool:
 
     PowSyBl then reads its default boundary location (`~/.itools/CGMES/boundary`
     unless configured otherwise): a set is there if it is a .zip, or a directory
-    holding at least one file. Only the answer is reported, never the path.
+    holding at least one .xml or .zip file - the only ones PowSyBl reads, so a
+    README alone does not count. Only the answer is reported, never the path.
     """
     if "CGMES" not in import_formats():
         return False
@@ -290,7 +441,8 @@ def default_boundary_set_available() -> bool:
         return location.lower().endswith(".zip")
     if os.path.isdir(location):
         return any(
-            os.path.isfile(os.path.join(location, entry))
+            entry.lower().endswith((".xml", ".zip"))
+            and os.path.isfile(os.path.join(location, entry))
             for entry in os.listdir(location)
         )
     return False
