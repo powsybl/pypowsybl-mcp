@@ -97,6 +97,14 @@ def import_formats() -> tuple[str, ...]:
     return tuple(pp.network.get_import_formats())
 
 
+@lru_cache(maxsize=1)
+def import_extensions() -> tuple[str, ...]:
+    """The file extensions the importers read, lowercase and without the dot."""
+    return tuple(
+        sorted({ext.lower() for ext in pp.network.get_import_supported_extensions()})
+    )
+
+
 @cache
 def _format_parameters(fmt: str) -> pd.DataFrame:
     return pp.network.get_import_parameters(fmt)

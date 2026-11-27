@@ -419,23 +419,40 @@ async def test_export_network_invalid_filename(io_tools, mock_ctx):
     assert "Failed to export network: Invalid or unsafe filename" in result["message"]
 
 
+_MAT = b"MATLAB 5.0 MAT-file, Platform: GLNXA64"
+
+
 @pytest.mark.parametrize(
-    ("name", "data", "xml_too", "expected"),
+    ("name", "data", "boundary", "expected"),
     [
         # A zip saved under an extensionless URL name gets .zip ...
         ("download", b"PK\x03\x04rest", False, "download.zip"),
         ("download", b"PK\x03\x04rest", True, "download.zip"),
-        # ... once only, whatever the case
+        # ... once only, whatever the case, and even after another extension
         ("BD.ZIP", b"PK\x03\x04rest", True, "BD.ZIP"),
-        # An XML document gets .xml where asked (a boundary download) ...
+        ("grid.xiidm", b"PK\x03\x04rest", False, "grid.xiidm.zip"),
+        # XML gets .xml, for a network (XIIDM or CGMES) and a boundary alike
         ("download", b"\xef\xbb\xbf  <?xml version", True, "download.xml"),
+        ("download", b"<?xml version", False, "download.xml"),
+        ("download.php", b"<iidm:network", False, "download.php.xml"),
+        # JSON gets .jiidm, a MATLAB file .mat - for a network only
+        ("download", b'{\n  "version" : "1.17"', False, "download.jiidm"),
+        ("download", _MAT, False, "download.mat"),
+        ("download", b'{"version"', True, "download"),
+        ("download", _MAT, True, "download"),
+        # A name the importers already read is kept
         ("EQBD.xml", b"<?xml version", True, "EQBD.xml"),
-        # ... and is left alone otherwise (a network file: XIIDM, CGMES, ...)
-        ("download", b"<?xml version", False, "download"),
-        ("grid.uct", b"##C 2007.05.01", True, "grid.uct"),
+        ("grid.xiidm", b"<?xml version", False, "grid.xiidm"),
+        ("grid.IIDM", b"<?xml version", False, "grid.IIDM"),
+        ("grid.json", b'{"version"', False, "grid.json"),
+        ("case14.mat", _MAT, False, "case14.mat"),
+        # Content that cannot be told is left alone
+        ("grid.uct", b"##C 2007.05.01", False, "grid.uct"),
+        ("download", b"##C 2007.05.01", False, "download"),
+        ("download", b"", False, "download"),
     ],
 )
-def test_downloaded_file_is_named_after_its_content(name, data, xml_too, expected):
+def test_downloaded_file_is_named_after_its_content(name, data, boundary, expected):
     from pypowsybl_mcp.tools.utils.io import _name_for_content
 
-    assert _name_for_content(name, data, xml_too) == expected
+    assert _name_for_content(name, data, boundary) == expected

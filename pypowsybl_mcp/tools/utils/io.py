@@ -21,6 +21,7 @@ from pypowsybl_mcp.tools.utils.import_options import (
     build_load_arguments,
     describe_import_options,
     explain_load_error,
+    import_extensions,
     import_format_of,
     load_warnings,
     resolve_boundary_set,
@@ -37,27 +38,52 @@ def register_io_tools(mcp: MCPServer, pypowsybl_proxies: TTLCache):
 
 
 _ZIP_MAGIC = b"PK\x03\x04"
+_MATLAB_MAGIC = b"MATLAB 5.0 MAT-file"
 
 
-def _name_for_content(name: str, data: bytes, xml_too: bool) -> str:
-    """`name`, with the extension its content calls for when it lacks it.
+def _content_extension(data: bytes, boundary: bool) -> str | None:
+    """The extension PowSyBl reads content like `data` from, if it can be told.
+
+    A boundary set is a zip or XML; a network may also be JIIDM (JSON) or
+    MATPOWER (MATLAB file). An XML document gets `.xml`, which both the XIIDM
+    and CGMES importers read: each then checks the content itself.
+    """
+    if data[:4] == _ZIP_MAGIC:
+        return "zip"
+    head = data[:64].lstrip(b"\xef\xbb\xbf \t\r\n")
+    if head[:1] == b"<":
+        return "xml"
+    if boundary:
+        return None
+    if head[:1] == b"{":
+        return "jiidm"
+    if data.startswith(_MATLAB_MAGIC):
+        return "mat"
+    return None
+
+
+def _name_for_content(name: str, data: bytes, boundary: bool = False) -> str:
+    """`name`, with the extension its content calls for when it lacks one.
 
     PowSyBl picks how to read a file from its extension, so a URL such as
-    `.../download?id=42` would save a zip it ignores: a zip gets `.zip` and,
-    with `xml_too`, an XML document `.xml`.
+    `.../download?id=42` would save a file it does not read. A name that
+    already ends with an extension the importers read is kept (an XIIDM file
+    stays `grid.xiidm`), except that a zip always ends with `.zip`.
     """
+    extension = _content_extension(data, boundary)
+    if extension is None:
+        return name
     lower = name.lower()
-    if data[:4] == _ZIP_MAGIC:
+    if extension == "zip":
+        # PowSyBl reads grid.xiidm.zip, not a zip named grid.xiidm.
         return name if lower.endswith(".zip") else f"{name}.zip"
-    if xml_too and not lower.endswith((".xml", ".zip")):
-        head = data[:64].lstrip(b"\xef\xbb\xbf \t\r\n")
-        if head[:1] == b"<":
-            return f"{name}.xml"
-    return name
+    readable = ("xml", "zip") if boundary else (*import_extensions(), "zip")
+    suffix = lower.rsplit(".", 1)[1] if "." in lower else ""
+    return name if suffix in readable else f"{name}.{extension}"
 
 
 def _download_to_dir(
-    url: str, dest_dir: str, fallback_name: str, xml_too: bool = False
+    url: str, dest_dir: str, fallback_name: str, boundary: bool = False
 ) -> str:
     """Download `url` into `dest_dir` and return the path of the saved file.
 
@@ -66,7 +92,7 @@ def _download_to_dir(
     """
     with urllib.request.urlopen(url) as response:
         data = response.read()
-    name = _name_for_content(_file_name_of(url, fallback_name), data, xml_too)
+    name = _name_for_content(_file_name_of(url, fallback_name), data, boundary)
     dest_path = os.path.join(dest_dir, name)
     with open(dest_path, "wb") as tmp_file:
         tmp_file.write(data)
@@ -175,7 +201,9 @@ class IOTools(PyPowsyblTool):
             - Download size is not limited - be cautious with very large files
             - Network connection must be available
             - Filename is extracted from URL path for proper format detection;
-              a zip whose URL has no .zip extension gets one
+              when the URL has no extension the importers read (e.g.
+              ".../download?id=42"), the file gets the one its content calls
+              for: .zip, .xml (XIIDM or CGMES), .jiidm (JSON) or .mat (MATPOWER)
 
         Common Errors:
             - URLError: URL is unreachable or invalid

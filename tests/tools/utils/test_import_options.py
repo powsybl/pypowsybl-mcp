@@ -475,3 +475,19 @@ def test_import_format_without_a_report():
     network = MagicMock(source_format="UCTE")
     assert import_format_of(network, None) == "UCTE"
     assert import_format_of(MagicMock(source_format="unknown"), "{}") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fmt", ["XIIDM", "JIIDM", "MATPOWER"])
+async def test_network_url_without_extension(io_tools, tmp_path, fmt):
+    """A network served as .../download?id=42 is still read by its importer."""
+    saved = tmp_path / "saved"
+    saved.mkdir()
+    pp.network.create_ieee14().save(str(saved / "grid"), format=fmt)
+    (served,) = saved.iterdir()
+    shutil.copy(served, tmp_path / "download")
+    result = await io_tools.load_network_from_url(
+        (tmp_path / "download").as_uri(), "ieee14", ctx=_Ctx()
+    )
+    assert result["status"] == "success", result
+    assert result["import_format"] == fmt

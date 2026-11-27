@@ -13,6 +13,10 @@ This document lists all MCP tools exposed by the PyPowsybl MCP server, grouped b
 | `get_import_options`     | List the import formats, post-processors, server boundary sets and, for one format, its importer parameters.  |
 | `export_network`         | Export the current (or a named) network to a file; returns a temporary download link.                          |
 
+PowSyBl picks the importer from the file extension, so when `load_network_from_url` is given a URL without one it reads
+(`…/download?id=42`), the downloaded file is named after its content: `.zip`, `.xml` (XIIDM or CGMES, each importer
+checks the content itself), `.jiidm` (JSON) or `.mat` (MATPOWER).
+
 Both loading tools take the same import options:
 
 | Argument          | Description                                                                                                       |
