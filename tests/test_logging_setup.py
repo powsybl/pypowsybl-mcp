@@ -541,4 +541,6 @@ def test_stderr_follows_log_level_from_import(tmp_path):
     assert "Loaded .env file" not in result.stderr  # INFO
     assert "import-time detail" not in result.stderr
     line = next(l for l in result.stderr.splitlines() if "import-time problem" in l)
+    # Loguru colors stderr on CI (e.g. GitHub Actions) even through a pipe.
+    line = re.sub(r"\x1b\[[0-9;]*m", "", line)
     assert re.match(r"\S+ \S+ [+-]\d{2}:\d{2} \| WARNING", line)
