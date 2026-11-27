@@ -4,6 +4,9 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
+import os
+import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -75,3 +78,39 @@ def test_unrecognized_values_disable_verification_but_warn(raw):
 
 def test_truthy_and_falsy_sets_do_not_overlap():
     assert not _TRUTHY_VALUES & _FALSY_VALUES
+
+
+def test_dotenv_values_reach_the_download_links(tmp_path):
+    # Regression: the logging setup once imported pypowsybl_mcp.utils before
+    # .env was loaded, and that package reads the download link settings at
+    # import time, so the .env values were ignored outside Docker.
+    dotenv = tmp_path / ".env"
+    dotenv.write_text(
+        "MCP_PUBLIC_ADDRESS=https://from-dotenv.example\n"
+        "DOWNLOAD_LINK_EXPIRY_SECONDS=60\n"
+    )
+    # A fresh interpreter, so the package is imported (and .env loaded) anew;
+    # load_dotenv is pointed at the test file instead of the repository's .env.
+    script = (
+        "import sys, dotenv\n"
+        "load = dotenv.load_dotenv\n"
+        "dotenv.load_dotenv = lambda **kwargs: load(sys.argv[1], **kwargs)\n"
+        "import pypowsybl_mcp.utils as utils\n"
+        "print(utils.DOWNLOAD_BASE_URL, utils.DOWNLOAD_LINK_EXPIRY_SECONDS)\n"
+    )
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("MCP_PUBLIC_ADDRESS", "DOWNLOAD_LINK_EXPIRY_SECONDS")
+    }
+
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(dotenv)],
+        capture_output=True,
+        check=True,
+        env=env,
+        text=True,
+        timeout=120,
+    )
+
+    assert result.stdout.split() == ["https://from-dotenv.example/download", "60"]

@@ -14,10 +14,6 @@ from loguru import logger
 # Global flag to track initialization
 _initialized = False
 
-# Defined before the logging setup below is imported: importing
-# pypowsybl_mcp.utils reads it back from this package.
-DEFAULT_PORT = 9992
-
 # Accepted spellings for MCP_VERIFY_SSL. Anything outside both sets is treated
 # as disabled, but warned about explicitly (see _parse_verify_ssl).
 _TRUTHY_VALUES = {"true", "yes", "1", "on", "enabled", "y", "t"}
@@ -50,8 +46,10 @@ def _parse_verify_ssl(raw: str | None) -> bool:
 # Auto-load .env if python-dotenv is available
 if not _initialized:
     # Start keeping the startup messages for the log file before logging any,
-    # see pypowsybl_mcp.utils.logging_setup.
-    import pypowsybl_mcp.utils.logging_setup  # noqa: F401
+    # see pypowsybl_mcp.logging_setup.
+    from pypowsybl_mcp.logging_setup import start_early_buffer
+
+    start_early_buffer()
 
     if load_dotenv(override=True):
         logger.info("Loaded .env file")
@@ -73,6 +71,8 @@ if not _initialized:
             pass
 
     _initialized = True
+
+DEFAULT_PORT = 9992
 
 VOLTAGE_MODES = {
     "UNIFORM_VALUES": pp.loadflow.VoltageInitMode.UNIFORM_VALUES,

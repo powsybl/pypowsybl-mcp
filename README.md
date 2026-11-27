@@ -150,7 +150,7 @@ docker compose up --build
 Useful notes:
 
 - Put network files in `./data`; they are mounted in the container as `/app/data`.
-- Logs are written to `./logs/pypowsybl_mcp.log` (mounted as `/app/logs`, rotated every 10 MB, the 10 most recent rotated files kept) and also shown by `docker compose logs`.
+- Logs are written to `./logs/pypowsybl_mcp.log` (mounted as `/app/logs`, rotated every 10 MB, the 10 most recent rotated files kept, gzipped) and also shown by `docker compose logs`. Set `LOG_LEVEL` (default `INFO`) to change how much is logged, and `LOG_FORMAT=json` for a file that log collection tools can read; see [Configuration](docs/configuration.md).
 - Set `HOST_UID` and `HOST_GID` in `.env` if you need mounted files to keep the right ownership.
 
 ## Configure Codex

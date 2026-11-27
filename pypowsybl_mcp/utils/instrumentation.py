@@ -61,20 +61,24 @@ def instrument_tool_calls(mcp: MCPServer, registry: SessionRegistry) -> None:
         started = time.perf_counter()
         error = False
         try:
-            return await original_call_tool(name, arguments, *args, **kwargs)
+            # Tag what the tool logs with its session, for the log file. A
+            # first-time session has no id yet: it is created inside the tool.
+            with logger.contextualize(session_id=_session_id_of(context)):
+                return await original_call_tool(name, arguments, *args, **kwargs)
         except Exception:
             error = True
             raise
         finally:
             try:
                 elapsed_ms = (time.perf_counter() - started) * 1000
+                session_id = _session_id_of(context)
                 registry.record_call(
-                    _session_id_of(context),
+                    session_id,
                     name,
                     error=error,
                     duration_ms=elapsed_ms,
                 )
-                logger.debug(
+                logger.bind(session_id=session_id).debug(
                     f"Tool {name} finished in {elapsed_ms:.0f} ms (error={error})"
                 )
             except Exception as exc:  # noqa: BLE001 - bookkeeping never breaks a call

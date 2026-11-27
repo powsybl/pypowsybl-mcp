@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from loguru import logger
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from starlette.testclient import TestClient
@@ -242,3 +243,29 @@ async def test_a_call_without_a_session_is_not_attributed(registry):
     await mcp._tool_manager.call_tool("working_tool", {}, context=None)
 
     assert registry.snapshot() == {}
+
+
+@pytest.mark.asyncio
+async def test_logs_of_a_tool_call_carry_its_session(registry):
+    mcp = MCPServer("TestServer")
+
+    @mcp.tool()
+    def working_tool() -> str:
+        logger.info("inside the tool")
+        return "fine"
+
+    instrument_tool_calls(mcp, registry)
+    context = SimpleNamespace(session=SimpleNamespace(session_id="s1"))
+    records = []
+    sink_id = logger.add(lambda message: records.append(message.record), level=0)
+    try:
+        await mcp._tool_manager.call_tool("working_tool", {}, context=context)
+        logger.info("after the call")
+    finally:
+        logger.remove(sink_id)
+
+    sessions = {r["message"]: r["extra"].get("session_id") for r in records}
+    assert sessions["inside the tool"] == "s1"
+    finished = next(m for m in sessions if m.startswith("Tool working_tool finished"))
+    assert sessions[finished] == "s1"
+    assert sessions["after the call"] is None
