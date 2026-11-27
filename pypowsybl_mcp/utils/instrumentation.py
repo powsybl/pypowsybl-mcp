@@ -15,6 +15,7 @@ replaced after the server is built.
 """
 
 import time
+from contextvars import ContextVar
 from typing import Any
 
 from loguru import logger
@@ -24,6 +25,9 @@ from pypowsybl_mcp.utils.session_registry import SessionRegistry
 from pypowsybl_mcp.utils.user_session_management import peek_session_id
 
 _INSTRUMENTED_FLAG = "_pypowsybl_mcp_instrumented"
+
+# The request context of the tool call in progress, for _tag_session.
+_tool_call_context: ContextVar[Any] = ContextVar("tool_call_context", default=None)
 
 
 def _session_id_of(context: Any) -> Any | None:
@@ -37,6 +41,19 @@ def _session_id_of(context: Any) -> Any | None:
         return peek_session_id(context)
     except (AttributeError, ValueError):  # no request behind this context
         return None
+
+
+def _tag_session(record) -> None:
+    """Loguru patcher: tag what a tool call logs with its session.
+
+    Read for each message: on a session's first call, the id only exists once
+    the tool created it, and what the tool logs from then on is tagged too.
+    """
+    context = _tool_call_context.get()
+    if context is not None and "session_id" not in record["extra"]:
+        session_id = _session_id_of(context)
+        if session_id is not None:
+            record["extra"]["session_id"] = session_id
 
 
 def instrument_tool_calls(mcp: MCPServer, registry: SessionRegistry) -> None:
@@ -60,15 +77,14 @@ def instrument_tool_calls(mcp: MCPServer, registry: SessionRegistry) -> None:
         # perf_counter() has always been that clock, on every version and OS.
         started = time.perf_counter()
         error = False
+        token = _tool_call_context.set(context)
         try:
-            # Tag what the tool logs with its session, for the log file. A
-            # first-time session has no id yet: it is created inside the tool.
-            with logger.contextualize(session_id=_session_id_of(context)):
-                return await original_call_tool(name, arguments, *args, **kwargs)
+            return await original_call_tool(name, arguments, *args, **kwargs)
         except Exception:
             error = True
             raise
         finally:
+            _tool_call_context.reset(token)
             try:
                 elapsed_ms = (time.perf_counter() - started) * 1000
                 session_id = _session_id_of(context)
@@ -85,5 +101,6 @@ def instrument_tool_calls(mcp: MCPServer, registry: SessionRegistry) -> None:
                 logger.warning(f"Could not record the call to {name}: {exc}")
 
     tool_manager.call_tool = call_tool
+    logger.configure(patcher=_tag_session)  # The server's only patcher.
     setattr(tool_manager, _INSTRUMENTED_FLAG, True)
     logger.debug("Tool calls are now attributed to sessions")

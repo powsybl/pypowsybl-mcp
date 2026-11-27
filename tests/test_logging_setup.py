@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import sys
 from unittest.mock import patch
 
@@ -55,7 +56,9 @@ def reset_logging(monkeypatch):
         if sink_id is not None:
             logger.remove(sink_id)
     if logging_setup._stderr_sink_id is not None:
-        logger.add(sys.stderr)
+        # Recorded as the output setup_logging replaces, as loguru's default
+        # one is, so the next test does not run with two stderr outputs.
+        logging_setup._early_stderr_sink_id = logger.add(sys.stderr)
     logging_setup._configured = False
     logging_setup._level = logging_setup.DEFAULT_LOG_LEVEL
     logging_setup._stderr_sink_id = None
@@ -489,3 +492,53 @@ def test_read_only_log_dir_falls_back_to_stderr(tmp_path, monkeypatch):
     assert "stderr only" in mock_warning.call_args[0][0]
     assert logging_setup._file_sink_id is None
     assert list(log_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize("name", ["{env}", "{time}", "a}b{"])
+def test_braces_in_log_dir_are_literal(tmp_path, monkeypatch, name):
+    log_dir = tmp_path / name
+    monkeypatch.setenv("LOG_DIR", str(log_dir))
+
+    log_file = setup_logging()
+    logger.info("in a braced directory")
+
+    assert log_file == log_dir / LOG_FILE_NAME
+    assert "in a braced directory" in _read(log_file)
+    assert [p.name for p in tmp_path.iterdir()] == [name]
+
+
+def test_any_file_sink_error_falls_back_to_stderr(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+
+    with patch.object(logging_setup, "_add_file_sink", side_effect=KeyError("x")):
+        assert setup_logging() is None
+
+    assert logging_setup._file_sink_id is None
+
+
+def test_stderr_follows_log_level_from_import(tmp_path):
+    # A fresh interpreter, as the package sets stderr up when imported.
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("LOG_LEVEL=WARNING\n")
+    script = (
+        "import sys, dotenv\n"
+        "load = dotenv.load_dotenv\n"
+        "dotenv.load_dotenv = lambda **kwargs: load(sys.argv[1], **kwargs)\n"
+        "import pypowsybl_mcp\n"
+        "from loguru import logger\n"
+        "logger.debug('import-time detail')\n"
+        "logger.warning('import-time problem')\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(dotenv)],
+        capture_output=True,
+        check=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert "Loaded .env file" not in result.stderr  # INFO
+    assert "import-time detail" not in result.stderr
+    line = next(l for l in result.stderr.splitlines() if "import-time problem" in l)
+    assert re.match(r"\S+ \S+ [+-]\d{2}:\d{2} \| WARNING", line)

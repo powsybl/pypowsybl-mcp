@@ -269,3 +269,28 @@ async def test_logs_of_a_tool_call_carry_its_session(registry):
     finished = next(m for m in sessions if m.startswith("Tool working_tool finished"))
     assert sessions[finished] == "s1"
     assert sessions["after the call"] is None
+
+
+@pytest.mark.asyncio
+async def test_logs_of_a_first_call_carry_the_session_once_created(registry):
+    mcp = MCPServer("TestServer")
+    context = SimpleNamespace(session=SimpleNamespace())
+
+    @mcp.tool()
+    def first_tool() -> str:
+        logger.info("before the id exists")
+        context.session.session_id = "new-session"  # as get_session_id() does
+        logger.info("after the id exists")
+        return "fine"
+
+    instrument_tool_calls(mcp, registry)
+    records = []
+    sink_id = logger.add(lambda message: records.append(message.record), level=0)
+    try:
+        await mcp._tool_manager.call_tool("first_tool", {}, context=context)
+    finally:
+        logger.remove(sink_id)
+
+    sessions = {r["message"]: r["extra"].get("session_id") for r in records}
+    assert sessions["before the id exists"] is None
+    assert sessions["after the id exists"] == "new-session"

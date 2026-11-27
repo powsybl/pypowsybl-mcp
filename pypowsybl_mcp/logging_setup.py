@@ -18,10 +18,10 @@ environment variables.
 
 The package logs before the server starts, while it is imported (the .env
 loading, the TLS verification warning, the plugin discovery). The package
-calls `start_early_buffer` first thing, so those messages are kept in memory
-and `setup_logging` writes them at the top of the file: the file tells the
-startup, without importing the package writing files on its own (tests,
-scripts). Only loguru messages are kept: what libraries log through the
+calls `start_early_buffer` first thing: stderr follows LOG_LEVEL from then
+on, and those messages are kept in memory until `setup_logging` writes them at
+the top of the file. The file tells the startup, without importing the
+package writing files on its own (tests, scripts). Only loguru messages are kept: what libraries log through the
 standard `logging` module before `setup_logging` reaches stderr only.
 
 This module only imports loguru and the standard library: the package imports
@@ -102,10 +102,19 @@ _early_messages: dict[str, list[tuple[int, str]]] = {
     log_format: [] for log_format in LOG_FORMATS
 }
 _early_sink_ids: list[int] = []
+# The stderr output start_early_buffer puts in place of loguru's default one.
+_early_stderr_sink_id: int | None = None
+
+
+def _at_log_level(record) -> bool:
+    # LOG_LEVEL is read on each message: .env is loaded after the startup
+    # outputs start.
+    return record["level"].no >= logger.level(_read_level()[0]).no
 
 
 def start_early_buffer() -> None:
-    """Keep the messages logged from now on until the file sink is added.
+    """Make stderr follow LOG_LEVEL and the server's layout already, and keep
+    the messages logged from now on until the file sink is added.
 
     The first EARLY_BUFFER_SIZE messages at LOG_LEVEL or above are kept: the
     start of the startup matters most. Both checks happen in the sink
@@ -113,8 +122,18 @@ def start_early_buffer() -> None:
     process that never calls setup_logging (a script) pays almost nothing for
     these sinks.
     """
+    global _early_stderr_sink_id
+
     if _early_sink_ids:
         return
+    try:
+        logger.remove(0)  # Loguru's default output: every level from DEBUG up.
+    except ValueError:
+        pass  # Already replaced by whoever configured loguru: left alone.
+    else:
+        _early_stderr_sink_id = logger.add(
+            sys.stderr, level=0, filter=_at_log_level, format=_format, diagnose=False
+        )
     for log_format, messages in _early_messages.items():
 
         def keep(message, messages=messages) -> None:
@@ -123,12 +142,7 @@ def start_early_buffer() -> None:
             messages.append((message.record["level"].no, str(message)))
 
         def wanted(record, messages=messages) -> bool:
-            # LOG_LEVEL is read on each message: .env is loaded after the
-            # buffer starts.
-            return (
-                len(messages) < EARLY_BUFFER_SIZE
-                and record["level"].no >= logger.level(_read_level()[0]).no
-            )
+            return len(messages) < EARLY_BUFFER_SIZE and _at_log_level(record)
 
         _early_sink_ids.append(
             logger.add(
@@ -278,7 +292,7 @@ def setup_logging() -> Path | None:
     and replaced by its default. Calling this again changes nothing and
     returns the file already in use.
     """
-    global _configured, _level, _stderr_sink_id, _log_file
+    global _configured, _level, _stderr_sink_id, _early_stderr_sink_id, _log_file
 
     if _configured:
         return _log_file
@@ -288,11 +302,14 @@ def setup_logging() -> Path | None:
     log_format, format_problem = _read_format()
     level_no = logger.level(_level).no
 
-    # Loguru's default output (handler 0) logs everything from DEBUG up.
-    try:
-        logger.remove(0)
-    except ValueError:
-        pass  # Already removed.
+    # The stderr output replaced: the startup one, or loguru's default one if
+    # start_early_buffer did not run first.
+    for sink_id in {0, _early_stderr_sink_id} - {None}:
+        try:
+            logger.remove(sink_id)
+        except ValueError:
+            pass  # Already removed.
+    _early_stderr_sink_id = None
     # `diagnose=False`, as for the files: `docker logs` keeps stderr on disk,
     # and the values of local variables in tracebacks may hold secrets.
     _stderr_sink_id = logger.add(
@@ -312,7 +329,10 @@ def setup_logging() -> Path | None:
 
 
 def _add_file_sink(path: Path, level: str, log_format: str, record_filter) -> int:
-    """Add a rotated file sink at `path`; raise OSError if it cannot be opened."""
+    """Add a rotated file sink at `path`; raise if it cannot be opened."""
+    # Loguru reads `{...}` in a file path as a field to fill (e.g. `{time}`):
+    # double the braces so that a directory named with them stays literal.
+    template = str(path).replace("{", "{{").replace("}", "}}")
     # `enqueue=True` hands the messages to a worker thread, which formats and
     # writes them and also rotates the file (renaming, compressing, deleting
     # the oldest files). The calling thread, often the asyncio event loop,
@@ -321,7 +341,7 @@ def _add_file_sink(path: Path, level: str, log_format: str, record_filter) -> in
     # `diagnose=False` keeps the values of local variables, which may hold
     # secrets, out of the tracebacks persisted on disk.
     return logger.add(
-        path,
+        template,
         level=level,
         filter=record_filter,
         format=_format,
@@ -355,7 +375,8 @@ def _add_file_sinks(
         with log_file.open("a", encoding="utf-8") as f:
             f.writelines(early_messages)
         _file_sink_id = _add_file_sink(log_file, level, log_format, _is_not_access)
-    except OSError as e:
+    # Any error, not only OSError: a logging problem must not stop the server.
+    except Exception as e:  # noqa: BLE001
         logger.warning(f"Cannot write logs to {log_file} ({e}); logging to stderr only")
         return None
     logger.info(f"Writing logs to {log_file}")
@@ -363,7 +384,7 @@ def _add_file_sinks(
     access_log_file = directory / ACCESS_LOG_FILE_NAME
     try:
         _access_sink_id = _add_file_sink(access_log_file, level, log_format, _is_access)
-    except OSError as e:
+    except Exception as e:  # noqa: BLE001 - as above
         logger.warning(
             f"Cannot write the HTTP access log to {access_log_file} ({e}); "
             f"requests are logged to stderr only"
