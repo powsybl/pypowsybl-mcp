@@ -21,11 +21,11 @@ from pypowsybl_mcp.tools.utils.import_options import (
     build_load_arguments,
     describe_import_options,
     explain_load_error,
+    has_boundary_profile,
     import_extensions,
     import_format_of,
     load_warnings,
     resolve_boundary_set,
-    ships_boundary,
 )
 from pypowsybl_mcp.utils import DOWNLOAD_BASE_URL, DOWNLOAD_LINK_EXPIRY_SECONDS
 from pypowsybl_mcp.utils.download_utils import generate_download_link
@@ -166,9 +166,10 @@ class IOTools(PyPowsyblTool):
             boundary_url (str, optional): URL of a CGMES boundary set to download:
                 a .zip, or a single .xml only for a CGMES 3 boundary (EQBD alone);
                 a CGMES 2.4.15 boundary needs both EQBD and TPBD, so a .zip.
-                Exclusive with boundary_set. Without either, the boundary files
-                may also sit in the CGMES archive itself, and PowSyBl then uses
-                those, not the boundary set given.
+                A download holding no boundary profile (an error page, say) is
+                refused. Exclusive with boundary_set. Without either, the
+                boundary files may also sit in the CGMES archive itself, and
+                PowSyBl then uses those, not the boundary set given.
 
         Supported Formats:
             Same as load_network_from_file: XIIDM, UCTE, MATPOWER, PSS/E, RAW, CGMES
@@ -264,7 +265,17 @@ class IOTools(PyPowsyblTool):
             boundary_path = await asyncio.to_thread(
                 _download_to_dir, boundary_url, boundary_dir, "boundary", True
             )
-            return boundary_dir, f"boundary_url ({os.path.basename(boundary_path)})"
+            file_name = os.path.basename(boundary_path)
+            # PowSyBl would skip anything else without a word (an error or login
+            # page, say), and the load fail on the boundary objects it lacks.
+            if not await asyncio.to_thread(has_boundary_profile, boundary_path):
+                raise ValueError(
+                    f"boundary_url did not return a CGMES boundary set: the "
+                    f"downloaded file ({file_name}) holds no boundary profile "
+                    "(EQBD / TPBD). Check that the URL serves the boundary .zip "
+                    "itself, not an error or login page."
+                )
+            return boundary_dir, f"boundary_url ({file_name})"
         return None, None
 
     @staticmethod
@@ -294,7 +305,7 @@ class IOTools(PyPowsyblTool):
         warnings, boundary_used = load_warnings(
             load_args,
             import_format,
-            bool(load_args.boundary) and ships_boundary(path),
+            bool(load_args.boundary) and has_boundary_profile(path),
         )
         result = {
             "status": Status.SUCCESS,
@@ -348,9 +359,10 @@ class IOTools(PyPowsyblTool):
             boundary_url (str, optional): URL of a CGMES boundary set to download:
                 a .zip, or a single .xml only for a CGMES 3 boundary (EQBD alone);
                 a CGMES 2.4.15 boundary needs both EQBD and TPBD, so a .zip.
-                Exclusive with boundary_set. Without either, the boundary files
-                may also sit in the CGMES archive itself, and PowSyBl then uses
-                those, not the boundary set given.
+                A download holding no boundary profile (an error page, say) is
+                refused. Exclusive with boundary_set. Without either, the
+                boundary files may also sit in the CGMES archive itself, and
+                PowSyBl then uses those, not the boundary set given.
 
         Supported Formats:
             XIIDM, UCTE, MATPOWER, PSS/E, RAW, CGMES

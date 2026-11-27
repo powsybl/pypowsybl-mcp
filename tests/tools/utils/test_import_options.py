@@ -27,10 +27,10 @@ from pypowsybl_mcp.tools.utils.import_options import (
     default_boundary_set_available,
     describe_import_options,
     explain_load_error,
+    has_boundary_profile,
     import_format_of,
     list_boundary_sets,
     resolve_boundary_set,
-    ships_boundary,
 )
 from pypowsybl_mcp.tools.utils.io import IOTools
 
@@ -374,16 +374,16 @@ def cgmes_with_boundary(tmp_path_factory, cgmes_files):
     return path
 
 
-def test_ships_boundary(cgmes_files, cgmes_with_boundary, tmp_path):
+def test_has_boundary_profile(cgmes_files, cgmes_with_boundary, tmp_path):
     cgmes_zip, boundary_zip = cgmes_files
-    assert ships_boundary(str(cgmes_with_boundary)) is True
-    assert ships_boundary(str(boundary_zip)) is True
-    assert ships_boundary(str(cgmes_zip)) is False
+    assert has_boundary_profile(str(cgmes_with_boundary)) is True
+    assert has_boundary_profile(str(boundary_zip)) is True
+    assert has_boundary_profile(str(cgmes_zip)) is False
     # A directory of profiles, and paths that are not CGMES at all
     with zipfile.ZipFile(cgmes_with_boundary) as archive:
         archive.extractall(tmp_path / "profiles")
-    assert ships_boundary(str(tmp_path / "profiles")) is True
-    assert ships_boundary(str(tmp_path / "missing.zip")) is False
+    assert has_boundary_profile(str(tmp_path / "profiles")) is True
+    assert has_boundary_profile(str(tmp_path / "missing.zip")) is False
 
 
 @pytest.mark.asyncio
@@ -491,3 +491,100 @@ async def test_network_url_without_extension(io_tools, tmp_path, fmt):
     )
     assert result["status"] == "success", result
     assert result["import_format"] == fmt
+
+
+@pytest.fixture(scope="module")
+def per_profile_layouts(tmp_path_factory, cgmes_files):
+    """The model laid out as PowSyBl also reads it: a folder of per-profile zips
+    and a zip of those zips, each with and without the boundary set's zip."""
+    cgmes_zip, boundary_zip = cgmes_files
+    root = tmp_path_factory.mktemp("per_profile")
+    layouts = {}
+    for with_bd in (False, True):
+        folder = root / f"folder_{with_bd}"
+        folder.mkdir()
+        with zipfile.ZipFile(cgmes_zip) as archive:
+            for name in archive.namelist():
+                with zipfile.ZipFile(folder / f"{name[:-4]}.zip", "w") as profile:
+                    profile.writestr(name, archive.read(name))
+        if with_bd:
+            shutil.copy(boundary_zip, folder)
+        nested = root / f"nested_{with_bd}.zip"
+        with zipfile.ZipFile(nested, "w") as archive:
+            for zipped in sorted(folder.iterdir()):
+                archive.write(zipped, zipped.name)
+        layouts[("folder", with_bd)] = folder
+        layouts[("nested", with_bd)] = nested
+    return layouts
+
+
+def test_boundary_profile_in_per_profile_zips(per_profile_layouts):
+    for (layout, with_bd), path in per_profile_layouts.items():
+        assert has_boundary_profile(str(path)) is with_bd, (layout, with_bd)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("layout", ["folder", "nested"])
+async def test_boundary_set_ignored_when_a_profile_zip_ships_one(
+    io_tools, per_profile_layouts, boundary_sets_dir, layout
+):
+    result = await io_tools.load_network_from_file(
+        str(per_profile_layouts[(layout, True)]),
+        "be",
+        boundary_set="BDS_test.zip",
+        ctx=_Ctx(),
+    )
+    assert result["status"] == "success", result
+    assert "boundary" not in result
+    assert "ships its own boundary profiles" in " ".join(result["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_boundary_set_used_by_per_profile_zips_without_one(
+    io_tools, per_profile_layouts, boundary_sets_dir
+):
+    result = await io_tools.load_network_from_file(
+        str(per_profile_layouts[("folder", False)]),
+        "be",
+        boundary_set="BDS_test.zip",
+        ctx=_Ctx(),
+    )
+    assert result["status"] == "success", result
+    assert result["boundary"] == "boundary_set 'BDS_test.zip'"
+    assert "warnings" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("served", "content"),
+    [
+        # An error or login page: saved as download.xml, PowSyBl would skip it
+        ("download", b"<!DOCTYPE html><html><body>Please log in</body></html>"),
+        # An archive of something else
+        ("download", None),
+        # A CGMES file, but not a boundary one
+        (
+            "EQ.xml",
+            (
+                b'<?xml version="1.0"?><rdf:RDF><md:Model.profile>'
+                b"http://entsoe.eu/CIM/EquipmentCore/3/1</md:Model.profile></rdf:RDF>"
+            ),
+        ),
+    ],
+)
+async def test_boundary_url_that_is_not_a_boundary_set_is_refused(
+    io_tools, cgmes_files, tmp_path, served, content
+):
+    cgmes_zip, _ = cgmes_files
+    path = tmp_path / served
+    if content is None:
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("readme.txt", "nothing here")
+    else:
+        path.write_bytes(content)
+    result = await io_tools.load_network_from_url(
+        cgmes_zip.as_uri(), "be", boundary_url=path.as_uri(), ctx=_Ctx()
+    )
+    assert result["status"] == "error"
+    assert "did not return a CGMES boundary set" in result["message"]
+    assert "holds no boundary profile" in result["message"]

@@ -24,15 +24,16 @@ Both loading tools take the same import options:
 | `parameters`      | Importer parameters by full name, e.g. `{"iidm.import.cgmes.naming-strategy": "cgmes"}`. An unknown name is refused: PowSyBl itself would ignore it silently and load the file without the option. A known name of another format (a CGMES parameter for an XIIDM file) loads, with a warning in the answer. |
 | `post_processors` | Post-processors to run, CGMES ones (`EntsoeCategory`, `cgmesDLImport`, …) and generic ones (`geoJsonImporter`, …) in one list. `EntsoeCategory` only tags the generating units whose CGMES type maps to an ENTSO-E category, possibly none. |
 | `boundary_set`    | Name of a CGMES boundary set the server provides (a directory or `.zip` in `CGMES_BOUNDARY_SETS_DIR`, see the [Configuration Reference](configuration.md)). |
-| `boundary_url`    | URL of a CGMES boundary set to download: a `.zip`, or a single `.xml` only for a CGMES 3 boundary (EQBD alone). A CGMES 2.4.15 boundary needs both EQBD and TPBD, so it must come as a `.zip`. A download whose URL lacks the extension (`…/download?id=42`) is named after its content. Exclusive with `boundary_set`. |
+| `boundary_url`    | URL of a CGMES boundary set to download: a `.zip`, or a single `.xml` only for a CGMES 3 boundary (EQBD alone). A CGMES 2.4.15 boundary needs both EQBD and TPBD, so it must come as a `.zip`. A download whose URL lacks the extension (`…/download?id=42`) is named after its content, and one holding no boundary profile (an error or login page, say) is refused. Exclusive with `boundary_set`. |
 
 `get_import_options` also says, as `default_boundary_set`, whether a CGMES load given no boundary set still finds one
 at PowSyBl's default location (never the path itself), so a client can tell beforehand that a model depending on a
 boundary set it does not ship would fail. `iidm.import.cgmes.boundary-location` cannot be passed as a parameter: it is
 a path on the server's disk. Without a
 boundary option, the boundary profiles can also sit in the CGMES archive itself, and the PowSyBl default location
-applies otherwise. When the archive ships its own boundary profiles (told by their header profile, not their file
-name), PowSyBl reads those and ignores the boundary set given: the answer then leaves `boundary` out and says so in
+applies otherwise. When the model ships its own boundary profiles (told by their header profile, not their file
+name), whether loose in the archive, in a zip inside it, or in a zip of a folder of per-profile zips, PowSyBl reads
+those and ignores the boundary set given: the answer then leaves `boundary` out and says so in
 `warnings`. A CGMES load that fails for want of a boundary set says so. On success, the answer also gives the
 `import_format` (the importer that read the file), the `source_format` (the format the network first came from: an
 IIDM file keeps its origin's), the options applied and, if any, `warnings` listing those the importer ignored.

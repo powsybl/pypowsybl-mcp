@@ -23,6 +23,7 @@ Two rules hold whatever the client sends:
   (`CGMES_BOUNDARY_SETS_DIR`) or a URL the server downloads it from.
 """
 
+import io
 import json
 import os
 import zipfile
@@ -303,30 +304,56 @@ def _file_is_boundary_profile(path: str) -> bool:
         return _is_boundary_profile(f.read(_HEADER_BYTES))
 
 
-def ships_boundary(path: str) -> bool:
-    """Whether the CGMES model at `path` carries its own boundary profiles.
+def _zip_has_boundary_profile(archive: zipfile.ZipFile, nested: bool) -> bool:
+    """Whether a profile of `archive` is a boundary one; with `nested`, the
+    profiles of the zips inside it count too, as PowSyBl reads those."""
+    for info in archive.infolist():
+        name = info.filename.lower()
+        if info.is_dir():
+            continue
+        if name.endswith(".xml"):
+            with archive.open(info) as entry:
+                if _is_boundary_profile(entry.read(_HEADER_BYTES)):
+                    return True
+        elif nested and name.endswith(".zip"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(archive.read(info))) as inner:
+                    if _zip_has_boundary_profile(inner, nested=False):
+                        return True
+            except zipfile.BadZipFile:
+                continue
+    return False
 
-    PowSyBl then reads those and ignores the boundary set it is given. It tells
-    a boundary file by the profile its header declares, not by its name (one may
-    well be named `..._EQ.xml`), so the same test is made here.
+
+def has_boundary_profile(path: str) -> bool:
+    """Whether the CGMES files at `path` include a boundary profile (EQBD, TPBD).
+
+    `path` is laid out as PowSyBl reads a model or a boundary set: a zip (whose
+    profiles may sit in zips of their own), a single .xml, or a folder of .xml
+    files and zips of them (one per profile, say). PowSyBl tells a boundary file
+    by the profile its header declares, not by its name (one may well be named
+    `..._EQ.xml`), so the same test is made here.
+
+    A model that ships its own boundary profiles has PowSyBl read those and
+    ignore the boundary set it is given; a downloaded boundary set without any
+    is not one.
     """
     try:
         if os.path.isdir(path):
-            return any(
-                _file_is_boundary_profile(os.path.join(path, name))
-                for name in os.listdir(path)
-                if name.lower().endswith(".xml")
-                and os.path.isfile(os.path.join(path, name))
-            )
-        if zipfile.is_zipfile(path):
-            with zipfile.ZipFile(path) as archive:
-                for info in archive.infolist():
-                    if info.is_dir() or not info.filename.lower().endswith(".xml"):
-                        continue
-                    with archive.open(info) as entry:
-                        if _is_boundary_profile(entry.read(_HEADER_BYTES)):
+            for name in sorted(os.listdir(path)):
+                entry, lower = os.path.join(path, name), name.lower()
+                if not os.path.isfile(entry):
+                    continue
+                if lower.endswith(".xml") and _file_is_boundary_profile(entry):
+                    return True
+                if lower.endswith(".zip") and zipfile.is_zipfile(entry):
+                    with zipfile.ZipFile(entry) as archive:
+                        if _zip_has_boundary_profile(archive, nested=False):
                             return True
             return False
+        if zipfile.is_zipfile(path):
+            with zipfile.ZipFile(path) as archive:
+                return _zip_has_boundary_profile(archive, nested=True)
         if path.lower().endswith(".xml"):
             return _file_is_boundary_profile(path)
     except (OSError, zipfile.BadZipFile) as e:
