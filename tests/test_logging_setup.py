@@ -17,7 +17,12 @@ import uvicorn.config
 from loguru import logger
 
 from pypowsybl_mcp import logging_setup
-from pypowsybl_mcp.logging_setup import LOG_FILE_NAME, setup_logging
+from pypowsybl_mcp.logging_setup import (
+    ACCESS_LOG_FILE_NAME,
+    LOG_FILE_NAME,
+    setup_logging,
+    std_log_level,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -42,15 +47,22 @@ def reset_logging(monkeypatch):
     yield
     logging_setup._stop_early_buffer("text", 0)
 
-    for sink_id in (logging_setup._file_sink_id, logging_setup._stderr_sink_id):
+    for sink_id in (
+        logging_setup._file_sink_id,
+        logging_setup._access_sink_id,
+        logging_setup._stderr_sink_id,
+    ):
         if sink_id is not None:
             logger.remove(sink_id)
     if logging_setup._stderr_sink_id is not None:
         logger.add(sys.stderr)
     logging_setup._configured = False
+    logging_setup._level = logging_setup.DEFAULT_LOG_LEVEL
     logging_setup._stderr_sink_id = None
     logging_setup._file_sink_id = None
+    logging_setup._access_sink_id = None
     logging_setup._log_file = None
+    logging_setup._access_log_file = None
 
     root.handlers[:], root.level = root_state
     for name, (handlers, propagate) in uvicorn_state.items():
@@ -238,7 +250,7 @@ def test_standard_logging_reaches_the_file(tmp_path, monkeypatch):
     assert f"{__name__}:test_standard_logging_reaches_the_file" in content
 
 
-def test_uvicorn_logs_reach_the_file_once_uvicorn_is_configured(tmp_path, monkeypatch):
+def test_uvicorn_logs_reach_the_files_once_uvicorn_is_configured(tmp_path, monkeypatch):
     monkeypatch.setenv("LOG_DIR", str(tmp_path))
 
     log_file = setup_logging()
@@ -249,12 +261,123 @@ def test_uvicorn_logs_reach_the_file_once_uvicorn_is_configured(tmp_path, monkey
     logging.getLogger("uvicorn.access").info(
         '%s - "%s %s HTTP/%s" %d', "127.0.0.1:5000", "POST", "/mcp", "1.1", 200
     )
+    logger.info("Serving download from temp file")
 
     content = _read(log_file)
+    access = (tmp_path / ACCESS_LOG_FILE_NAME).read_text(encoding="utf-8")
+    # Server errors stay with the server's own messages; requests go apart.
     assert "[Errno 98] address already in use" in content
-    assert '127.0.0.1:5000 - "POST /mcp HTTP/1.1" 200' in content
+    assert "Serving download from temp file" in content
+    assert '"POST /mcp HTTP/1.1"' not in content
+    assert '127.0.0.1:5000 - "POST /mcp HTTP/1.1" 200' in access
+    assert "address already in use" not in access
+    assert "Serving download" not in access
     for name in logging_setup._UVICORN_LOGGERS:
         assert logging.getLogger(name).handlers == []
+
+
+def test_requests_are_logged_to_stderr_too(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+
+    setup_logging()
+    logging.getLogger("uvicorn.access").info('127.0.0.1:5000 - "GET /x HTTP/1.1" 200')
+
+    assert '"GET /x HTTP/1.1" 200' in capsys.readouterr().err
+
+
+def test_unwritable_access_log_keeps_the_main_log(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    # A directory where the access log should be makes opening it fail.
+    (tmp_path / ACCESS_LOG_FILE_NAME).mkdir()
+
+    log_file = setup_logging()
+    logger.info("still logged")
+
+    content = _read(log_file)
+    assert log_file == tmp_path / LOG_FILE_NAME
+    assert "still logged" in content
+    assert "Cannot write the HTTP access log" in content
+    assert logging_setup._access_sink_id is None
+
+
+@pytest.mark.parametrize(
+    "level, expected",
+    [("TRACE", "DEBUG"), ("debug", "DEBUG"), ("SUCCESS", "INFO"), ("ERROR", "ERROR")],
+)
+def test_std_log_level_follows_log_level(monkeypatch, tmp_path, level, expected):
+    monkeypatch.setenv("LOG_DIR", "")
+    monkeypatch.setenv("LOG_LEVEL", level)
+
+    setup_logging()
+
+    assert std_log_level() == expected
+
+
+def test_uvicorn_debug_logs_follow_log_level(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+
+    log_file = setup_logging()
+    # main() passes std_log_level() to the MCP SDK, which hands it to uvicorn.
+    uvicorn.config.Config(
+        app=lambda scope, receive, send: None, log_level=std_log_level().lower()
+    )
+    logging.getLogger("uvicorn.error").debug("ASGI detail")
+
+    assert "ASGI detail" in _read(log_file)
+
+
+def test_a_broken_standard_log_call_does_not_raise(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    setup_logging()
+
+    # One argument for two placeholders: formatting the message fails.
+    logging.getLogger("some.library").warning("%s and %s", "one")  # noqa: PLE1206
+
+    assert "--- Logging error ---" in capsys.readouterr().err
+
+
+def test_stderr_tracebacks_do_not_show_variable_values(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("LOG_DIR", "")
+    setup_logging()
+
+    token = "s3cr3t-t0ken"
+    try:
+        raise RuntimeError("bad token" if token else "no token")
+    except RuntimeError:
+        logger.exception("check failed")
+
+    stderr = capsys.readouterr().err
+    assert "RuntimeError: bad token" in stderr
+    assert "s3cr3t-t0ken" not in stderr
+
+
+def test_startup_buffer_keeps_the_first_messages(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(logging_setup, "EARLY_BUFFER_SIZE", 3)
+    logging_setup.start_early_buffer()
+    for i in range(5):
+        logger.info(f"startup step {i}")
+
+    content = _read(setup_logging())
+
+    assert all(f"startup step {i}" in content for i in range(3))
+    assert "startup step 3" not in content
+    assert "startup step 4" not in content
+
+
+def test_messages_below_log_level_do_not_fill_the_startup_buffer(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(logging_setup, "EARLY_BUFFER_SIZE", 3)
+    logging_setup.start_early_buffer()
+    for i in range(5):
+        logger.debug(f"detail {i}")
+    logger.warning("the warning that matters")
+
+    content = _read(setup_logging())
+
+    assert "the warning that matters" in content
+    assert "detail" not in content
 
 
 def test_rotated_files_are_compressed_and_pruned(tmp_path, monkeypatch):
@@ -267,7 +390,11 @@ def test_rotated_files_are_compressed_and_pruned(tmp_path, monkeypatch):
         logger.info(f"line {i} " + "x" * 100)
     logger.complete()
 
-    rotated = sorted(p.name for p in tmp_path.iterdir() if p.name != LOG_FILE_NAME)
+    rotated = sorted(
+        p.name
+        for p in tmp_path.iterdir()
+        if p.name.startswith("pypowsybl_mcp.") and p.name != LOG_FILE_NAME
+    )
     assert rotated, "nothing was rotated"
     assert all(name.endswith(".log.gz") for name in rotated)
     assert len(rotated) <= 2

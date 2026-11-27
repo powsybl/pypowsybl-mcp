@@ -7,6 +7,7 @@
 import signal
 import subprocess
 import sys
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -182,12 +183,15 @@ def test_main_runs_the_server_with_a_valid_lf_config(monkeypatch):
 
     with (
         patch("pypowsybl_mcp.server.setup_logging") as mock_setup_logging,
+        patch("pypowsybl_mcp.server.std_log_level", return_value="DEBUG"),
         patch("pypowsybl_mcp.server.register_tools") as mock_register,
         patch("pypowsybl_mcp.server.mcp") as mock_mcp,
     ):
         main()
 
     mock_setup_logging.assert_called_once_with()
+    # Handed to uvicorn by the MCP SDK.
+    assert mock_mcp.settings.log_level == "DEBUG"
     mock_register.assert_called_once_with(mock_mcp)
     mock_mcp.run.assert_called_once_with(
         transport="streamable-http", host="0.0.0.0", port=8123
@@ -223,7 +227,9 @@ def test_logs_queued_when_sigterm_arrives_reach_the_file(tmp_path):
     # messages logged just before are still queued for the log file.
     log_dir = tmp_path / "logs"
     dotenv = tmp_path / ".env"
-    dotenv.write_text(f"LOG_DIR={log_dir}\n")
+    # LOG_LEVEL and LOG_FORMAT too: the subprocess inherits the developer's
+    # .env, loaded into os.environ when pytest imported the package.
+    dotenv.write_text(f"LOG_DIR={log_dir}\nLOG_LEVEL=INFO\nLOG_FORMAT=text\n")
     script = (
         "import runpy, signal, sys, dotenv\n"
         "load = dotenv.load_dotenv\n"
@@ -281,3 +287,48 @@ def test_running_the_module_checks_the_lf_config(tmp_path):
     assert result.returncode == 1
     assert "Invalid load flow configuration" in result.stderr
     assert str(path) in result.stderr
+
+
+def test_a_second_sigterm_does_not_interrupt_the_final_flush():
+    from pypowsybl_mcp.server import main
+
+    handlers_during_flush = []
+
+    with (
+        patch("pypowsybl_mcp.server.setup_logging"),
+        patch("pypowsybl_mcp.server.register_tools"),
+        patch("pypowsybl_mcp.server.mcp"),
+        patch("pypowsybl_mcp.server.logger") as mock_logger,
+    ):
+        mock_logger.complete.side_effect = lambda: handlers_during_flush.append(
+            signal.getsignal(signal.SIGTERM)
+        )
+        main()
+
+    assert handlers_during_flush == [signal.SIG_IGN]
+
+
+def test_main_runs_outside_the_main_thread():
+    from pypowsybl_mcp.server import main
+
+    previous = signal.getsignal(signal.SIGTERM)
+    errors = []
+
+    def run():
+        try:
+            main()
+        except Exception as e:  # noqa: BLE001 - reported by the assertion
+            errors.append(e)
+
+    with (
+        patch("pypowsybl_mcp.server.setup_logging"),
+        patch("pypowsybl_mcp.server.register_tools"),
+        patch("pypowsybl_mcp.server.mcp") as mock_mcp,
+    ):
+        thread = threading.Thread(target=run)
+        thread.start()
+        thread.join(timeout=60)
+
+    assert errors == []
+    mock_mcp.run.assert_called_once()
+    assert signal.getsignal(signal.SIGTERM) == previous
