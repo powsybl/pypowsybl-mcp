@@ -4,8 +4,10 @@
 #  file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #  SPDX-License-Identifier: MPL-2.0
 
+import signal
 import subprocess
 import sys
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -159,6 +161,7 @@ def test_main_refuses_to_start_with_an_invalid_lf_config(bad_lf_config):
 
     with (
         patch("pypowsybl_mcp.server.logger") as mock_logger,
+        patch("pypowsybl_mcp.server.setup_logging"),
         patch("pypowsybl_mcp.server.register_tools") as mock_register,
         patch("pypowsybl_mcp.server.mcp") as mock_mcp,
         pytest.raises(SystemExit) as exc_info,
@@ -179,15 +182,78 @@ def test_main_runs_the_server_with_a_valid_lf_config(monkeypatch):
     monkeypatch.setenv("MCP_PORT", "8123")
 
     with (
+        patch("pypowsybl_mcp.server.setup_logging") as mock_setup_logging,
+        patch("pypowsybl_mcp.server.std_log_level", return_value="DEBUG"),
         patch("pypowsybl_mcp.server.register_tools") as mock_register,
         patch("pypowsybl_mcp.server.mcp") as mock_mcp,
     ):
         main()
 
+    mock_setup_logging.assert_called_once_with()
+    # Handed to uvicorn by the MCP SDK.
+    assert mock_mcp.settings.log_level == "DEBUG"
     mock_register.assert_called_once_with(mock_mcp)
     mock_mcp.run.assert_called_once_with(
         transport="streamable-http", host="0.0.0.0", port=8123
     )
+
+
+def test_main_exits_through_python_on_sigterm_while_running():
+    from pypowsybl_mcp.server import _exit_on_sigterm, main
+
+    previous = signal.getsignal(signal.SIGTERM)
+    handlers_during_run = []
+
+    with (
+        patch("pypowsybl_mcp.server.setup_logging"),
+        patch("pypowsybl_mcp.server.register_tools"),
+        patch("pypowsybl_mcp.server.mcp") as mock_mcp,
+    ):
+        mock_mcp.run.side_effect = lambda **kwargs: handlers_during_run.append(
+            signal.getsignal(signal.SIGTERM)
+        )
+        main()
+
+    assert handlers_during_run == [_exit_on_sigterm]
+    assert signal.getsignal(signal.SIGTERM) == previous
+    with pytest.raises(SystemExit) as exc_info:
+        _exit_on_sigterm(signal.SIGTERM, None)
+    assert exc_info.value.code == 128 + signal.SIGTERM
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM cannot be caught")
+def test_logs_queued_when_sigterm_arrives_reach_the_file(tmp_path):
+    # uvicorn raises SIGTERM again once shut down; this stands in for it. The
+    # messages logged just before are still queued for the log file.
+    log_dir = tmp_path / "logs"
+    dotenv = tmp_path / ".env"
+    # LOG_LEVEL and LOG_FORMAT too: the subprocess inherits the developer's
+    # .env, loaded into os.environ when pytest imported the package.
+    dotenv.write_text(f"LOG_DIR={log_dir}\nLOG_LEVEL=INFO\nLOG_FORMAT=text\n")
+    script = (
+        "import runpy, signal, sys, dotenv\n"
+        "load = dotenv.load_dotenv\n"
+        "dotenv.load_dotenv = lambda **kwargs: load(sys.argv[1], **kwargs)\n"
+        "from loguru import logger\n"
+        "from mcp.server.mcpserver import MCPServer\n"
+        "def run(self, **kwargs):\n"
+        "    for i in range(2000):\n"
+        "        logger.info(f'message {i}')\n"
+        "    signal.raise_signal(signal.SIGTERM)\n"
+        "MCPServer.run = run\n"
+        "runpy.run_module('pypowsybl_mcp.server', run_name='__main__')\n"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(dotenv)],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=120,
+    )
+
+    assert result.returncode == 128 + signal.SIGTERM, result.stderr
+    assert "message 1999" in (log_dir / "pypowsybl_mcp.log").read_text(encoding="utf-8")
 
 
 def test_running_the_module_checks_the_lf_config(tmp_path):
@@ -204,6 +270,9 @@ def test_running_the_module_checks_the_lf_config(tmp_path):
         "import pypowsybl_mcp.proxy as proxy\n"
         "MCPServer.run = lambda self, **kwargs: sys.exit(0)\n"
         "proxy.LF_DEFAULT_PARAMETERS_PATH = Path(sys.argv[1])\n"
+        # Keep the run out of the LOG_DIR set in a developer's .env.
+        "import pypowsybl_mcp.logging_setup as logging_setup\n"
+        "logging_setup.setup_logging = lambda: None\n"
         "runpy.run_module('pypowsybl_mcp.server', run_name='__main__')\n"
     )
 
@@ -218,3 +287,48 @@ def test_running_the_module_checks_the_lf_config(tmp_path):
     assert result.returncode == 1
     assert "Invalid load flow configuration" in result.stderr
     assert str(path) in result.stderr
+
+
+def test_a_second_sigterm_does_not_interrupt_the_final_flush():
+    from pypowsybl_mcp.server import main
+
+    handlers_during_flush = []
+
+    with (
+        patch("pypowsybl_mcp.server.setup_logging"),
+        patch("pypowsybl_mcp.server.register_tools"),
+        patch("pypowsybl_mcp.server.mcp"),
+        patch("pypowsybl_mcp.server.logger") as mock_logger,
+    ):
+        mock_logger.complete.side_effect = lambda: handlers_during_flush.append(
+            signal.getsignal(signal.SIGTERM)
+        )
+        main()
+
+    assert handlers_during_flush == [signal.SIG_IGN]
+
+
+def test_main_runs_outside_the_main_thread():
+    from pypowsybl_mcp.server import main
+
+    previous = signal.getsignal(signal.SIGTERM)
+    errors = []
+
+    def run():
+        try:
+            main()
+        except Exception as e:  # noqa: BLE001 - reported by the assertion
+            errors.append(e)
+
+    with (
+        patch("pypowsybl_mcp.server.setup_logging"),
+        patch("pypowsybl_mcp.server.register_tools"),
+        patch("pypowsybl_mcp.server.mcp") as mock_mcp,
+    ):
+        thread = threading.Thread(target=run)
+        thread.start()
+        thread.join(timeout=60)
+
+    assert errors == []
+    mock_mcp.run.assert_called_once()
+    assert signal.getsignal(signal.SIGTERM) == previous

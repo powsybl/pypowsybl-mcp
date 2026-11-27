@@ -45,6 +45,12 @@ def _parse_verify_ssl(raw: str | None) -> bool:
 
 # Auto-load .env if python-dotenv is available
 if not _initialized:
+    # Start keeping the startup messages for the log file before logging any,
+    # see pypowsybl_mcp.logging_setup.
+    from pypowsybl_mcp.logging_setup import start_early_buffer
+
+    start_early_buffer()
+
     if load_dotenv(override=True):
         logger.info("Loaded .env file")
     else:

@@ -12,6 +12,8 @@ Uses MCPServer for simplified server implementation.
 """
 
 import os
+import signal
+import threading
 from pathlib import Path
 
 from loguru import logger
@@ -23,6 +25,7 @@ from starlette.responses import Response
 
 from pypowsybl_mcp import DEFAULT_PORT
 from pypowsybl_mcp.admin import register_admin_routes
+from pypowsybl_mcp.logging_setup import setup_logging, std_log_level
 from pypowsybl_mcp.plugins import (
     discover_and_load_plugins,
     discover_and_load_resource_plugins,
@@ -168,21 +171,56 @@ register_admin_routes(mcp, pypowsybl_proxies)
 instrument_tool_calls(mcp, SESSIONS)
 
 
+def _exit_on_sigterm(signum, frame):
+    """Exit through Python on SIGTERM, as SIGINT does with KeyboardInterrupt.
+
+    uvicorn handles SIGTERM (what `docker stop` sends) and, once shut down,
+    raises it again for the handler it found. The default one kills the
+    process at once: the `finally` of main() would not run, and the last
+    messages queued for the log file would be lost.
+    """
+    raise SystemExit(128 + signum)
+
+
 def main():
     """Check the configuration, register the tools and run the server."""
-    # Sessions read the default load flow configuration on their first tool
-    # call; refuse to start rather than let every session fail then.
+    setup_logging()
+    # The MCP SDK hands its level to uvicorn, which sets it on its own loggers
+    # when the server runs, overriding the root level set by setup_logging.
+    mcp.settings.log_level = std_log_level()
+    # Signal handlers can only be set from the main thread.
+    on_main_thread = threading.current_thread() is threading.main_thread()
+    if on_main_thread:
+        previous_sigterm_handler = signal.signal(signal.SIGTERM, _exit_on_sigterm)
     try:
-        validate_lf_config()
-    except LoadflowConfigError as e:
-        logger.critical(f"Invalid load flow configuration: {e}")
-        raise SystemExit(1) from e
-    register_tools(mcp)
-    mcp.run(
-        transport="streamable-http",
-        host="0.0.0.0",
-        port=int(os.getenv("MCP_PORT", DEFAULT_PORT)),
-    )
+        # Sessions read the default load flow configuration on their first
+        # tool call; refuse to start rather than let every session fail then.
+        try:
+            validate_lf_config()
+        except LoadflowConfigError as e:
+            logger.critical(f"Invalid load flow configuration: {e}")
+            raise SystemExit(1) from e
+        register_tools(mcp)
+        mcp.run(
+            transport="streamable-http",
+            host="0.0.0.0",
+            port=int(os.getenv("MCP_PORT", DEFAULT_PORT)),
+        )
+    finally:
+        if on_main_thread:
+            # A second SIGTERM (e.g. resent by an orchestrator) must not
+            # interrupt the flush below.
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        # Write the messages still queued for the log files (enqueue=True).
+        logger.complete()
+        if on_main_thread:
+            # None: the previous handler was not set from Python.
+            signal.signal(
+                signal.SIGTERM,
+                previous_sigterm_handler
+                if previous_sigterm_handler is not None
+                else signal.SIG_DFL,
+            )
 
 
 if __name__ == "__main__":
