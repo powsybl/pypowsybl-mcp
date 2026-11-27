@@ -5,7 +5,7 @@
 #  SPDX-License-Identifier: MPL-2.0
 
 import os
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import ANY, MagicMock, mock_open, patch
 
 import pypowsybl as pp
 import pytest
@@ -92,10 +92,8 @@ async def test_load_network_from_url_success(io_tools, mock_ctx):
         patch("builtins.open", mock_open()),
         patch("pypowsybl.network.load") as mock_load,
         patch("tempfile.mkdtemp", return_value="/tmp/fake-dir"),
-        patch("os.unlink") as mock_unlink,
-        patch("os.path.exists", return_value=True),
         patch("os.path.isdir", return_value=True),
-        patch("os.rmdir") as mock_rmdir,
+        patch("shutil.rmtree") as mock_rmtree,
     ):
         mock_network = MagicMock()
         mock_network.get_buses.return_value = ["bus1"]
@@ -109,8 +107,17 @@ async def test_load_network_from_url_success(io_tools, mock_ctx):
         assert "Successfully loaded network 'net_url'" in result["message"]
         mock_load.assert_called_once()
         mock_urlopen.assert_called_once_with("http://example.com/test.xiidm")
-        mock_unlink.assert_called_once()
-        mock_rmdir.assert_called_once_with("/tmp/fake-dir")
+        # Loaded from the downloaded file, named as in the URL, with no option
+        assert mock_load.call_args.args == (
+            os.path.join("/tmp/fake-dir", "test.xiidm"),
+        )
+        assert mock_load.call_args.kwargs == {
+            "parameters": None,
+            "post_processors": None,
+            "report_node": ANY,
+        }
+        # The temp directory goes, with the file in it
+        mock_rmtree.assert_called_once_with("/tmp/fake-dir")
 
         proxy = io_tools.get_proxy("test-session")
         assert proxy.networks["net_url"] == mock_network
@@ -122,7 +129,7 @@ async def test_load_network_from_url_failure(io_tools, mock_ctx):
         patch("urllib.request.urlopen", side_effect=OSError("Download failed")),
         patch("tempfile.mkdtemp", return_value="/tmp/fake-dir"),
         patch("os.path.isdir", return_value=True),
-        patch("os.rmdir") as mock_rmdir,
+        patch("shutil.rmtree") as mock_rmtree,
     ):
         result = await io_tools.load_network_from_url(
             url="http://example.com/test.xiidm", network_id="net_url", ctx=mock_ctx
@@ -131,7 +138,7 @@ async def test_load_network_from_url_failure(io_tools, mock_ctx):
         assert "Failed to load network from URL: Download failed" in result["message"]
         # The temp directory must still be cleaned up even though the download
         # itself failed (before, cleanup only ran on the success/load path).
-        mock_rmdir.assert_called_once_with("/tmp/fake-dir")
+        mock_rmtree.assert_called_once_with("/tmp/fake-dir")
 
 
 @pytest.mark.asyncio
@@ -144,10 +151,8 @@ async def test_load_network_from_url_https(io_tools, mock_ctx):
         patch("builtins.open", mock_open()),
         patch("pypowsybl.network.load") as mock_load,
         patch("tempfile.mkdtemp", return_value="/tmp/fake-dir"),
-        patch("os.unlink"),
-        patch("os.path.exists", return_value=True),
         patch("os.path.isdir", return_value=True),
-        patch("os.rmdir"),
+        patch("shutil.rmtree"),
     ):
         mock_network = MagicMock()
         mock_network.get_buses.return_value = ["bus1"]
@@ -259,10 +264,8 @@ async def test_load_network_from_url_uses_unique_temp_dir(io_tools, mock_ctx):
         patch("pypowsybl.network.load") as mock_load,
         patch("tempfile.mkdtemp", return_value=fake_dir) as mock_mkdtemp,
         patch("tempfile.gettempdir") as mock_gettempdir,
-        patch("os.unlink"),
-        patch("os.path.exists", return_value=True),
         patch("os.path.isdir", return_value=True),
-        patch("os.rmdir") as mock_rmdir,
+        patch("shutil.rmtree") as mock_rmtree,
     ):
         mock_network = MagicMock()
         mock_network.get_buses.return_value = ["bus1"]
@@ -277,8 +280,13 @@ async def test_load_network_from_url_uses_unique_temp_dir(io_tools, mock_ctx):
         # Build the expected path with os.path.join too, rather than a hardcoded
         # "/"-joined string: os.path.join uses "\" on Windows, so a literal
         # "fake_dir/network.xiidm" would mismatch the real call there.
-        mock_load.assert_called_once_with(os.path.join(fake_dir, "network.xiidm"))
-        mock_rmdir.assert_called_once_with(fake_dir)
+        mock_load.assert_called_once_with(
+            os.path.join(fake_dir, "network.xiidm"),
+            parameters=None,
+            post_processors=None,
+            report_node=ANY,
+        )
+        mock_rmtree.assert_called_once_with(fake_dir)
 
 
 @pytest.mark.asyncio
@@ -297,10 +305,8 @@ async def test_load_network_from_url_empty_basename_fallback(io_tools, mock_ctx)
         patch("builtins.open", mock_open()),
         patch("pypowsybl.network.load") as mock_load,
         patch("tempfile.mkdtemp", return_value=fake_dir),
-        patch("os.unlink"),
-        patch("os.path.exists", return_value=True),
         patch("os.path.isdir", return_value=True),
-        patch("os.rmdir"),
+        patch("shutil.rmtree"),
     ):
         mock_network = MagicMock()
         mock_network.get_buses.return_value = ["bus1"]
@@ -311,7 +317,12 @@ async def test_load_network_from_url_empty_basename_fallback(io_tools, mock_ctx)
         )
 
         assert result["status"] == "success"
-        mock_load.assert_called_once_with(os.path.join(fake_dir, "downloaded_network"))
+        mock_load.assert_called_once_with(
+            os.path.join(fake_dir, "downloaded_network"),
+            parameters=None,
+            post_processors=None,
+            report_node=ANY,
+        )
 
 
 @pytest.mark.asyncio
@@ -406,3 +417,42 @@ async def test_export_network_invalid_filename(io_tools, mock_ctx):
 
     assert result["status"] == "error"
     assert "Failed to export network: Invalid or unsafe filename" in result["message"]
+
+
+_MAT = b"MATLAB 5.0 MAT-file, Platform: GLNXA64"
+
+
+@pytest.mark.parametrize(
+    ("name", "data", "boundary", "expected"),
+    [
+        # A zip saved under an extensionless URL name gets .zip ...
+        ("download", b"PK\x03\x04rest", False, "download.zip"),
+        ("download", b"PK\x03\x04rest", True, "download.zip"),
+        # ... once only, whatever the case, and even after another extension
+        ("BD.ZIP", b"PK\x03\x04rest", True, "BD.ZIP"),
+        ("grid.xiidm", b"PK\x03\x04rest", False, "grid.xiidm.zip"),
+        # XML gets .xml, for a network (XIIDM or CGMES) and a boundary alike
+        ("download", b"\xef\xbb\xbf  <?xml version", True, "download.xml"),
+        ("download", b"<?xml version", False, "download.xml"),
+        ("download.php", b"<iidm:network", False, "download.php.xml"),
+        # JSON gets .jiidm, a MATLAB file .mat - for a network only
+        ("download", b'{\n  "version" : "1.17"', False, "download.jiidm"),
+        ("download", _MAT, False, "download.mat"),
+        ("download", b'{"version"', True, "download"),
+        ("download", _MAT, True, "download"),
+        # A name the importers already read is kept
+        ("EQBD.xml", b"<?xml version", True, "EQBD.xml"),
+        ("grid.xiidm", b"<?xml version", False, "grid.xiidm"),
+        ("grid.IIDM", b"<?xml version", False, "grid.IIDM"),
+        ("grid.json", b'{"version"', False, "grid.json"),
+        ("case14.mat", _MAT, False, "case14.mat"),
+        # Content that cannot be told is left alone
+        ("grid.uct", b"##C 2007.05.01", False, "grid.uct"),
+        ("download", b"##C 2007.05.01", False, "download"),
+        ("download", b"", False, "download"),
+    ],
+)
+def test_downloaded_file_is_named_after_its_content(name, data, boundary, expected):
+    from pypowsybl_mcp.tools.utils.io import _name_for_content
+
+    assert _name_for_content(name, data, boundary) == expected

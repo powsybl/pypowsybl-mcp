@@ -32,6 +32,7 @@ from pypowsybl_mcp.proxy import (
     PyPowsyblMCPServerProxy,
     validate_lf_config,
 )
+from pypowsybl_mcp.tools.extension_tools import register_extension_tools
 from pypowsybl_mcp.tools.loadflow_tools import register_loadflow_tools
 from pypowsybl_mcp.tools.network_tools import register_network_tools
 from pypowsybl_mcp.tools.security_tools import register_security_tools
@@ -142,6 +143,7 @@ def register_tools(mcp: MCPServer):
     """Register all available tools with the MCP server."""
     register_io_tools(mcp, pypowsybl_proxies)
     register_network_tools(mcp, pypowsybl_proxies)
+    register_extension_tools(mcp, pypowsybl_proxies)
     register_visualization_tools(mcp, pypowsybl_proxies)
     register_loadflow_tools(mcp, pypowsybl_proxies)
     register_security_tools(mcp, pypowsybl_proxies)

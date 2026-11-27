@@ -10,7 +10,33 @@ This document lists all MCP tools exposed by the PyPowsybl MCP server, grouped b
 |--------------------------|----------------------------------------------------------------------------------------------------------------|
 | `load_network_from_file` | Load a power network from a local file path (XIIDM, Matpower, CGMES, …).                                       |
 | `load_network_from_url`  | Download and load a network from a remote URL (SSL verification is configured globally with `MCP_VERIFY_SSL`). |
+| `get_import_options`     | List the import formats, post-processors, server boundary sets and, for one format, its importer parameters.  |
 | `export_network`         | Export the current (or a named) network to a file; returns a temporary download link.                          |
+
+PowSyBl picks the importer from the file extension, so when `load_network_from_url` is given a URL without one it reads
+(`…/download?id=42`), the downloaded file is named after its content: `.zip`, `.xml` (XIIDM or CGMES, each importer
+checks the content itself), `.jiidm` (JSON) or `.mat` (MATPOWER).
+
+Both loading tools take the same import options:
+
+| Argument          | Description                                                                                                       |
+|-------------------|-------------------------------------------------------------------------------------------------------------------|
+| `parameters`      | Importer parameters by full name, e.g. `{"iidm.import.cgmes.naming-strategy": "cgmes"}`. An unknown name is refused: PowSyBl itself would ignore it silently and load the file without the option. A known name of another format (a CGMES parameter for an XIIDM file) loads, with a warning in the answer. |
+| `post_processors` | Post-processors to run, CGMES ones (`EntsoeCategory`, `cgmesDLImport`, …) and generic ones (`geoJsonImporter`, …) in one list. `EntsoeCategory` only tags the generating units whose CGMES type maps to an ENTSO-E category, possibly none. |
+| `boundary_set`    | Name of a CGMES boundary set the server provides (a directory or `.zip` in `CGMES_BOUNDARY_SETS_DIR`, see the [Configuration Reference](configuration.md)). |
+| `boundary_url`    | URL of a CGMES boundary set to download: a `.zip`, or a single `.xml` only for a CGMES 3 boundary (EQBD alone). A CGMES 2.4.15 boundary needs both EQBD and TPBD, so it must come as a `.zip`. A download whose URL lacks the extension (`…/download?id=42`) is named after its content, and one holding no boundary profile (an error or login page, say) is refused. Exclusive with `boundary_set`. |
+
+`get_import_options` also says, as `default_boundary_set`, whether a CGMES load given no boundary set still finds one
+at PowSyBl's default location (never the path itself), so a client can tell beforehand that a model depending on a
+boundary set it does not ship would fail. `iidm.import.cgmes.boundary-location` cannot be passed as a parameter: it is
+a path on the server's disk. Without a
+boundary option, the boundary profiles can also sit in the CGMES archive itself, and the PowSyBl default location
+applies otherwise. When the model ships its own boundary profiles (told by their header profile, not their file
+name), whether loose in the archive, in a zip inside it, or in a zip of a folder of per-profile zips, PowSyBl reads
+those and ignores the boundary set given: the answer then leaves `boundary` out and says so in
+`warnings`. A CGMES load that fails for want of a boundary set says so. On success, the answer also gives the
+`import_format` (the importer that read the file), the `source_format` (the format the network first came from: an
+IIDM file keeps its origin's), the options applied and, if any, `warnings` listing those the importer ignored.
 
 ---
 
@@ -36,9 +62,24 @@ This document lists all MCP tools exposed by the PyPowsybl MCP server, grouped b
 | `check_voltage_violations`           | List buses whose voltage is outside acceptable bounds (N state).            |
 | `check_current_violations`           | List branches loaded above a threshold in the N state (line + 2WT, worst first). |
 
+`get_network_element_data`'s `attach` tokens: `current_limits`, `geotags`, `voltage_limits`, and three that read IIDM
+extensions — `load_detail` (fixed and variable part of each load: `fixed_p0`, `variable_p0`, `fixed_q0`,
+`variable_q0`), `entsoe_category` (`entsoe_category_code` of the generators tagged by the `EntsoeCategory` CGMES
+post-processor) and `extension:<name>` (any extension, columns named `<name>_<column>`). The joined columns can be used
+in `conditions`; an element without the extension gets null. An extension not keyed by element id
+(`cgmesMetadataModels`, keyed by model URN) or with several rows per element (`linePosition`) is refused: read it with
+`get_network_extension_data`.
+
 `get_network_element_data`, `check_voltage_violations`, `check_current_violations`, `compare_variants` and
 `run_security_analysis` also take `return_as="artifact_json"` / `"artifact_csv"` to hand a large table over
 as a file instead of inlining it — see [Returning a big result as a file](#returning-a-big-result-as-a-file).
+
+##### Network extensions (IIDM)
+
+| Tool                         | Description                                                                                     |
+|------------------------------|-------------------------------------------------------------------------------------------------|
+| `list_network_extensions`    | List the IIDM extensions the network carries (`detail`, `entsoeCategory`, …), with their counts and columns. |
+| `get_network_extension_data` | Read one extension as a table indexed by element id; filter on `ids`, paginate, or return it as a file. |
 
 ##### Network modification
 
